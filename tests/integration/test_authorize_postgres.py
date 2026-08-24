@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ from mizan_control_plane.registry import RegistryRepository
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
 from mizan_control_plane.service import AuthorizationService
+from mizan_security.redaction import RedactionPolicy, Redactor, RuleBasedDlpScanner
 
 from tests.unit.test_authorization import context
 from tests.unit.test_registry import agent_document
@@ -142,3 +144,22 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
     page = repository.list("tnt_bank-a", "agents", 200, None)
     assert any(item["agent_id"] == document["agent_id"] for item in page.items)
     assert page.next_cursor is None
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
+    redactor = Redactor(RuleBasedDlpScanner(),b"k" * 32,"hsm://audit/test-key")
+    policy = RedactionPolicy(
+        "dlp_banking-v1",1,"a" * 64,
+        {"pii":"mask","financial":"tokenize","secret":"drop"},
+    )
+    redacted = redactor.redact(
+        {"email":"alice@example.test","account_number":"AE001234","safe":"ok"},policy,
+    )
+    repository = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    audit = repository.append_audit(
+        "tnt_bank-a","mizan.security.redacted",{"id":"mizan-redactor","kind":"service"},
+        {"id":"agt_wealth-01","kind":"agent"},redacted,
+    )
+    assert "alice@example.test" not in json.dumps(audit)
+    assert audit["redaction"]["dlp"]["status"] == "findings_redacted"

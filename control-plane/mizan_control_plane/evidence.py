@@ -172,6 +172,56 @@ class EvidenceRepository:
                 for row in rows
             ]
 
+    def append_audit(
+        self, tenant_id: str, event_type: str, actor: dict[str, Any], subject: dict[str, Any],
+        redacted: Any, trace_id: str | None = None, shard: int = 0,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        stream_id = f"{tenant_id}:audit:{shard}"
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            connection.execute(
+                "INSERT INTO mizan.evidence_chain_heads(tenant_id,stream_id) VALUES (%s,%s) "
+                "ON CONFLICT DO NOTHING", (tenant_id, stream_id),
+            )
+            head = connection.execute(
+                "SELECT next_sequence,last_hash FROM mizan.evidence_chain_heads "
+                "WHERE tenant_id=%s AND stream_id=%s FOR UPDATE", (tenant_id, stream_id),
+            ).fetchone()
+            audit_id = "aud_" + uuid4().hex
+            document = {
+                "schema_version":"1.1","audit_id":audit_id,"tenant_id":tenant_id,
+                "stream_id":stream_id,"sequence_number":head[0],"event_type":event_type,
+                "trace_id":trace_id,"actor":actor,"subject":subject,"payload":redacted.payload,
+                "stored_payload_hash":redacted.stored_payload_hash,
+                "source_commitment":redacted.source_commitment,"redaction":redacted.redaction,
+                "timestamp":now.isoformat().replace("+00:00","Z"),"prev_hash":head[1],
+                "record_hash":"0" * 64,"hash_alg":"SHA-256","canonicalization":"RFC8785",
+                "anchor_ref":None,"retention_class":"regulatory_7y","exported_to":[],
+            }
+            document["record_hash"] = canonical_hash(
+                {key:value for key,value in document.items() if key != "record_hash"}
+            )
+            sequence = connection.execute(
+                "SELECT mizan.reserve_evidence_sequence(%s,%s,%s,%s)",
+                (tenant_id,stream_id,head[1],document["record_hash"]),
+            ).fetchone()[0]
+            if sequence != head[0]:
+                raise RuntimeError("Audit sequence allocation mismatch")
+            connection.execute(
+                """INSERT INTO mizan.audit_trails(
+                     tenant_id,audit_id,stream_id,sequence_number,prev_hash,record_hash,document,occurred_at
+                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (tenant_id,audit_id,stream_id,sequence,head[1],document["record_hash"],
+                 json.dumps(document),now),
+            )
+            connection.execute(
+                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                "VALUES (%s,'audit',%s,%s,%s)",
+                (tenant_id,audit_id,event_type,json.dumps(document)),
+            )
+            return document
+
     def record_publication(
         self, tenant_id: str, outbox_id: int, receipt: dict[str, Any], signature: str
     ) -> None:
@@ -211,9 +261,10 @@ class EvidenceRepository:
                 "SELECT document,sequence_number FROM mizan.adr_records WHERE " + where
                 + " UNION ALL SELECT document,(document->>'sequence_number')::bigint "
                 "FROM mizan.decision_events WHERE " + where
+                + " UNION ALL SELECT document,sequence_number FROM mizan.audit_trails WHERE " + where
                 + " ORDER BY sequence_number"
             )
-            return [row[0] for row in connection.execute(query, [*params, *params]).fetchall()]
+            return [row[0] for row in connection.execute(query, [*params, *params, *params]).fetchall()]
 
     def append_decision_event(
         self, tenant_id: str, decision_id: str, event_type: str,
