@@ -80,6 +80,14 @@ class AuthenticatedIdentity(StrictModel):
     delegation_chain: list[str]
 
 
+class AuthenticatedPrincipal(StrictModel):
+    tenant_id: str = Field(pattern=r"^tnt_[a-z0-9-]{4,64}$")
+    principal_id: str = Field(pattern=r"^prn_[A-Za-z0-9-]{2,64}$")
+    identity_kind: Literal["human", "agent", "service"]
+    auth_strength: Literal["password", "mfa", "hardware", "federated"]
+    roles: list[str] = Field(default_factory=list)
+
+
 class AuthorizationResponse(StrictModel):
     decision_id: str
     decision: str
@@ -137,3 +145,11 @@ class AuditVerifyRequest(StrictModel):
     from_sequence: int | None = Field(default=None, ge=0)
     to_sequence: int | None = Field(default=None, ge=0)
     verify_anchors: bool = True
+
+
+class ApprovalVoteRequest(StrictModel):
+    vote: Literal["APPROVE", "REJECT", "ABSTAIN"]
+    epoch_number: int = Field(ge=1)
+    role_claim: str | None = None
+    justification: str | None = Field(default=None, max_length=2000)
+    comment: str | None = Field(default=None, max_length=2000)

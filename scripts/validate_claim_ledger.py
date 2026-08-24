@@ -19,7 +19,9 @@ CLAIM_ROW = re.compile(
     re.MULTILINE,
 )
 CLOSE_LOG = re.compile(r"^-\s+\d{4}-\d{2}-\d{2}\s+·\s+\w+\s+·\s+(T-\d+)\s+·", re.MULTILINE)
-QUEUE_REVIEW = re.compile(r"^\|\s*(T-\d+)\s*\|.*\|\s*(REVIEW|DONE)\s*\|$", re.MULTILINE)
+QUEUE_HANDOFF = re.compile(
+    r"^\|\s*(T-\d+)\s*\|.*\|\s*(REVIEW|DONE|PARKED(?:\([^)]*\))?)\s*\|$", re.MULTILINE
+)
 
 
 def is_scoped(path: str) -> bool:
@@ -40,9 +42,9 @@ def validate_snapshot(changed_paths: list[str], worklog_changed: bool, worklog: 
     if claims:
         return errors
     close = CLOSE_LOG.search(worklog)
-    reviewed = {task for task, _state in QUEUE_REVIEW.findall(worklog)}
+    reviewed = {task for task, _state in QUEUE_HANDOFF.findall(worklog)}
     if not close or close.group(1) not in reviewed:
-        errors.append("implementation commit has neither one live claim nor a newest REVIEW/DONE handoff")
+        errors.append("implementation commit has neither one live claim nor a newest REVIEW/DONE/PARKED handoff")
     return errors
 
 
@@ -86,4 +88,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

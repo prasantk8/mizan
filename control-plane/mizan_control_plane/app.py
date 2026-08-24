@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Query
 
+from .approval_repository import ApprovalRepository
 from .auth import TokenVerifier, bearer_token
 from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
-from .models import AuditVerifyRequest, AuthorizationResponse, EvaluationContext
+from .models import (
+    ApprovalVoteRequest,
+    AuditVerifyRequest,
+    AuthenticatedPrincipal,
+    AuthorizationResponse,
+    EvaluationContext,
+)
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -25,6 +32,7 @@ def create_app(
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
     evidence_repository = EvidenceRepository(settings.database_url)
+    approval_repository = ApprovalRepository(settings.database_url)
     schemas = ContractSchemas(Path(__file__).resolve().parents[2] / "SPEC_v1.md")
     service = AuthorizationService(
         authorization_repository, RegistryFloorRiskProvider(),
@@ -38,7 +46,10 @@ def create_app(
         return service.authorize(verifier.verify(token), context)
 
     def tenant_from_token(token: str = Depends(bearer_token)) -> str:
-        return verifier.verify(token).tenant_id
+        return verifier.verify_tenant(token)
+
+    def principal_from_token(token: str = Depends(bearer_token)):
+        return verifier.verify_principal(token)
 
     @app.post("/v1/agents", status_code=201)
     def create_agent(
@@ -126,6 +137,42 @@ def create_app(
         if not stream_id.startswith(f"{tenant_id}:"):
             raise Problem(403, "tenant_mismatch", "Evidence stream differs from token tenant")
         return {"items": evidence_repository.anchors(tenant_id, stream_id)}
+
+    @app.get("/v1/approvals/{approval_id}")
+    def get_approval(
+        approval_id: str, tenant_id: str = Depends(tenant_from_token)
+    ) -> dict[str, Any]:
+        return approval_repository.get(tenant_id, approval_id)
+
+    @app.post("/v1/approvals/{approval_id}/votes")
+    def cast_approval_vote(
+        approval_id: str, request: ApprovalVoteRequest,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+    ) -> dict[str, Any]:
+        return approval_repository.vote(
+            principal.tenant_id, approval_id, principal, request.model_dump(),
+        )
+
+    @app.post("/v1/approvals/{approval_id}/escalate")
+    def escalate_approval(
+        approval_id: str,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+    ) -> dict[str, Any]:
+        return approval_repository.escalate(principal.tenant_id, approval_id)
+
+    @app.post("/v1/approvals/{approval_id}/override")
+    def override_approval(
+        approval_id: str,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+    ) -> dict[str, Any]:
+        return approval_repository.override(principal.tenant_id, approval_id, principal)
+
+    @app.post("/v1/approvals/{approval_id}/withdraw")
+    def withdraw_approval(
+        approval_id: str,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+    ) -> dict[str, Any]:
+        return approval_repository.withdraw(principal.tenant_id, approval_id, principal.principal_id)
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:

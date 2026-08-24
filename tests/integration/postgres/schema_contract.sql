@@ -7,7 +7,7 @@ BEGIN
   FROM (VALUES
     ('tenants'),('agents'),('binding_profiles'),('tools'),('policies'),('agent_tools'),
     ('agent_policies'),('agent_delegations'),('evidence_chain_heads'),('adr_records'),
-    ('adr_record_policies'),('approvals'),('approval_epochs'),('approval_votes'),
+    ('adr_record_policies'),('approvals'),('role_authority_versions'),('approval_epochs'),('approval_votes'),
     ('execution_leases'),('decision_events'),('decision_event_heads'),('audit_trails'),('external_payload_envelopes'),
     ('degraded_mode_grants'),('outbox'),('evidence_receipts'),('evidence_anchors')
   ) expected(name)
@@ -67,6 +67,12 @@ INSERT INTO mizan.policies(
   'tnt_bank-a', 'pol_blocked-intent', 1, 'ACTIVE', now() - interval '1 minute', 'ALLOW', repeat('4', 64),
   '{"schema_version":"1.2","policy_id":"pol_blocked-intent","tenant_id":"tnt_bank-a","name":"Non-matching fixture","version":1,"status":"ACTIVE","author":"risk-team","applies_to":{"tool_ids":["tool_transfer"]},"conditions":{"field":"principal.role","op":"eq","value":"never-match"},"decision":"ALLOW","priority":100,"content_hash":"4444444444444444444444444444444444444444444444444444444444444444","created_at":"2026-08-25T00:00:00Z"}',
   now() - interval '1 minute'
+);
+INSERT INTO mizan.role_authority_versions(tenant_id,mapping_version,status,document,approved_at)
+VALUES (
+  'tnt_bank-a', 1, 'APPROVED',
+  '{"members":[{"principal_id":"prn_alice","roles":["manager"],"control_domain":"business.ops"},{"principal_id":"prn_bob","roles":["manager"],"control_domain":"risk.control"},{"principal_id":"prn_compliance","roles":["compliance"],"control_domain":"compliance.control"}]}',
+  now()
 );
 
 SET ROLE mizan_app;

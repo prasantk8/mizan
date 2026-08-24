@@ -85,6 +85,71 @@ def verify_signature(payload: dict[str, Any], signature: str, key: Ed25519Public
     key.verify(base64.urlsafe_b64decode(signature), rfc8785.dumps(payload))
 
 
+def append_decision_event_tx(
+    connection: Any, tenant_id: str, decision_id: str, event_type: str,
+    actor: dict[str, Any], payload: dict[str, Any], occurred_at: datetime,
+) -> dict[str, Any]:
+    adr = connection.execute(
+        "SELECT stream_id FROM mizan.adr_records WHERE tenant_id=%s AND decision_id=%s",
+        (tenant_id, decision_id),
+    ).fetchone()
+    if not adr:
+        raise Problem(404, "decision_not_found", "Decision does not exist")
+    stream_id = adr[0]
+    connection.execute(
+        "INSERT INTO mizan.decision_event_heads(tenant_id,decision_id) VALUES (%s,%s) "
+        "ON CONFLICT DO NOTHING", (tenant_id, decision_id),
+    )
+    event_head = connection.execute(
+        "SELECT next_sequence,last_hash FROM mizan.decision_event_heads "
+        "WHERE tenant_id=%s AND decision_id=%s FOR UPDATE", (tenant_id, decision_id),
+    ).fetchone()
+    evidence_head = connection.execute(
+        "SELECT next_sequence,last_hash FROM mizan.evidence_chain_heads "
+        "WHERE tenant_id=%s AND stream_id=%s FOR UPDATE", (tenant_id, stream_id),
+    ).fetchone()
+    event_id = "dev_" + uuid4().hex
+    document = {
+        "schema_version": "1.2", "event_id": event_id, "tenant_id": tenant_id,
+        "decision_id": decision_id, "decision_sequence": event_head[0],
+        "previous_event_hash": None if event_head[0] == 1 else event_head[1],
+        "event_type": event_type, "actor": actor,
+        "occurred_at": occurred_at.isoformat().replace("+00:00", "Z"), "payload": payload,
+        "stream_id": stream_id, "sequence_number": evidence_head[0],
+        "prev_hash": evidence_head[1], "record_hash": "0" * 64,
+        "hash_alg": "SHA-256", "canonicalization": "RFC8785", "immutable_receipt_ref": None,
+    }
+    document["record_hash"] = canonical_hash(
+        {key: value for key, value in document.items() if key != "record_hash"}
+    )
+    event_sequence = connection.execute(
+        "SELECT mizan.reserve_decision_event_sequence(%s,%s,%s,%s)",
+        (tenant_id, decision_id, event_head[1], document["record_hash"]),
+    ).fetchone()[0]
+    evidence_sequence = connection.execute(
+        "SELECT mizan.reserve_evidence_sequence(%s,%s,%s,%s)",
+        (tenant_id, stream_id, evidence_head[1], document["record_hash"]),
+    ).fetchone()[0]
+    if (event_sequence, evidence_sequence) != (
+        document["decision_sequence"], document["sequence_number"],
+    ):
+        raise RuntimeError("DecisionEvent sequence allocation mismatch")
+    connection.execute(
+        """INSERT INTO mizan.decision_events(
+             tenant_id,event_id,decision_id,decision_sequence,event_type,previous_event_hash,
+             event_hash,stream_id,sequence_number,prev_hash,record_hash,document,occurred_at
+           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (tenant_id,event_id,decision_id,event_sequence,event_type,event_head[1],document["record_hash"],
+         stream_id,evidence_sequence,evidence_head[1],document["record_hash"],json.dumps(document),occurred_at),
+    )
+    connection.execute(
+        "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+        "VALUES (%s,'decision_event',%s,%s,%s)",
+        (tenant_id, event_id, f"mizan.decision.{event_type.lower()}", json.dumps(document)),
+    )
+    return document
+
+
 class EvidenceRepository:
     def __init__(self, database_url: str) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
@@ -157,69 +222,9 @@ class EvidenceRepository:
         occurred_at = occurred_at or datetime.now(UTC)
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
-            adr = connection.execute(
-                "SELECT stream_id FROM mizan.adr_records WHERE tenant_id=%s AND decision_id=%s",
-                (tenant_id, decision_id),
-            ).fetchone()
-            if not adr:
-                raise Problem(404, "decision_not_found", "Decision does not exist")
-            stream_id = adr[0]
-            connection.execute(
-                "INSERT INTO mizan.decision_event_heads(tenant_id,decision_id) VALUES (%s,%s) "
-                "ON CONFLICT DO NOTHING", (tenant_id, decision_id),
+            return append_decision_event_tx(
+                connection, tenant_id, decision_id, event_type, actor, payload, occurred_at,
             )
-            event_head = connection.execute(
-                "SELECT next_sequence,last_hash FROM mizan.decision_event_heads "
-                "WHERE tenant_id=%s AND decision_id=%s FOR UPDATE",
-                (tenant_id, decision_id),
-            ).fetchone()
-            evidence_head = connection.execute(
-                "SELECT next_sequence,last_hash FROM mizan.evidence_chain_heads "
-                "WHERE tenant_id=%s AND stream_id=%s FOR UPDATE",
-                (tenant_id, stream_id),
-            ).fetchone()
-            event_id = "dev_" + uuid4().hex
-            document = {
-                "schema_version": "1.2", "event_id": event_id, "tenant_id": tenant_id,
-                "decision_id": decision_id, "decision_sequence": event_head[0],
-                "previous_event_hash": None if event_head[0] == 1 else event_head[1],
-                "event_type": event_type, "actor": actor,
-                "occurred_at": occurred_at.isoformat().replace("+00:00", "Z"), "payload": payload,
-                "stream_id": stream_id, "sequence_number": evidence_head[0],
-                "prev_hash": evidence_head[1], "record_hash": "0" * 64,
-                "hash_alg": "SHA-256", "canonicalization": "RFC8785",
-                "immutable_receipt_ref": None,
-            }
-            document["record_hash"] = canonical_hash(
-                {key: value for key, value in document.items() if key != "record_hash"}
-            )
-            event_sequence = connection.execute(
-                "SELECT mizan.reserve_decision_event_sequence(%s,%s,%s,%s)",
-                (tenant_id, decision_id, event_head[1], document["record_hash"]),
-            ).fetchone()[0]
-            evidence_sequence = connection.execute(
-                "SELECT mizan.reserve_evidence_sequence(%s,%s,%s,%s)",
-                (tenant_id, stream_id, evidence_head[1], document["record_hash"]),
-            ).fetchone()[0]
-            if (event_sequence, evidence_sequence) != (
-                document["decision_sequence"], document["sequence_number"],
-            ):
-                raise RuntimeError("DecisionEvent sequence allocation mismatch")
-            connection.execute(
-                """INSERT INTO mizan.decision_events(
-                     tenant_id,event_id,decision_id,decision_sequence,event_type,previous_event_hash,
-                     event_hash,stream_id,sequence_number,prev_hash,record_hash,document,occurred_at
-                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (tenant_id,event_id,decision_id,event_sequence,event_type,event_head[1],
-                 document["record_hash"],stream_id,evidence_sequence,evidence_head[1],
-                 document["record_hash"],json.dumps(document),occurred_at),
-            )
-            connection.execute(
-                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
-                "VALUES (%s,'decision_event',%s,%s,%s)",
-                (tenant_id, event_id, f"mizan.decision.{event_type.lower()}", json.dumps(document)),
-            )
-            return document
 
     def has_receipt(self, tenant_id: str, stream_id: str, sequence: int, record_hash: str) -> bool:
         with self.pool.connection() as connection, connection.transaction():

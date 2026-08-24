@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-009` — Approval API and epoch state machine with atomic escalation/override semantics.
+`T-011` — Executor-bound execution token and lease lifecycle.
 
 ## Agent Queue
 
@@ -15,13 +15,13 @@
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
-| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | REVIEW |
+| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | PARKED(B-8) |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | REVIEW |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | REVIEW |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | REVIEW |
-| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | READY |
-| T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | BLOCKED |
+| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
+| T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | READY |
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | READY |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | READY |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | READY |
@@ -46,10 +46,12 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-4 (resolved 2026-08-25):** T-001 ratification included Compliance/Business sign-off on ADR-007 `rejection_mode` and override-authority semantics.
 - **B-5 (resolved in v1.2):** Control domains come from a reviewed/versioned Mizan role-registry mapping populated from IdP data; epoch snapshots pin the mapping version. Ratification remains under B-4/T-001.
 - **B-6 (resolved by T-008):** Four sharded streams measured 2,725 transaction-level allocations/second over 2,000 operations with p99 2.0087 ms on the M3 Max development host. ADR-004 is ACCEPTED; deployment-class Linux sizing must rerun the benchmark.
+- **B-7:** `rejection_mode=review_required` requires opening an independently controlled review epoch, but `Policy.approval_requirements` defines no review roles, quorum, TTL, or rejection semantics. T-009 implements and verifies every defined branch but is PARKED before inventing review authority. Required HUMAN contract decision: add a typed `review` configuration or define a normative reuse rule.
+- **B-8:** SPEC §3.1 requires recomputing `parameters_hash` from caller-sent arguments, but EvaluationContext §2.4 has no arguments field and has `additionalProperties:false`. T-004 currently uses an implementation-only `tool.parameters` field and is PARKED as non-conforming. Required HUMAN contract decision: add a bounded `arguments` object/envelope or define an authenticated out-of-band binding input.
 
 ## Next Executable Action
 
-> **T-009 (CODEX):** Claim and implement Approval creation, eligibility snapshots, epoch-bound voting, atomic escalation/override/withdrawal, all G1–G9 guards, and immutable DecisionEvents.
+> **T-011 (CODEX):** Claim and implement signed executor-bound capability issuance, atomic single-use redemption, context/profile/agent revalidation, receipt gating, leases, heartbeats, completion, and immutable DecisionEvents. B-8 affects argument recomputation but does not block the token/lease state machine over an already-authorized hash.
 
 ---
 
@@ -68,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-009 · Implemented approval domain/API/storage for eligibility snapshots, control-domain quorum, immutable per-epoch votes, veto/rejection quorum, stale-race rejection, escalation, override, withdrawal and same-transaction DecisionEvents; 28 unit + live integration tests pass; PARKED review_required completion on missing review-authority contract B-7; also recorded T-004 argument-binding contract gap B-8 · next: T-011 CODEX
 - 2026-08-25 · CODEX · T-008 · Added dense dual-sequenced DecisionEvents, transactional outbox publisher, RFC8785 immutable segments, append-only Ed25519 receipts, signed anchors, independent object verifier and audit routes; unit/live integration tests pass; four-shard benchmark reached 2,725 ops/s at p99 2.0087 ms; accepted ADR-004, resolved B-6, unblocked T-012/T-015 · next: T-009 CODEX
 - 2026-08-25 · CODEX · T-014 · Replaced disabled CI placeholder with per-commit claim-ledger enforcement; scoped commits must update WORK_LOG and contain one live claim or a newest matching REVIEW/DONE handoff; unit tests and full-history validation across seven commits pass · next: T-008 CODEX
 - 2026-08-25 · CODEX · T-006 · Added exact SPEC JSON-Schema validation, tenant-scoped agent/tool/policy create/get/list endpoints, canonical content/profile hashes, allowlisted SQL resource mapping, latest-policy selection and keyset cursors; 13 unit and three live Postgres integration tests pass · next: T-014 CODEX

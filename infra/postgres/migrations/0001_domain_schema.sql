@@ -181,6 +181,9 @@ CREATE TABLE mizan.approvals (
   decision_id mizan.decision_id NOT NULL,
   state text NOT NULL,
   active_epoch_id mizan.epoch_id,
+  requester_id mizan.principal_id NOT NULL,
+  controls jsonb NOT NULL CHECK (jsonb_typeof(controls) = 'object'),
+  forbidden_approvers jsonb NOT NULL CHECK (jsonb_typeof(forbidden_approvers) = 'array'),
   document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (tenant_id, approval_id),
@@ -190,13 +193,24 @@ CREATE TABLE mizan.approvals (
   CHECK (document->>'approval_id' = approval_id::text)
 );
 
+CREATE TABLE mizan.role_authority_versions (
+  tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
+  mapping_version integer NOT NULL CHECK (mapping_version > 0),
+  status text NOT NULL CHECK (status IN ('DRAFT','APPROVED','SUPERSEDED')),
+  document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
+  approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (tenant_id, mapping_version)
+);
+
 CREATE TABLE mizan.approval_epochs (
   tenant_id mizan.tenant_id NOT NULL,
   epoch_id mizan.epoch_id NOT NULL,
   approval_id mizan.approval_id NOT NULL,
   epoch_number integer NOT NULL CHECK (epoch_number > 0),
-  state text NOT NULL CHECK (state IN ('OPEN','CLOSED_APPROVED','CLOSED_REJECTED','CLOSED_EXPIRED','CLOSED_ESCALATED','CLOSED_OVERRIDDEN','CLOSED_WITHDRAWN')),
+  state text NOT NULL CHECK (state IN ('OPEN','CLOSED_SUPERSEDED','CLOSED_TERMINAL')),
   eligibility_snapshot jsonb NOT NULL CHECK (jsonb_typeof(eligibility_snapshot) = 'object'),
+  document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
   opened_at timestamptz NOT NULL,
   expires_at timestamptz NOT NULL CHECK (expires_at > opened_at),
   closed_at timestamptz,
@@ -216,7 +230,7 @@ CREATE TABLE mizan.approval_votes (
   epoch_id mizan.epoch_id NOT NULL,
   approver_id mizan.principal_id NOT NULL,
   control_domain text NOT NULL,
-  vote text NOT NULL CHECK (vote IN ('APPROVE','REJECT')),
+  vote text NOT NULL CHECK (vote IN ('APPROVE','REJECT','ABSTAIN')),
   voted_at timestamptz NOT NULL,
   document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
   PRIMARY KEY (tenant_id, vote_id),
@@ -437,7 +451,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'tenants','agents','binding_profiles','tools','policies','agent_tools','agent_policies',
-    'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','approvals',
+    'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','approvals','role_authority_versions',
     'approval_epochs','approval_votes','execution_leases','decision_events','decision_event_heads','audit_trails',
     'external_payload_envelopes','degraded_mode_grants','outbox','evidence_receipts','evidence_anchors'
   ] LOOP

@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
+from mizan_control_plane.approval_repository import ApprovalRepository
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -12,7 +13,7 @@ from mizan_control_plane.evidence import (
     ObjectEvidenceVerifier,
     OutboxPublisher,
 )
-from mizan_control_plane.models import AuthenticatedIdentity
+from mizan_control_plane.models import AuthenticatedIdentity, AuthenticatedPrincipal
 from mizan_control_plane.registry import RegistryRepository
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
@@ -64,6 +65,31 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         evidence_repository, store, {signer.key_id: signer.public_key},
     )
     assert verifier.verify("tnt_bank-a", "tnt_bank-a:adr:0").valid
+
+    approvals = ApprovalRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    controls = {
+        "quorum":2,"approver_roles":["manager"],"expiry_seconds":900,
+        "rejection_mode":"veto","distinct_roles_required":True,
+    }
+    approval = approvals.create(
+        "tnt_bank-a",response.decision_id,"prn_requester",{"prn_requester"},"a" * 64,controls,
+    )
+    alice = AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",principal_id="prn_alice",identity_kind="human",
+        auth_strength="mfa",roles=["manager"],
+    )
+    bob = AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",principal_id="prn_bob",identity_kind="human",
+        auth_strength="hardware",roles=["manager"],
+    )
+    partial = approvals.vote(
+        "tnt_bank-a",approval["approval_id"],alice,{"epoch_number":1,"vote":"APPROVE"},
+    )
+    assert partial["state"] == "PARTIALLY_APPROVED"
+    approved = approvals.vote(
+        "tnt_bank-a",approval["approval_id"],bob,{"epoch_number":1,"vote":"APPROVE"},
+    )
+    assert approved["state"] == "APPROVED"
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
