@@ -15,7 +15,7 @@
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
-| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | READY |
+| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | IN_PROGRESS |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | READY |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | READY |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | BLOCKED |
@@ -36,7 +36,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | — |
+| T-004 | codex | t004-20260825-230349 | 1 | 2026-08-24T23:03:49Z | 2026-08-24T23:09:04Z | 2026-08-25T03:03:49Z | 507f89a |
 
 ## Blockers & Dependencies
 
@@ -49,7 +49,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-004 (CODEX):** Claim and implement the `/v1/authorize` walking skeleton on the T-003 storage interface: validated identity-derived tenancy, mandatory enrichment, fail-closed evaluation, and atomic ADR/outbox persistence.
+> **T-004 (CODEX, claimed):** Implement the `/v1/authorize` walking skeleton on the T-003 storage interface: validated identity-derived tenancy, mandatory enrichment, fail-closed evaluation, and atomic ADR/outbox persistence.
 
 ---
 

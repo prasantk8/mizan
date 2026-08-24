@@ -1,0 +1,40 @@
+[project]
+name = "mizan-control-plane"
+version = "0.1.0"
+description = "Governance control plane for regulated autonomous agents"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "psycopg[binary,pool]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "pyjwt[crypto]>=2.10,<3",
+  "rfc8785>=0.1.4,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.9,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["control-plane"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["control-plane/mizan_control_plane"]
