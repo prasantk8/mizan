@@ -3,18 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
 
 from .approval_repository import ApprovalRepository
 from .auth import TokenVerifier, bearer_token
 from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
+from .execution import ExecutionService
 from .models import (
     ApprovalVoteRequest,
     AuditVerifyRequest,
     AuthenticatedPrincipal,
     AuthorizationResponse,
     EvaluationContext,
+    ExecuteRequest,
+    ExecutionCompleteRequest,
 )
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
@@ -25,7 +28,8 @@ from .service import AuthorizationService
 
 
 def create_app(
-    settings: Settings | None = None, evidence_verifier: ObjectEvidenceVerifier | None = None
+    settings: Settings | None = None, evidence_verifier: ObjectEvidenceVerifier | None = None,
+    execution_service: ExecutionService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     verifier = TokenVerifier(settings.jwt_issuer, settings.jwt_audience, settings.jwt_public_key)
@@ -50,6 +54,12 @@ def create_app(
 
     def principal_from_token(token: str = Depends(bearer_token)):
         return verifier.verify_principal(token)
+
+    def workload_spiffe(request: Request) -> str:
+        identity = request.scope.get("client_cert_spiffe")
+        if not isinstance(identity, str) or not identity.startswith("spiffe://"):
+            raise Problem(401, "workload_identity_missing", "A verified peer SPIFFE identity is required")
+        return identity
 
     @app.post("/v1/agents", status_code=201)
     def create_agent(
@@ -173,6 +183,39 @@ def create_app(
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
         return approval_repository.withdraw(principal.tenant_id, approval_id, principal.principal_id)
+
+    @app.post("/v1/actions/{decision_id}/execute")
+    def execute_action(
+        decision_id: str, request: ExecuteRequest,
+        peer_spiffe: Annotated[str, Depends(workload_spiffe)],
+    ) -> dict[str, Any]:
+        if execution_service is None:
+            raise Problem(503, "execution_service_unavailable", "Execution keyset is not configured")
+        return execution_service.redeem(
+            request.execution_token, decision_id, peer_spiffe, request.idempotency_key,
+        )
+
+    @app.post("/v1/actions/{decision_id}/lease/{lease_id}/heartbeat")
+    def heartbeat_lease(
+        decision_id: str, lease_id: str,
+        tenant_id: Annotated[str, Depends(tenant_from_token)],
+        peer_spiffe: Annotated[str, Depends(workload_spiffe)],
+    ) -> dict[str, Any]:
+        if execution_service is None:
+            raise Problem(503, "execution_service_unavailable", "Execution keyset is not configured")
+        return execution_service.heartbeat(tenant_id, decision_id, lease_id, peer_spiffe)
+
+    @app.post("/v1/actions/{decision_id}/lease/{lease_id}/complete")
+    def complete_lease(
+        decision_id: str, lease_id: str, request: ExecutionCompleteRequest,
+        tenant_id: Annotated[str, Depends(tenant_from_token)],
+        peer_spiffe: Annotated[str, Depends(workload_spiffe)],
+    ) -> dict[str, Any]:
+        if execution_service is None:
+            raise Problem(503, "execution_service_unavailable", "Execution keyset is not configured")
+        return execution_service.complete(
+            tenant_id,decision_id,lease_id,peer_spiffe,request.result_hash,request.failure_code,
+        )
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:

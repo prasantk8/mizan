@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mizan_control_plane.approval_repository import ApprovalRepository
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
@@ -13,7 +14,9 @@ from mizan_control_plane.evidence import (
     ObjectEvidenceVerifier,
     OutboxPublisher,
 )
+from mizan_control_plane.execution import ExecutionService, ExecutionTokenCodec
 from mizan_control_plane.models import AuthenticatedIdentity, AuthenticatedPrincipal
+from mizan_control_plane.problems import Problem
 from mizan_control_plane.registry import RegistryRepository
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
@@ -32,7 +35,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         delegation_chain=["agt_wealth-01"],
     )
     response = service.authorize(identity, context("018f47a6-7b42-7c00-8000-000000000099"))
-    assert response.decision == "DENY"
+    assert response.decision == "ALLOW"
     with repository.pool.connection() as connection, connection.transaction():
         repository._scope(connection, "tnt_bank-a")
         adr_count = connection.execute(
@@ -65,6 +68,32 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         evidence_repository, store, {signer.key_id: signer.public_key},
     )
     assert verifier.verify("tnt_bank-a", "tnt_bank-a:adr:0").valid
+
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec)
+    token = execution.issue("tnt_bank-a", response.decision_id)
+    with pytest.raises(Problem) as wrong_executor:
+        execution.redeem(token,response.decision_id,"spiffe://mizan/executor/attacker","attack")
+    assert wrong_executor.value.status == 403
+    lease = execution.redeem(
+        token,response.decision_id,"spiffe://mizan/executor/wealth","execution-1",
+    )
+    assert execution.redeem(
+        token,response.decision_id,"spiffe://mizan/executor/wealth","execution-1",
+    )["lease_id"] == lease["lease_id"]
+    with pytest.raises(Problem, match="consumed"):
+        execution.redeem(
+            token,response.decision_id,"spiffe://mizan/executor/wealth","different-execution",
+        )
+    running = execution.heartbeat(
+        "tnt_bank-a",response.decision_id,lease["lease_id"],"spiffe://mizan/executor/wealth",
+    )
+    assert running["state"] == "EXECUTING"
+    completed = execution.complete(
+        "tnt_bank-a",response.decision_id,lease["lease_id"],
+        "spiffe://mizan/executor/wealth","e" * 64,None,
+    )
+    assert completed["state"] == "EXECUTED"
 
     approvals = ApprovalRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     controls = {
@@ -99,7 +128,7 @@ def test_rls_policy_lookup_and_evaluation_stays_inside_authorization_budget() ->
     samples: list[float] = []
     for _ in range(100):
         started = time.perf_counter_ns()
-        assert repository.matching_policies("tnt_bank-a", request) == []
+        assert len(repository.matching_policies("tnt_bank-a", request)) == 1
         samples.append((time.perf_counter_ns() - started) / 1_000_000)
     assert sorted(samples)[98] < 50
 

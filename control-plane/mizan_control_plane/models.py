@@ -153,3 +153,13 @@ class ApprovalVoteRequest(StrictModel):
     role_claim: str | None = None
     justification: str | None = Field(default=None, max_length=2000)
     comment: str | None = Field(default=None, max_length=2000)
+
+
+class ExecuteRequest(StrictModel):
+    execution_token: str
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class ExecutionCompleteRequest(StrictModel):
+    result_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    failure_code: str | None = Field(default=None, max_length=120)

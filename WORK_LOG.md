@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-011` — Executor-bound execution token and lease lifecycle.
+`T-012` — Redaction pipeline with DLP attestation and keyed commitments.
 
 ## Agent Queue
 
@@ -22,7 +22,7 @@
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | REVIEW |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | READY |
-| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | READY |
+| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | REVIEW |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | READY |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | READY |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | REVIEW |
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-011 (CODEX):** Claim and implement signed executor-bound capability issuance, atomic single-use redemption, context/profile/agent revalidation, receipt gating, leases, heartbeats, completion, and immutable DecisionEvents. B-8 affects argument recomputation but does not block the token/lease state machine over an already-authorized hash.
+> **T-012 (CODEX):** Claim and implement classified-field redaction, HMAC source/field commitments, DLP coverage attestation, manifest generation, scan-failure rejection, and evidence tests for I-12/I-18/I-19.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-011 · Added EdDSA execution capabilities, issuer/audience/TTL enforcement, DB-backed single-use CAS, executor SPIFFE binding, agent/context/profile revalidation, financial receipt gating, idempotent leases, bounded heartbeats/completion and same-transaction DecisionEvents; 30 unit + live lifecycle integration tests pass; B-8 remains the argument-recomputation contract gap · next: T-012 CODEX
 - 2026-08-25 · CODEX · T-009 · Implemented approval domain/API/storage for eligibility snapshots, control-domain quorum, immutable per-epoch votes, veto/rejection quorum, stale-race rejection, escalation, override, withdrawal and same-transaction DecisionEvents; 28 unit + live integration tests pass; PARKED review_required completion on missing review-authority contract B-7; also recorded T-004 argument-binding contract gap B-8 · next: T-011 CODEX
 - 2026-08-25 · CODEX · T-008 · Added dense dual-sequenced DecisionEvents, transactional outbox publisher, RFC8785 immutable segments, append-only Ed25519 receipts, signed anchors, independent object verifier and audit routes; unit/live integration tests pass; four-shard benchmark reached 2,725 ops/s at p99 2.0087 ms; accepted ADR-004, resolved B-6, unblocked T-012/T-015 · next: T-009 CODEX
 - 2026-08-25 · CODEX · T-014 · Replaced disabled CI placeholder with per-commit claim-ledger enforcement; scoped commits must update WORK_LOG and contain one live claim or a newest matching REVIEW/DONE handoff; unit tests and full-history validation across seven commits pass · next: T-008 CODEX

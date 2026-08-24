@@ -242,16 +242,40 @@ CREATE TABLE mizan.approval_votes (
 CREATE TABLE mizan.execution_leases (
   tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
   lease_id mizan.lease_id NOT NULL,
-  redeemed_jti uuid NOT NULL,
+  redeemed_jti_hash mizan.sha256_hex NOT NULL,
   decision_id mizan.decision_id NOT NULL,
   agent_id mizan.agent_id NOT NULL,
   tool_id mizan.tool_id NOT NULL,
   principal_id mizan.principal_id NOT NULL,
-  state text NOT NULL CHECK (state IN ('LEASED','EXECUTING','EXECUTED','FAILED','EXPIRED')),
+  authorized_executor text NOT NULL CHECK (authorized_executor ~ '^spiffe://[A-Za-z0-9._/-]+$' AND length(authorized_executor) <= 265),
+  state text NOT NULL CHECK (state IN ('LEASED','EXECUTING','EXECUTED','FAILED','LEASE_EXPIRED')),
+  idempotency_key text,
+  extensions_used integer NOT NULL DEFAULT 0 CHECK (extensions_used >= 0),
+  max_extensions integer NOT NULL CHECK (max_extensions BETWEEN 0 AND 96),
+  heartbeat_interval_seconds integer NOT NULL CHECK (heartbeat_interval_seconds BETWEEN 15 AND 3600),
   document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
   expires_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, lease_id),
-  UNIQUE (tenant_id, redeemed_jti),
+  UNIQUE (tenant_id, redeemed_jti_hash),
+  UNIQUE (tenant_id, decision_id, idempotency_key),
+  FOREIGN KEY (tenant_id, decision_id) REFERENCES mizan.adr_records(tenant_id, decision_id),
+  FOREIGN KEY (tenant_id, agent_id) REFERENCES mizan.agents(tenant_id, agent_id),
+  FOREIGN KEY (tenant_id, tool_id) REFERENCES mizan.tools(tenant_id, tool_id)
+);
+
+CREATE TABLE mizan.execution_tokens (
+  tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
+  jti_hash mizan.sha256_hex NOT NULL,
+  decision_id mizan.decision_id NOT NULL,
+  agent_id mizan.agent_id NOT NULL,
+  tool_id mizan.tool_id NOT NULL,
+  authorized_executor text NOT NULL CHECK (authorized_executor ~ '^spiffe://[A-Za-z0-9._/-]+$' AND length(authorized_executor) <= 265),
+  claims jsonb NOT NULL CHECK (jsonb_typeof(claims) = 'object'),
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+  lease_id mizan.lease_id,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (tenant_id, jti_hash),
   FOREIGN KEY (tenant_id, decision_id) REFERENCES mizan.adr_records(tenant_id, decision_id),
   FOREIGN KEY (tenant_id, agent_id) REFERENCES mizan.agents(tenant_id, agent_id),
   FOREIGN KEY (tenant_id, tool_id) REFERENCES mizan.tools(tenant_id, tool_id)
@@ -452,7 +476,7 @@ BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'tenants','agents','binding_profiles','tools','policies','agent_tools','agent_policies',
     'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','approvals','role_authority_versions',
-    'approval_epochs','approval_votes','execution_leases','decision_events','decision_event_heads','audit_trails',
+    'approval_epochs','approval_votes','execution_tokens','execution_leases','decision_events','decision_event_heads','audit_trails',
     'external_payload_envelopes','degraded_mode_grants','outbox','evidence_receipts','evidence_anchors'
   ] LOOP
     EXECUTE format('ALTER TABLE mizan.%I ENABLE ROW LEVEL SECURITY', table_name);
