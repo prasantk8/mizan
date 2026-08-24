@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-014` — Claim-ledger and WORK_LOG change-set enforcement in CI.
+`T-008` — Evidence pipeline: sequencers, immutable segments/receipts, anchors, and verification API.
 
 ## Agent Queue
 
@@ -25,7 +25,7 @@
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | READY |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | BLOCKED |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | READY |
-| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | READY |
+| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | REVIEW |
 | T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | BLOCKED |
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
@@ -49,7 +49,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-014 (CODEX):** Claim and implement CI enforcement that lane-scoped changes include a matching WORK_LOG update and a valid live claim at change-set time.
+> **T-008 (CODEX):** Claim and implement transactionally sequenced ADR/DecisionEvent publication, immutable object segments and receipts, signed anchors, range verification, and the B-6 shard-throughput benchmark.
 
 ---
 
@@ -68,6 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-014 · Replaced disabled CI placeholder with per-commit claim-ledger enforcement; scoped commits must update WORK_LOG and contain one live claim or a newest matching REVIEW/DONE handoff; unit tests and full-history validation across seven commits pass · next: T-008 CODEX
 - 2026-08-25 · CODEX · T-006 · Added exact SPEC JSON-Schema validation, tenant-scoped agent/tool/policy create/get/list endpoints, canonical content/profile hashes, allowlisted SQL resource mapping, latest-policy selection and keyset cursors; 13 unit and three live Postgres integration tests pass · next: T-014 CODEX
 - 2026-08-25 · CODEX · T-005 · Added Cedar 4.8.7 DSL compiler, safe condition translation, immutable PolicySet cache, applies-to selection, Postgres ACTIVE-policy integration, parity/adversarial tests and benchmark; measured 6,896 eval/s at p99 0.1741 ms plus RLS lookup p99 gate <50 ms; accepted ADR-002 and resolved B-2 · next: T-006 CODEX
 - 2026-08-25 · CODEX · T-004 · Added FastAPI authorization core with asymmetric JWT verification, identity-derived tenancy, registry/resource/binding enrichment, RFC8785 hashes, fail-closed risk/evidence handling, deterministic idempotency, default DENY, atomic ADR+outbox Postgres adapter, six unit tests and live RLS-scoped integration round-trip; released claim and unblocked T-007/T-009/T-011/T-013 · next: T-005 CODEX

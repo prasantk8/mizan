@@ -33,7 +33,25 @@ jobs:
         run: make test-postgres
 
   implementation-gates:
-    if: ${{ false }} # Enabled by T-014 once claim/change-set enforcement exists.
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - run: echo "T-014 will replace this placeholder with lane-aware checks"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Enforce claim and handoff provenance per commit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$EVENT_BEFORE"
+          fi
+          if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
+            python3 scripts/validate_claim_ledger.py --head HEAD
+          else
+            python3 scripts/validate_claim_ledger.py --base "$base" --head HEAD
+          fi
