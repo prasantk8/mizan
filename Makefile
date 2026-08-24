@@ -1,4 +1,4 @@
-.PHONY: check validate-baseline test-postgres benchmark-policy benchmark-sequencer
+.PHONY: check validate-baseline test-postgres benchmark-policy benchmark-sequencer benchmark-chain
 
 check: validate-baseline
 
@@ -13,3 +13,6 @@ benchmark-policy:
 
 benchmark-sequencer:
 	uv run python -m benchmarks.evidence_sequencer
+
+benchmark-chain:
+	uv run python -m benchmarks.chain_verifier

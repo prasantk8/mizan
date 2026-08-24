@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-015` — 100k-record chain-verification performance harness.
+`T-010` — Dashboard shell and decision/audit views.
 
 ## Agent Queue
 
@@ -26,7 +26,7 @@
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | REVIEW |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | REVIEW |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | REVIEW |
-| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | READY |
+| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | REVIEW |
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
 
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-015 (CODEX):** Claim and implement the deterministic 100k-record fixture plus checkpointed parallel range verification, then enforce the <10s M3 Max development gate.
+> **T-010 (CODEX):** Claim and implement the dashboard shell plus decision and audit verification views from PRD §44 against the existing API contracts.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-015 · Added independently anchored checkpoint-range verification with parallel workers and boundary-continuity checks, deterministic 100k fixture, corruption tests and Make target; M3 Max verified 100k in 0.917s vs <10s gate; 43 unit tests pass · next: T-010 CODEX
 - 2026-08-25 · CODEX · T-013 · Added bounded streaming identity/gzip decoding, duplicate/non-finite JSON rejection, depth/key/time budgets, SPEC-valid transient envelopes, scalar-only versioned projections, drift telemetry, explicit raw-persistence sinks and operational payload stripping; 42 unit tests pass · next: T-015 CODEX
 - 2026-08-25 · CODEX · T-012 · Added rule-based DLP scanner interface, fail-closed redactor, HMAC source/field commitments, stored-payload hash, coverage attestation and manifests, plus atomic redacted AuditTrail/outbox writes; 34 unit + four live integration tests pass · next: T-013 CODEX
 - 2026-08-25 · CODEX · T-011 · Added EdDSA execution capabilities, issuer/audience/TTL enforcement, DB-backed single-use CAS, executor SPIFFE binding, agent/context/profile revalidation, financial receipt gating, idempotent leases, bounded heartbeats/completion and same-transaction DecisionEvents; 30 unit + live lifecycle integration tests pass; B-8 remains the argument-recomputation contract gap · next: T-012 CODEX
