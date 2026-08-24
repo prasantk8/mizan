@@ -2,6 +2,10 @@
 
 Strict lane assignments for multi-agent development. Lanes are enforced by WORK_LOG hooks H-4/H-5. The controlling principle comes from PRD §68/§115: **AI-assisted development used aggressively; product/security decisions stay human-owned.**
 
+## Execution-owner directive (2026-08-25)
+
+The human owner has explicitly assigned **CODEX** as the sole implementation and test agent for the current build. The CLAUDE, CURSOR, and TEST labels below continue to describe the review rigor and merge gates a path requires; they do not reserve work for a particular product or vendor. CODEX may claim any non-HUMAN task and must apply the strictest gate named for that path. Product, approval-semantic, money-movement, cryptographic, key-management, and tenant-isolation decisions remain HUMAN-owned under H-7.
+
 ## Lanes
 
 | Lane | Interface | Mandate | Merge gate |

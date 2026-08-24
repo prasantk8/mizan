@@ -6,27 +6,27 @@
 
 ## Active Task
 
-`T-003` — Postgres schema + migrations for §2 domain models, including RLS, typed FKs, DecisionEvent, and chain-head tables.
+`T-004` — `/v1/authorize` walking skeleton: authenticated tenancy, enrichment, fail-closed evaluation, and atomic ADR write.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
-| T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CURSOR | T-001 | REVIEW |
-| T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CLAUDE | T-001 | READY |
-| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CLAUDE | T-003 | BLOCKED |
-| T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CLAUDE | T-001 | READY |
-| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CURSOR | T-003 | BLOCKED |
-| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | TEST | T-004 | BLOCKED |
-| T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CLAUDE | T-003 | BLOCKED |
-| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CLAUDE | T-004 | BLOCKED |
-| T-010 | Dashboard shell + decision/audit views (PRD §44) | CURSOR | T-006 | BLOCKED |
-| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CLAUDE | T-004 | BLOCKED |
-| T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CLAUDE | T-008 | BLOCKED |
-| T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CURSOR | T-004 | BLOCKED |
-| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CURSOR | T-002 | READY |
-| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | TEST | T-008 | BLOCKED |
+| T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
+| T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
+| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | READY |
+| T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | READY |
+| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | READY |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | BLOCKED |
+| T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | READY |
+| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | BLOCKED |
+| T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | BLOCKED |
+| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | BLOCKED |
+| T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | BLOCKED |
+| T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | BLOCKED |
+| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | READY |
+| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | BLOCKED |
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
 
@@ -43,13 +43,13 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-1 (resolved 2026-08-25):** User ratified T-001 in all required Product/Architecture, Cybersecurity, and Compliance/Business roles. SPEC v1.2, R-002, and ADR-001..008 are accepted as the implementation baseline.
 - **B-2:** Cedar binding benchmark (T-005) gates final ADR-002 acceptance. Target: ≥1k eval/s, p99 < 5 ms in-process. Benchmark must include RLS planner overhead (ADR-005) inside the 50 ms budget.
 - **B-3 (resolved by T-002):** Git repository initialized on `main`; ratified foundation recorded in root commit `da7c83d`.
-- **B-4:** ADR-007 needs compliance/business sign-off on `rejection_mode` semantics and override authority before T-009 can leave REVIEW (H-7: approval semantics are HUMAN-lane).
+- **B-4 (resolved 2026-08-25):** T-001 ratification included Compliance/Business sign-off on ADR-007 `rejection_mode` and override-authority semantics.
 - **B-5 (resolved in v1.2):** Control domains come from a reviewed/versioned Mizan role-registry mapping populated from IdP data; epoch snapshots pin the mapping version. Ratification remains under B-4/T-001.
 - **B-6:** Sequencer throughput vs. 1k dec/s unproven. T-008 must benchmark sharded streams (`MIZAN_CHAIN_SHARDS_PER_TENANT`) before ADR-004 acceptance.
 
 ## Next Executable Action
 
-> **T-003 (CLAUDE):** Claim and implement the Postgres schema/migrations for SPEC §2. Include ADR-005 RLS, I-16 typed foreign keys, DecisionEvent sequencing, and chain-head tables; escalate tenant-isolation or audit-integrity decisions under H-7.
+> **T-004 (CODEX):** Claim and implement the `/v1/authorize` walking skeleton on the T-003 storage interface: validated identity-derived tenancy, mandatory enrichment, fail-closed evaluation, and atomic ADR/outbox persistence.
 
 ---
 
@@ -68,6 +68,8 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-003 · Added PostgreSQL 16 schema/rollback for all SPEC §2 persisted models, typed ID domains/composite FKs, forced RLS on 21 tenant tables, immutable evidence triggers, transaction-safe evidence/DecisionEvent heads, Docker integration profile, and CI contract test; all checks pass; released claim and unblocked T-004/T-006/T-008 · next: T-004 CODEX
+- 2026-08-25 · HUMAN · GOVERNANCE · Assigned CODEX as sole implementation/test agent across former CLAUDE/CURSOR/TEST lanes; lane labels now express required rigor, while HUMAN decision gates remain intact; accepted T-002 · next: T-003 CODEX (claimed)
 - 2026-08-25 · CURSOR · T-002 · Initialized Git with ratified root baseline; scaffolded PRD §116 product boundaries, lane markers, repository hygiene, dependency-free contract validator, and GitHub Actions CI skeleton; `make check`, Python compile, and whitespace checks pass; released claim and unblocked T-014 · next: T-003 CLAUDE
 - 2026-08-25 · HUMAN · T-001 · Ratified SPEC v1.2, R-002, and ADR-001..008 in all required Product/Architecture, Cybersecurity, and Compliance/Business roles; unblocked T-002/T-003/T-005 · next: T-002 CURSOR (claimed)
 - 2026-08-25 · CURSOR · T-000c · Applied re-audit R-002: SPEC v1.2 executor-bound capabilities, default-deny evidence, DecisionEvents, immutable receipts, trusted degraded grants/WAL contract, external parser/persistence limits; amended ADR-001/002/003/004/006/007/008; blocked implementation pending ratification · next: T-001 HUMAN

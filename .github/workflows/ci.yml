@@ -24,9 +24,16 @@ jobs:
       - name: Validate repository and frozen contract
         run: make check
 
+  postgres-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate migrations, forced RLS, typed IDs, and immutability
+        run: make test-postgres
+
   implementation-gates:
     if: ${{ false }} # Enabled by T-014 once claim/change-set enforcement exists.
     runs-on: ubuntu-latest
     steps:
       - run: echo "T-014 will replace this placeholder with lane-aware checks"
-
