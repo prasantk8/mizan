@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Query, Request
+from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
 from .auth import TokenVerifier, bearer_token
@@ -28,7 +30,8 @@ from .service import AuthorizationService
 
 
 def create_app(
-    settings: Settings | None = None, evidence_verifier: ObjectEvidenceVerifier | None = None,
+    settings: Settings | None = None,
+    evidence_verifier: ObjectEvidenceVerifier | None = None,
     execution_service: ExecutionService | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
@@ -39,14 +42,18 @@ def create_app(
     approval_repository = ApprovalRepository(settings.database_url)
     schemas = ContractSchemas(Path(__file__).resolve().parents[2] / "SPEC_v1.md")
     service = AuthorizationService(
-        authorization_repository, RegistryFloorRiskProvider(),
-        settings.evaluator_build, settings.evaluator_configuration_hash,
+        authorization_repository,
+        RegistryFloorRiskProvider(),
+        settings.evaluator_build,
+        settings.evaluator_configuration_hash,
     )
     app = FastAPI(title="Mizan Control Plane API", version="1.1.0")
     app.add_exception_handler(Problem, problem_response)
 
     @app.post("/v1/authorize", response_model=AuthorizationResponse)
-    def authorize(context: EvaluationContext, token: str = Depends(bearer_token)) -> AuthorizationResponse:
+    def authorize(
+        context: EvaluationContext, token: str = Depends(bearer_token)
+    ) -> AuthorizationResponse:
         return service.authorize(verifier.verify(token), context)
 
     def tenant_from_token(token: str = Depends(bearer_token)) -> str:
@@ -58,7 +65,9 @@ def create_app(
     def workload_spiffe(request: Request) -> str:
         identity = request.scope.get("client_cert_spiffe")
         if not isinstance(identity, str) or not identity.startswith("spiffe://"):
-            raise Problem(401, "workload_identity_missing", "A verified peer SPIFFE identity is required")
+            raise Problem(
+                401, "workload_identity_missing", "A verified peer SPIFFE identity is required"
+            )
         return identity
 
     @app.post("/v1/agents", status_code=201)
@@ -70,7 +79,8 @@ def create_app(
 
     @app.get("/v1/agents")
     def list_agents(
-        limit: int = Query(50, ge=1, le=200), cursor: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         page = registry_repository.list(tenant_id, "agents", limit, cursor)
@@ -89,7 +99,8 @@ def create_app(
 
     @app.get("/v1/tools")
     def list_tools(
-        limit: int = Query(50, ge=1, le=200), cursor: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         page = registry_repository.list(tenant_id, "tools", limit, cursor)
@@ -108,7 +119,8 @@ def create_app(
 
     @app.get("/v1/policies")
     def list_policies(
-        limit: int = Query(50, ge=1, le=200), cursor: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         page = registry_repository.list(tenant_id, "policies", limit, cursor)
@@ -116,7 +128,8 @@ def create_app(
 
     @app.get("/v1/policies/{policy_id}")
     def get_policy(
-        policy_id: str, version: int | None = Query(None, ge=1),
+        policy_id: str,
+        version: int | None = Query(None, ge=1),
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         return registry_repository.get(tenant_id, "policies", policy_id, version)
@@ -128,25 +141,72 @@ def create_app(
         if not request.stream_id.startswith(f"{tenant_id}:"):
             raise Problem(403, "tenant_mismatch", "Evidence stream differs from token tenant")
         if evidence_verifier is None:
-            raise Problem(503, "evidence_verifier_unavailable", "Evidence keyset/store is not configured")
+            raise Problem(
+                503, "evidence_verifier_unavailable", "Evidence keyset/store is not configured"
+            )
         result = evidence_verifier.verify(
-            tenant_id, request.stream_id, request.from_sequence,
-            request.to_sequence, request.verify_anchors,
+            tenant_id,
+            request.stream_id,
+            request.from_sequence,
+            request.to_sequence,
+            request.verify_anchors,
         )
         if not result.valid:
             raise Problem(
-                409, "evidence_chain_broken",
+                409,
+                "evidence_chain_broken",
                 f"Sequence {result.first_broken_sequence}: expected {result.expected}, got {result.actual}",
             )
         return {"valid": True, "checked_records": result.checked_records}
 
     @app.get("/v1/audit/anchors")
-    def list_anchors(
-        stream_id: str, tenant_id: str = Depends(tenant_from_token)
-    ) -> dict[str, Any]:
+    def list_anchors(stream_id: str, tenant_id: str = Depends(tenant_from_token)) -> dict[str, Any]:
         if not stream_id.startswith(f"{tenant_id}:"):
             raise Problem(403, "tenant_mismatch", "Evidence stream differs from token tenant")
         return {"items": evidence_repository.anchors(tenant_id, stream_id)}
+
+    @app.get("/v1/decisions/{decision_id}")
+    def get_decision(
+        decision_id: str, tenant_id: str = Depends(tenant_from_token)
+    ) -> dict[str, Any]:
+        return evidence_repository.decision(tenant_id, decision_id)
+
+    @app.get("/v1/decisions")
+    def search_decisions(
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
+        agent_id: str | None = None,
+        tool_id: str | None = None,
+        decision: str | None = None,
+        risk: str | None = None,
+        principal_id: str | None = None,
+        customer_id: str | None = None,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+        tenant_id: str = Depends(tenant_from_token),
+    ) -> dict[str, Any]:
+        return evidence_repository.search_decisions(
+            tenant_id,
+            limit,
+            cursor,
+            agent_id=agent_id,
+            tool_id=tool_id,
+            decision=decision,
+            risk=risk,
+            principal_id=principal_id,
+            customer_id=customer_id,
+            from_time=from_time,
+            to_time=to_time,
+        )
+
+    @app.get("/v1/audit")
+    def search_audit(
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
+        event_type: str | None = None,
+        tenant_id: str = Depends(tenant_from_token),
+    ) -> dict[str, Any]:
+        return evidence_repository.search_audit(tenant_id, limit, cursor, event_type)
 
     @app.get("/v1/approvals/{approval_id}")
     def get_approval(
@@ -156,11 +216,15 @@ def create_app(
 
     @app.post("/v1/approvals/{approval_id}/votes")
     def cast_approval_vote(
-        approval_id: str, request: ApprovalVoteRequest,
+        approval_id: str,
+        request: ApprovalVoteRequest,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
         return approval_repository.vote(
-            principal.tenant_id, approval_id, principal, request.model_dump(),
+            principal.tenant_id,
+            approval_id,
+            principal,
+            request.model_dump(),
         )
 
     @app.post("/v1/approvals/{approval_id}/escalate")
@@ -182,43 +246,67 @@ def create_app(
         approval_id: str,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
-        return approval_repository.withdraw(principal.tenant_id, approval_id, principal.principal_id)
+        return approval_repository.withdraw(
+            principal.tenant_id, approval_id, principal.principal_id
+        )
 
     @app.post("/v1/actions/{decision_id}/execute")
     def execute_action(
-        decision_id: str, request: ExecuteRequest,
+        decision_id: str,
+        request: ExecuteRequest,
         peer_spiffe: Annotated[str, Depends(workload_spiffe)],
     ) -> dict[str, Any]:
         if execution_service is None:
-            raise Problem(503, "execution_service_unavailable", "Execution keyset is not configured")
+            raise Problem(
+                503, "execution_service_unavailable", "Execution keyset is not configured"
+            )
         return execution_service.redeem(
-            request.execution_token, decision_id, peer_spiffe, request.idempotency_key,
+            request.execution_token,
+            decision_id,
+            peer_spiffe,
+            request.idempotency_key,
         )
 
     @app.post("/v1/actions/{decision_id}/lease/{lease_id}/heartbeat")
     def heartbeat_lease(
-        decision_id: str, lease_id: str,
+        decision_id: str,
+        lease_id: str,
         tenant_id: Annotated[str, Depends(tenant_from_token)],
         peer_spiffe: Annotated[str, Depends(workload_spiffe)],
     ) -> dict[str, Any]:
         if execution_service is None:
-            raise Problem(503, "execution_service_unavailable", "Execution keyset is not configured")
+            raise Problem(
+                503, "execution_service_unavailable", "Execution keyset is not configured"
+            )
         return execution_service.heartbeat(tenant_id, decision_id, lease_id, peer_spiffe)
 
     @app.post("/v1/actions/{decision_id}/lease/{lease_id}/complete")
     def complete_lease(
-        decision_id: str, lease_id: str, request: ExecutionCompleteRequest,
+        decision_id: str,
+        lease_id: str,
+        request: ExecutionCompleteRequest,
         tenant_id: Annotated[str, Depends(tenant_from_token)],
         peer_spiffe: Annotated[str, Depends(workload_spiffe)],
     ) -> dict[str, Any]:
         if execution_service is None:
-            raise Problem(503, "execution_service_unavailable", "Execution keyset is not configured")
+            raise Problem(
+                503, "execution_service_unavailable", "Execution keyset is not configured"
+            )
         return execution_service.complete(
-            tenant_id,decision_id,lease_id,peer_spiffe,request.result_hash,request.failure_code,
+            tenant_id,
+            decision_id,
+            lease_id,
+            peer_spiffe,
+            request.result_hash,
+            request.failure_code,
         )
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
         return {"status": "ok"}
+
+    ui_root = Path(__file__).resolve().parents[2] / "ui"
+    if (ui_root / "index.html").exists():
+        app.mount("/", StaticFiles(directory=ui_root, html=True), name="operator-ui")
 
     return app

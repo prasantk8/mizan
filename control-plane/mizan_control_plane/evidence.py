@@ -425,6 +425,109 @@ class EvidenceRepository:
             ).fetchall()
             return [{"payload": row[0], "signature": row[1]} for row in rows]
 
+    @staticmethod
+    def _page_cursor(created_at: datetime, identifier: str) -> str:
+        value = json.dumps([created_at.isoformat(), identifier], separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_page_cursor(cursor: str) -> tuple[datetime, str]:
+        try:
+            value = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+            timestamp, identifier = json.loads(value)
+            return datetime.fromisoformat(timestamp), str(identifier)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise Problem(400, "invalid_cursor", "Pagination cursor is malformed") from exc
+
+    def decision(self, tenant_id: str, decision_id: str) -> dict[str, Any]:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT document FROM mizan.adr_records WHERE tenant_id=%s AND decision_id=%s",
+                (tenant_id, decision_id),
+            ).fetchone()
+            if not row:
+                raise Problem(404, "decision_not_found", "Decision does not exist")
+            events = connection.execute(
+                "SELECT document FROM mizan.decision_events WHERE tenant_id=%s AND decision_id=%s "
+                "ORDER BY decision_sequence",
+                (tenant_id, decision_id),
+            ).fetchall()
+            return {"decision": row[0], "events": [item[0] for item in events]}
+
+    def search_decisions(
+        self,
+        tenant_id: str,
+        limit: int,
+        cursor: str | None = None,
+        **filters: Any,
+    ) -> dict[str, Any]:
+        clauses, params = ["tenant_id=%s"], [tenant_id]
+        columns = {
+            "agent_id": "agent_id",
+            "tool_id": "tool_id",
+            "decision": "decision",
+            "risk": "document->'risk'->>'level'",
+            "principal_id": "document->'principal'->>'id'",
+            "customer_id": "document->'customer'->>'id'",
+        }
+        for name, column in columns.items():
+            if filters.get(name):
+                clauses.append(f"{column}=%s")
+                params.append(filters[name])
+        if filters.get("from_time"):
+            clauses.append("created_at >= %s")
+            params.append(filters["from_time"])
+        if filters.get("to_time"):
+            clauses.append("created_at <= %s")
+            params.append(filters["to_time"])
+        if cursor:
+            created_at, identifier = self._decode_page_cursor(cursor)
+            clauses.append("(created_at,decision_id) < (%s,%s)")
+            params.extend([created_at, identifier])
+        params.append(limit + 1)
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT document,created_at,decision_id FROM mizan.adr_records WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY created_at DESC,decision_id DESC LIMIT %s",
+                params,
+            ).fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = self._page_cursor(rows[-1][1], rows[-1][2]) if more else None
+        return {"items": [row[0] for row in rows], "next_cursor": next_cursor}
+
+    def search_audit(
+        self,
+        tenant_id: str,
+        limit: int,
+        cursor: str | None = None,
+        event_type: str | None = None,
+    ) -> dict[str, Any]:
+        clauses, params = ["tenant_id=%s"], [tenant_id]
+        if event_type:
+            clauses.append("document->>'event_type'=%s")
+            params.append(event_type)
+        if cursor:
+            occurred_at, identifier = self._decode_page_cursor(cursor)
+            clauses.append("(occurred_at,audit_id) < (%s,%s)")
+            params.extend([occurred_at, identifier])
+        params.append(limit + 1)
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT document,occurred_at,audit_id FROM mizan.audit_trails WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY occurred_at DESC,audit_id DESC LIMIT %s",
+                params,
+            ).fetchall()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = self._page_cursor(rows[-1][1], rows[-1][2]) if more else None
+        return {"items": [row[0] for row in rows], "next_cursor": next_cursor}
+
 
 class OutboxPublisher:
     def __init__(
