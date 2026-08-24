@@ -16,7 +16,7 @@
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | REVIEW |
-| T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | READY |
+| T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | IN_PROGRESS |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | READY |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | READY |
@@ -36,7 +36,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| — | — | — | — | — | — | — | — |
+| T-005 | codex | t005-20260825-231208 | 1 | 2026-08-24T23:12:08Z | 2026-08-24T23:12:08Z | 2026-08-25T03:12:08Z | 4fe339e |
 
 ## Blockers & Dependencies
 
@@ -49,7 +49,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-005 (CODEX):** Claim the policy DSL/compiler spike, implement the version-pinned evaluator behind the T-004 repository port, and measure the B-2 throughput/latency target with RLS lookup overhead included.
+> **T-005 (CODEX, claimed):** Implement the policy DSL/compiler spike and version-pinned evaluator behind the T-004 repository port, then measure the B-2 throughput/latency target with RLS lookup overhead included.
 
 ---
 
