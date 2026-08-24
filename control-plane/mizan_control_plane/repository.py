@@ -31,7 +31,7 @@ class PostgresAuthorizationRepository:
             self._scope(connection, tenant_id)
             row = connection.execute(
                 """SELECT a.tenant_id, a.agent_id, a.version, a.lifecycle_state,
-                          coalesce(array_agg(at.tool_id) FILTER (WHERE at.tool_id IS NOT NULL), '{}')
+                          coalesce(array_agg(at.tool_id::text) FILTER (WHERE at.tool_id IS NOT NULL), '{}')
                      FROM mizan.agents a LEFT JOIN mizan.agent_tools at
                        ON at.tenant_id=a.tenant_id AND at.agent_id=a.agent_id
                     WHERE a.tenant_id=%s AND a.agent_id=%s
@@ -117,11 +117,11 @@ class PostgresAuthorizationRepository:
                 raise RuntimeError("evidence sequence allocation mismatch")
             connection.execute(
                 """INSERT INTO mizan.adr_records(
-                     tenant_id,decision_id,request_id,trace_id,agent_id,tool_id,stream_id,
+                     tenant_id,decision_id,request_id,trace_id,context_hash,agent_id,tool_id,stream_id,
                      sequence_number,prev_hash,record_hash,decision,immutable_receipt_ref,document,created_at
-                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (doc["tenant_id"],doc["decision_id"],decision.request_id,doc["trace_id"],
-                 doc["agent"]["id"],doc["tool"]["id"],doc["stream_id"],doc["sequence_number"],
+                 doc["context_hash"],doc["agent"]["id"],doc["tool"]["id"],doc["stream_id"],doc["sequence_number"],
                  doc["prev_hash"],doc["record_hash"],doc["decision"],doc["immutable_receipt_ref"],
                  json.dumps(doc),decision.created_at),
             )
@@ -159,4 +159,3 @@ class InMemoryAuthorizationRepository:
             raise RuntimeError("injected evidence failure")
         self.decisions[(adr_document["tenant_id"], str(decision.request_id))] = decision
         self.adr_documents.append(adr_document)
-

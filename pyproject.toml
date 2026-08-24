@@ -22,7 +22,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["control-plane"]
+pythonpath = ["control-plane", "."]
 
 [tool.ruff]
 line-length = 100

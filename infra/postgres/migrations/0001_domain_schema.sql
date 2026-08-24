@@ -140,6 +140,7 @@ CREATE TABLE mizan.adr_records (
   decision_id mizan.decision_id NOT NULL,
   request_id uuid NOT NULL,
   trace_id mizan.trace_id NOT NULL,
+  context_hash mizan.sha256_hex NOT NULL,
   agent_id mizan.agent_id NOT NULL,
   tool_id mizan.tool_id NOT NULL,
   stream_id text NOT NULL,

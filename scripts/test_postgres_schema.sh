@@ -12,3 +12,9 @@ trap cleanup EXIT
 "${compose[@]}" exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U mizan_owner -d mizan \
   < tests/integration/postgres/schema_contract.sql
+
+"${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U mizan_owner -d mizan \
+  -c "ALTER ROLE mizan_app LOGIN PASSWORD 'integration-only-mizan'"
+published_port="$("${compose[@]}" port postgres 5432 | awk -F: '{print $NF}')"
+MIZAN_TEST_DATABASE_URL="postgresql://mizan_app:integration-only-mizan@127.0.0.1:${published_port}/mizan" \
+  uv run pytest -q tests/integration/test_authorize_postgres.py

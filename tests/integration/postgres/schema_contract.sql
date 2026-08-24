@@ -50,7 +50,7 @@ INSERT INTO mizan.binding_profiles(
 );
 INSERT INTO mizan.tools(tenant_id, tool_id, profile_id, profile_version, document)
 VALUES ('tnt_bank-a', 'tool_transfer', 'bp_transfer-v1', 1,
-  '{"tenant_id":"tnt_bank-a","tool_id":"tool_transfer"}');
+  '{"tenant_id":"tnt_bank-a","tool_id":"tool_transfer","risk_tier":"HIGH","owner":"core-banking","data_classification":"financial","execution":{"executor_spiffe_ids":["spiffe://mizan/executor/wealth"]}}');
 INSERT INTO mizan.agents(
   tenant_id, agent_id, version, lifecycle_state, document, created_at, updated_at
 ) VALUES (
@@ -59,6 +59,8 @@ INSERT INTO mizan.agents(
 );
 INSERT INTO mizan.evidence_chain_heads(tenant_id, stream_id)
 VALUES ('tnt_bank-a', 'tnt_bank-a:adr:0');
+INSERT INTO mizan.agent_tools(tenant_id, agent_id, tool_id)
+VALUES ('tnt_bank-a', 'agt_wealth-01', 'tool_transfer');
 
 SET ROLE mizan_app;
 BEGIN;
@@ -80,11 +82,11 @@ BEGIN
 END $$;
 
 INSERT INTO mizan.adr_records(
-  tenant_id, decision_id, request_id, trace_id, agent_id, tool_id, stream_id,
+  tenant_id, decision_id, request_id, trace_id, context_hash, agent_id, tool_id, stream_id,
   sequence_number, prev_hash, record_hash, decision, document, created_at
 ) VALUES (
   'tnt_bank-a', 'adr_decision-0001', '018f47a6-7b42-7c00-8000-000000000001',
-  repeat('a', 32), 'agt_wealth-01', 'tool_transfer', 'tnt_bank-a:adr:0', 0,
+  repeat('a', 32), repeat('c', 64), 'agt_wealth-01', 'tool_transfer', 'tnt_bank-a:adr:0', 0,
   repeat('0', 64), repeat('2', 64), 'ALLOW',
   '{"tenant_id":"tnt_bank-a","decision_id":"adr_decision-0001"}', now()
 );

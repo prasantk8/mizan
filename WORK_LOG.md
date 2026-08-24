@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-004` — `/v1/authorize` walking skeleton: authenticated tenancy, enrichment, fail-closed evaluation, and atomic ADR write.
+`T-005` — Policy DSL parser + compiler/evaluator spike and benchmark.
 
 ## Agent Queue
 
@@ -15,16 +15,16 @@
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
-| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | IN_PROGRESS |
+| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | REVIEW |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | READY |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | READY |
-| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | BLOCKED |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | READY |
-| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | BLOCKED |
+| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | READY |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | BLOCKED |
-| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | BLOCKED |
+| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | READY |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | BLOCKED |
-| T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | BLOCKED |
+| T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | READY |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | READY |
 | T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | BLOCKED |
 
@@ -36,7 +36,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-004 | codex | t004-20260825-230349 | 1 | 2026-08-24T23:03:49Z | 2026-08-24T23:09:04Z | 2026-08-25T03:03:49Z | 507f89a |
+| — | — | — | — | — | — | — | — |
 
 ## Blockers & Dependencies
 
@@ -49,7 +49,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-004 (CODEX, claimed):** Implement the `/v1/authorize` walking skeleton on the T-003 storage interface: validated identity-derived tenancy, mandatory enrichment, fail-closed evaluation, and atomic ADR/outbox persistence.
+> **T-005 (CODEX):** Claim the policy DSL/compiler spike, implement the version-pinned evaluator behind the T-004 repository port, and measure the B-2 throughput/latency target with RLS lookup overhead included.
 
 ---
 
@@ -68,6 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-004 · Added FastAPI authorization core with asymmetric JWT verification, identity-derived tenancy, registry/resource/binding enrichment, RFC8785 hashes, fail-closed risk/evidence handling, deterministic idempotency, default DENY, atomic ADR+outbox Postgres adapter, six unit tests and live RLS-scoped integration round-trip; released claim and unblocked T-007/T-009/T-011/T-013 · next: T-005 CODEX
 - 2026-08-25 · CODEX · T-003 · Added PostgreSQL 16 schema/rollback for all SPEC §2 persisted models, typed ID domains/composite FKs, forced RLS on 21 tenant tables, immutable evidence triggers, transaction-safe evidence/DecisionEvent heads, Docker integration profile, and CI contract test; all checks pass; released claim and unblocked T-004/T-006/T-008 · next: T-004 CODEX
 - 2026-08-25 · HUMAN · GOVERNANCE · Assigned CODEX as sole implementation/test agent across former CLAUDE/CURSOR/TEST lanes; lane labels now express required rigor, while HUMAN decision gates remain intact; accepted T-002 · next: T-003 CODEX (claimed)
 - 2026-08-25 · CURSOR · T-002 · Initialized Git with ratified root baseline; scaffolded PRD §116 product boundaries, lane markers, repository hygiene, dependency-free contract validator, and GitHub Actions CI skeleton; `make check`, Python compile, and whitespace checks pass; released claim and unblocked T-014 · next: T-003 CLAUDE
