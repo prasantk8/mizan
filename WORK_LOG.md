@@ -1,0 +1,74 @@
+# WORK_LOG — Mizan Agent Handoff Protocol
+
+> **Read this first, write here last.** Every agent session (Claude Code, Cursor/Codex, test generators) MUST: (1) read `Active Task` + `Next Executable Action` before doing anything, (2) obey `SPEC_v1.md` contracts and `AGENT_ALLOCATION.md` lane boundaries, (3) hold a valid claim (H-1) while working, (4) update this file as its final act. Keep entries telegraphic — this file is optimized for low token overhead. Detail belongs in ADRs, spec, or commit messages, not here.
+
+---
+
+## Active Task
+
+`T-002` — Repo scaffold per PRD §116 + CI skeleton.
+
+## Agent Queue
+
+| # | Task | Lane | Depends on | State |
+|---|---|---|---|---|
+| T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
+| T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CURSOR | T-001 | IN_PROGRESS |
+| T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CLAUDE | T-001 | READY |
+| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CLAUDE | T-003 | BLOCKED |
+| T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CLAUDE | T-001 | READY |
+| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CURSOR | T-003 | BLOCKED |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | TEST | T-004 | BLOCKED |
+| T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CLAUDE | T-003 | BLOCKED |
+| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CLAUDE | T-004 | BLOCKED |
+| T-010 | Dashboard shell + decision/audit views (PRD §44) | CURSOR | T-006 | BLOCKED |
+| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CLAUDE | T-004 | BLOCKED |
+| T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CLAUDE | T-008 | BLOCKED |
+| T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CURSOR | T-004 | BLOCKED |
+| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CURSOR | T-002 | BLOCKED |
+| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | TEST | T-008 | BLOCKED |
+
+States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
+
+## Claim Ledger
+
+One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here. Empty = nothing claimed.
+
+| task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
+|---|---|---|---|---|---|---|---|
+| T-002 | codex-cursor | t002-20260825-224849 | 1 | 2026-08-24T22:48:49Z | 2026-08-24T22:48:49Z | 2026-08-25T02:48:49Z | UNBORN |
+
+## Blockers & Dependencies
+
+- **B-1 (resolved 2026-08-25):** User ratified T-001 in all required Product/Architecture, Cybersecurity, and Compliance/Business roles. SPEC v1.2, R-002, and ADR-001..008 are accepted as the implementation baseline.
+- **B-2:** Cedar binding benchmark (T-005) gates final ADR-002 acceptance. Target: ≥1k eval/s, p99 < 5 ms in-process. Benchmark must include RLS planner overhead (ADR-005) inside the 50 ms budget.
+- **B-3:** No git repo initialized yet — T-002 starts with `git init` + baseline commit of the foundation docs.
+- **B-4:** ADR-007 needs compliance/business sign-off on `rejection_mode` semantics and override authority before T-009 can leave REVIEW (H-7: approval semantics are HUMAN-lane).
+- **B-5 (resolved in v1.2):** Control domains come from a reviewed/versioned Mizan role-registry mapping populated from IdP data; epoch snapshots pin the mapping version. Ratification remains under B-4/T-001.
+- **B-6:** Sequencer throughput vs. 1k dec/s unproven. T-008 must benchmark sharded streams (`MIZAN_CHAIN_SHARDS_PER_TENANT`) before ADR-004 acceptance.
+
+## Next Executable Action
+
+> **T-002 (CURSOR/Codex, claimed):** Initialize Git and scaffold the PRD §116 repository boundaries plus CI skeleton. Do not implement CLAUDE-owned security or correctness modules.
+
+---
+
+## Transition Hooks (automated handoff, no orchestrator stalls)
+
+**H-1 · Claim (atomic lease).** Work requires a row in the Claim Ledger with `task_id, claimed_by, claim_token, claim_version, claimed_at, heartbeat_at, lease_expires_at, base_commit`. Only the holder of `claim_token` may heartbeat, complete, or release. Default lease 4h; heartbeat by updating `heartbeat_at` in any commit. **Reclaim requires both** an expired `lease_expires_at` **and** a compare-and-swap on `claim_version` (read version N, write N+1 in the same change-set; a losing writer sees N+1 and aborts). No "any agent may reset a stale row" — that permitted duplicate work and competing commits.
+**H-2 · Complete:** finishing agent (a) releases its claim row, (b) flips the queue row to `REVIEW`, (c) rewrites `Next Executable Action` to the single best next step (anti-stall — never leave it stale or empty), (d) appends a Log entry, (e) unblocks dependent rows (`BLOCKED(T-00X)` → `READY` when T-00X hits DONE-or-REVIEW if the dependency is interface-only).
+**H-3 · Contract touch:** any change to schemas/endpoints/events/state machines/invariants/**config keys** requires an ADR delta *in the same change-set*; otherwise the change is invalid and the next agent reverts it. Spec wins over code, always.
+**H-4 · Lane violation:** work outside your lane (per `AGENT_ALLOCATION.md`) → stop, park the task `PARKED(lane)`, note it here. Never "just fix" cross-lane.
+**H-5 · Test gate:** CURSOR-lane code merges only with TEST-lane (or pre-existing) tests green. CLAUDE-lane security-critical code additionally requires the invariant suite (T-007 onward) green, including the V-rule tests.
+**H-6 · Session end:** final act of every session = update this file. A session that edited code but not WORK_LOG is treated as unfinished.
+**H-7 · Human escalation:** decisions touching money movement, approval semantics, crypto, key management, or tenant isolation escalate to HUMAN lane — add a `Blockers` row, park, continue with other READY work (don't idle).
+**H-8 · CI enforcement (not honour system):** the repo's CI rejects a change-set that touches lane-scoped code paths without a matching `WORK_LOG.md` update and a live claim row (T-014). A local pre-commit hook may mirror this for fast feedback, but **CI is authoritative** — local hooks are bypassable with `--no-verify`, so they can never be the control.
+
+---
+
+## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-25 · HUMAN · T-001 · Ratified SPEC v1.2, R-002, and ADR-001..008 in all required Product/Architecture, Cybersecurity, and Compliance/Business roles; unblocked T-002/T-003/T-005 · next: T-002 CURSOR (claimed)
+- 2026-08-25 · CURSOR · T-000c · Applied re-audit R-002: SPEC v1.2 executor-bound capabilities, default-deny evidence, DecisionEvents, immutable receipts, trusted degraded grants/WAL contract, external parser/persistence limits; amended ADR-001/002/003/004/006/007/008; blocked implementation pending ratification · next: T-001 HUMAN
+- 2026-08-25 · CLAUDE · T-000b · Applied review R-001: SPEC v1.1 (typed IDs, enrichment, epochs, binding profiles/leases, redaction attestation, config registry §8, V-rules §9, evidence pipeline §10), ADR-006/007/008, ADR-003/004 amendments, H-1 claim leases + H-8 CI gate · next: human ratification (T-001), then T-002
+- 2026-08-25 · CLAUDE · T-000 · Generated SPEC_v1.md, ADR-001..005, WORK_LOG.md, AGENT_ALLOCATION.md from PRD v1.0 · next: human ratification (T-001)
