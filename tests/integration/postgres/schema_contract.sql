@@ -61,6 +61,13 @@ INSERT INTO mizan.evidence_chain_heads(tenant_id, stream_id)
 VALUES ('tnt_bank-a', 'tnt_bank-a:adr:0');
 INSERT INTO mizan.agent_tools(tenant_id, agent_id, tool_id)
 VALUES ('tnt_bank-a', 'agt_wealth-01', 'tool_transfer');
+INSERT INTO mizan.policies(
+  tenant_id, policy_id, version, status, effective_from, decision, content_hash, document, created_at
+) VALUES (
+  'tnt_bank-a', 'pol_blocked-intent', 1, 'ACTIVE', now() - interval '1 minute', 'ALLOW', repeat('4', 64),
+  '{"schema_version":"1.2","policy_id":"pol_blocked-intent","tenant_id":"tnt_bank-a","name":"Non-matching fixture","version":1,"status":"ACTIVE","author":"risk-team","applies_to":{"tool_ids":["tool_transfer"]},"conditions":{"field":"principal.role","op":"eq","value":"never-match"},"decision":"ALLOW","priority":100,"content_hash":"4444444444444444444444444444444444444444444444444444444444444444","created_at":"2026-08-25T00:00:00Z"}',
+  now() - interval '1 minute'
+);
 
 SET ROLE mizan_app;
 BEGIN;

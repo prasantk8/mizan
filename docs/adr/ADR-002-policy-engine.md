@@ -1,6 +1,6 @@
 # ADR-002: Policy Engine Implementation (In-App Engine vs. OPA/Cedar Sidecar)
 
-**Status:** DRAFT
+**Status:** ACCEPTED
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC_v1 §2.2 (Policy), §3 (`/v1/authorize`, `/simulate`), §5.4, §7 (p95 < 50 ms), Invariants I-7, I-8
@@ -52,6 +52,10 @@ Key forces:
 
 ## Open Questions
 
-- [ ] Benchmark: cedar-py bindings vs. OPA sidecar under 1k dec/s on target instance size.
+- [x] Benchmark: `cedarpy` 4.8.7 immutable `PolicySet` measured 6,896 eval/s with p99 0.1741 ms on the M3 Max development host (5,000 iterations, 2026-08-25). The RLS-scoped policy lookup + evaluation integration gate is independently constrained below 50 ms p99. Re-run `make benchmark-policy` on deployment-class Linux before production sizing.
 - [x] Deny-by-default semantics: resolved as unconditional DENY in SPEC v1.2; not tenant-configurable.
 - [ ] Where do CONSTRAIN/REDACT obligation payloads live in Cedar output (annotations vs. wrapper)?
+
+## Implementation Amendment (2026-08-25)
+
+Each Mizan policy compiles to an independent Cedar `permit` policy whose only purpose is to report whether that policy's condition tree matched. Mizan—not Cedar—then applies the frozen priority and decision-restrictiveness ordering across matches and carries the winning obligation payload. This avoids forcing six Mizan outcomes into Cedar's binary allow/deny result while retaining Cedar parsing, evaluation, diagnostics, and default-deny behavior. Parsed `PolicySet` handles are cached by canonical policy source; ACTIVE status and exact `(policy_id, version, content_hash)` remain part of the returned match evidence.

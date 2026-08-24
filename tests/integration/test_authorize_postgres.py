@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 from mizan_control_plane.models import AuthenticatedIdentity
@@ -31,3 +32,14 @@ def test_authorize_persists_adr_and_outbox_atomically() -> None:
         ).fetchone()[0]
     assert (adr_count, outbox_count) == (1, 1)
 
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_rls_policy_lookup_and_evaluation_stays_inside_authorization_budget() -> None:
+    repository = PostgresAuthorizationRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    request = context("018f47a6-7b42-7c00-8000-000000000100")
+    samples: list[float] = []
+    for _ in range(100):
+        started = time.perf_counter_ns()
+        assert repository.matching_policies("tnt_bank-a", request) == []
+        samples.append((time.perf_counter_ns() - started) / 1_000_000)
+    assert sorted(samples)[98] < 50

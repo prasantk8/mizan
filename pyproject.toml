@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Governance control plane for regulated autonomous agents"
 requires-python = ">=3.12"
 dependencies = [
+  "cedarpy==4.8.7",
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "psycopg[binary,pool]>=3.2,<4",

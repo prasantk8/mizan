@@ -84,6 +84,7 @@ CREATE TABLE mizan.policies (
   policy_id mizan.policy_id NOT NULL,
   version integer NOT NULL CHECK (version > 0),
   status text NOT NULL CHECK (status IN ('DRAFT','TESTED','APPROVED','ACTIVE','SUPERSEDED','RETIRED')),
+  effective_from timestamptz,
   decision text NOT NULL CHECK (decision IN ('ALLOW','DENY','REQUIRE_APPROVAL','CONSTRAIN','REDACT','ESCALATE')),
   content_hash mizan.sha256_hex NOT NULL,
   document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),

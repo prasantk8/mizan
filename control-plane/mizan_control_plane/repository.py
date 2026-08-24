@@ -16,11 +16,13 @@ from .models import (
     RegistryAgent,
     RegistryTool,
 )
+from .policy_engine import CedarPolicyEvaluator
 
 
 class PostgresAuthorizationRepository:
     def __init__(self, database_url: str) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
+        self.policy_evaluator = CedarPolicyEvaluator()
 
     @staticmethod
     def _scope(connection: psycopg.Connection, tenant_id: str) -> None:
@@ -68,8 +70,17 @@ class PostgresAuthorizationRepository:
             )
 
     def matching_policies(self, tenant_id: str, context: EvaluationContext) -> list[PolicyMatch]:
-        # Safe default until T-005 supplies the compiler/evaluator.
-        return []
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            documents = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT document FROM mizan.policies WHERE tenant_id=%s AND status='ACTIVE' "
+                    "AND (effective_from IS NULL OR effective_from <= clock_timestamp())",
+                    (tenant_id,),
+                ).fetchall()
+            ]
+        return self.policy_evaluator.evaluate(documents, context)
 
     def find_decision_by_request(self, tenant_id: str, request_id: str) -> PersistedDecision | None:
         with self.pool.connection() as connection, connection.transaction():
