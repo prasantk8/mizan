@@ -7,7 +7,8 @@ from fastapi import Depends, FastAPI, Query
 
 from .auth import TokenVerifier, bearer_token
 from .config import Settings
-from .models import AuthorizationResponse, EvaluationContext
+from .evidence import EvidenceRepository, ObjectEvidenceVerifier
+from .models import AuditVerifyRequest, AuthorizationResponse, EvaluationContext
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -16,11 +17,14 @@ from .schema_validation import ContractSchemas
 from .service import AuthorizationService
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, evidence_verifier: ObjectEvidenceVerifier | None = None
+) -> FastAPI:
     settings = settings or Settings.from_environment()
     verifier = TokenVerifier(settings.jwt_issuer, settings.jwt_audience, settings.jwt_public_key)
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
+    evidence_repository = EvidenceRepository(settings.database_url)
     schemas = ContractSchemas(Path(__file__).resolve().parents[2] / "SPEC_v1.md")
     service = AuthorizationService(
         authorization_repository, RegistryFloorRiskProvider(),
@@ -95,6 +99,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         return registry_repository.get(tenant_id, "policies", policy_id, version)
+
+    @app.post("/v1/audit/verify")
+    def verify_audit(
+        request: AuditVerifyRequest, tenant_id: str = Depends(tenant_from_token)
+    ) -> dict[str, Any]:
+        if not request.stream_id.startswith(f"{tenant_id}:"):
+            raise Problem(403, "tenant_mismatch", "Evidence stream differs from token tenant")
+        if evidence_verifier is None:
+            raise Problem(503, "evidence_verifier_unavailable", "Evidence keyset/store is not configured")
+        result = evidence_verifier.verify(
+            tenant_id, request.stream_id, request.from_sequence,
+            request.to_sequence, request.verify_anchors,
+        )
+        if not result.valid:
+            raise Problem(
+                409, "evidence_chain_broken",
+                f"Sequence {result.first_broken_sequence}: expected {result.expected}, got {result.actual}",
+            )
+        return {"valid": True, "checked_records": result.checked_records}
+
+    @app.get("/v1/audit/anchors")
+    def list_anchors(
+        stream_id: str, tenant_id: str = Depends(tenant_from_token)
+    ) -> dict[str, Any]:
+        if not stream_id.startswith(f"{tenant_id}:"):
+            raise Problem(403, "tenant_mismatch", "Evidence stream differs from token tenant")
+        return {"items": evidence_repository.anchors(tenant_id, stream_id)}
 
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:

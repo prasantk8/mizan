@@ -1,4 +1,4 @@
-.PHONY: check validate-baseline test-postgres benchmark-policy
+.PHONY: check validate-baseline test-postgres benchmark-policy benchmark-sequencer
 
 check: validate-baseline
 
@@ -10,3 +10,6 @@ test-postgres:
 
 benchmark-policy:
 	uv run python -m benchmarks.policy_engine
+
+benchmark-sequencer:
+	uv run python -m benchmarks.evidence_sequencer

@@ -1,6 +1,6 @@
 # ADR-004: Audit Immutability & Hash-Chaining Strategy
 
-**Status:** DRAFT
+**Status:** ACCEPTED
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC_v1 §2.3 (ADR_Record chain fields), §2.5 (AuditTrail), §3 (`/v1/audit/verify`), Invariants I-2, I-11, I-12; PRD §27, §93
@@ -123,3 +123,15 @@ The authorization-time `ADR_Record` is one immutable snapshot. Approval votes, e
 Object-store publication now returns a signed receipt binding `{tenant_id, stream_id, sequence_number, record_hash, object_version}`. The receipt is independently verifiable using the evidence-writer keyset and is recorded by reference, never accepted from the caller. A `financial_write` capability cannot be redeemed until receipts cover both the originating ADR_Record and, where applicable, the deciding approval event. This closes the interval in which Postgres and its outbox could be destroyed after an ALLOW but before evidence escaped the database administrative boundary.
 
 Non-financial actions retain asynchronous publication for latency, bounded by `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS`. Exceeding that SLO opens the evidence breaker; it is not merely an observability warning.
+
+---
+
+## Implementation Amendment C — Receipt side table and segment publication
+
+**Date:** 2026-08-25 · **Trigger:** T-008 implementation proof · **Spec anchors:** SPEC v1.2 §10, I-24, I-25
+
+An ADR or DecisionEvent cannot be mutated after object publication merely to backfill `immutable_receipt_ref`. Signed receipts therefore live in the append-only `evidence_receipts` relation, uniquely keyed by `(tenant_id, stream_id, sequence_number, record_hash)`. Capability redemption resolves receipt coverage through that relation. A receipt reference embedded at initial record creation remains permitted, but is never required to make an immutable row mutable.
+
+The outbox writer groups ordered records from one stream into RFC 8785 canonical segments. Each record receives a signed receipt binding its exact sequence/hash to the segment's create-only object key and content version. Signed anchors bind a stream range and head hash. The development filesystem adapter uses exclusive creation plus `fsync`; production adapters must provide genuine WORM retention.
+
+The four-shard PostgreSQL sequencer benchmark completed 2,725 operations/second over 2,000 transaction-level allocations with p99 2.0087 ms on the M3 Max development host. This resolves WORK_LOG B-6 for the development baseline; deployment-class Linux sizing must rerun `make benchmark-sequencer`.

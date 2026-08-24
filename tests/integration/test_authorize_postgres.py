@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 
 import pytest
+from mizan_control_plane.evidence import (
+    Ed25519EvidenceSigner,
+    EvidenceRepository,
+    LocalImmutableObjectStore,
+    ObjectEvidenceVerifier,
+    OutboxPublisher,
+)
 from mizan_control_plane.models import AuthenticatedIdentity
 from mizan_control_plane.registry import RegistryRepository
 from mizan_control_plane.repository import PostgresAuthorizationRepository
@@ -15,7 +23,7 @@ from tests.unit.test_registry import agent_document
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
-def test_authorize_persists_adr_and_outbox_atomically() -> None:
+def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
     repository = PostgresAuthorizationRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     service = AuthorizationService(repository, RegistryFloorRiskProvider(), "integration", "f" * 64)
     identity = AuthenticatedIdentity(
@@ -33,6 +41,29 @@ def test_authorize_persists_adr_and_outbox_atomically() -> None:
             "SELECT count(*) FROM mizan.outbox WHERE aggregate_id=%s", (response.decision_id,)
         ).fetchone()[0]
     assert (adr_count, outbox_count) == (1, 1)
+    evidence_repository = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    event = evidence_repository.append_decision_event(
+        "tnt_bank-a", response.decision_id, "CAPABILITY_ISSUED",
+        {"kind": "system", "id": "mizan-control-plane", "authenticated_workload": None},
+        {"token_jti_hash": "d" * 64},
+    )
+    assert event["decision_sequence"] == 1
+    assert event["sequence_number"] == 1
+    signer = Ed25519EvidenceSigner.generate()
+    store = LocalImmutableObjectStore(tmp_path)
+    publisher = OutboxPublisher(evidence_repository, store, signer)
+    assert publisher.drain("tnt_bank-a") == 2
+    assert evidence_repository.has_receipt(
+        "tnt_bank-a", "tnt_bank-a:adr:0", 0,
+        repository.adr_documents[0]["record_hash"] if hasattr(repository, "adr_documents") else
+        evidence_repository.stream_records("tnt_bank-a", "tnt_bank-a:adr:0", 0, 0)[0]["record_hash"],
+    )
+    anchor = publisher.anchor("tnt_bank-a", "tnt_bank-a:adr:0")
+    assert anchor["to_sequence"] == 1
+    verifier = ObjectEvidenceVerifier(
+        evidence_repository, store, {signer.key_id: signer.public_key},
+    )
+    assert verifier.verify("tnt_bank-a", "tnt_bank-a:adr:0").valid
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")

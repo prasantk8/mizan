@@ -251,13 +251,19 @@ CREATE TABLE mizan.decision_events (
   event_type text NOT NULL,
   previous_event_hash mizan.sha256_hex NOT NULL,
   event_hash mizan.sha256_hex NOT NULL,
+  stream_id text NOT NULL,
+  sequence_number bigint NOT NULL CHECK (sequence_number >= 0),
+  prev_hash mizan.sha256_hex NOT NULL,
+  record_hash mizan.sha256_hex NOT NULL,
   immutable_receipt_ref text,
   document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
   occurred_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, event_id),
   UNIQUE (tenant_id, decision_id, decision_sequence),
   UNIQUE (tenant_id, decision_id, event_hash),
+  UNIQUE (tenant_id, stream_id, sequence_number),
   FOREIGN KEY (tenant_id, decision_id) REFERENCES mizan.adr_records(tenant_id, decision_id),
+  FOREIGN KEY (tenant_id, stream_id) REFERENCES mizan.evidence_chain_heads(tenant_id, stream_id),
   CHECK (document->>'tenant_id' = tenant_id::text),
   CHECK (document->>'event_id' = event_id::text)
 );
@@ -323,6 +329,39 @@ CREATE TABLE mizan.outbox (
   PRIMARY KEY (tenant_id, outbox_id)
 );
 
+CREATE TABLE mizan.evidence_receipts (
+  tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
+  receipt_id uuid NOT NULL,
+  stream_id text NOT NULL,
+  sequence_number bigint NOT NULL CHECK (sequence_number >= 0),
+  record_hash mizan.sha256_hex NOT NULL,
+  object_version text NOT NULL,
+  object_key text NOT NULL,
+  key_id text NOT NULL,
+  signature text NOT NULL,
+  signed_payload jsonb NOT NULL CHECK (jsonb_typeof(signed_payload) = 'object'),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (tenant_id, receipt_id),
+  UNIQUE (tenant_id, stream_id, sequence_number, record_hash)
+);
+
+CREATE TABLE mizan.evidence_anchors (
+  tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
+  anchor_id uuid NOT NULL,
+  stream_id text NOT NULL,
+  from_sequence bigint NOT NULL CHECK (from_sequence >= 0),
+  to_sequence bigint NOT NULL CHECK (to_sequence >= from_sequence),
+  head_hash mizan.sha256_hex NOT NULL,
+  object_version text NOT NULL,
+  object_key text NOT NULL,
+  key_id text NOT NULL,
+  signature text NOT NULL,
+  signed_payload jsonb NOT NULL CHECK (jsonb_typeof(signed_payload) = 'object'),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (tenant_id, anchor_id),
+  UNIQUE (tenant_id, stream_id, to_sequence)
+);
+
 CREATE FUNCTION mizan.reject_evidence_mutation() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -337,6 +376,10 @@ FOR EACH ROW EXECUTE FUNCTION mizan.reject_evidence_mutation();
 CREATE TRIGGER audit_trails_immutable BEFORE UPDATE OR DELETE ON mizan.audit_trails
 FOR EACH ROW EXECUTE FUNCTION mizan.reject_evidence_mutation();
 CREATE TRIGGER approval_votes_immutable BEFORE UPDATE OR DELETE ON mizan.approval_votes
+FOR EACH ROW EXECUTE FUNCTION mizan.reject_evidence_mutation();
+CREATE TRIGGER evidence_receipts_immutable BEFORE UPDATE OR DELETE ON mizan.evidence_receipts
+FOR EACH ROW EXECUTE FUNCTION mizan.reject_evidence_mutation();
+CREATE TRIGGER evidence_anchors_immutable BEFORE UPDATE OR DELETE ON mizan.evidence_anchors
 FOR EACH ROW EXECUTE FUNCTION mizan.reject_evidence_mutation();
 
 CREATE FUNCTION mizan.reserve_evidence_sequence(
@@ -396,7 +439,7 @@ BEGIN
     'tenants','agents','binding_profiles','tools','policies','agent_tools','agent_policies',
     'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','approvals',
     'approval_epochs','approval_votes','execution_leases','decision_events','decision_event_heads','audit_trails',
-    'external_payload_envelopes','degraded_mode_grants','outbox'
+    'external_payload_envelopes','degraded_mode_grants','outbox','evidence_receipts','evidence_anchors'
   ] LOOP
     EXECUTE format('ALTER TABLE mizan.%I ENABLE ROW LEVEL SECURITY', table_name);
     EXECUTE format('ALTER TABLE mizan.%I FORCE ROW LEVEL SECURITY', table_name);

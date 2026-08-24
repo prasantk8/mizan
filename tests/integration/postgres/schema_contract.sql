@@ -9,7 +9,7 @@ BEGIN
     ('agent_policies'),('agent_delegations'),('evidence_chain_heads'),('adr_records'),
     ('adr_record_policies'),('approvals'),('approval_epochs'),('approval_votes'),
     ('execution_leases'),('decision_events'),('decision_event_heads'),('audit_trails'),('external_payload_envelopes'),
-    ('degraded_mode_grants'),('outbox')
+    ('degraded_mode_grants'),('outbox'),('evidence_receipts'),('evidence_anchors')
   ) expected(name)
   LEFT JOIN pg_class c ON c.relname = expected.name
   LEFT JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'mizan'

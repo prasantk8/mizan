@@ -130,3 +130,10 @@ class PersistedDecision(StrictModel):
     response: AuthorizationResponse
     context_hash: str
     created_at: datetime
+
+
+class AuditVerifyRequest(StrictModel):
+    stream_id: str
+    from_sequence: int | None = Field(default=None, ge=0)
+    to_sequence: int | None = Field(default=None, ge=0)
+    verify_anchors: bool = True
