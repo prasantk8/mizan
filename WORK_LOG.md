@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-006` — Registry CRUD for agents, tools, and policies with tenant-scoped pagination.
+`T-014` — Claim-ledger and WORK_LOG change-set enforcement in CI.
 
 ## Agent Queue
 
@@ -17,7 +17,7 @@
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | REVIEW |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | REVIEW |
-| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | READY |
+| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | REVIEW |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | READY |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | READY |
@@ -49,7 +49,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-006 (CODEX):** Claim and implement tenant-scoped agent/tool/policy registry CRUD plus stable cursor pagination, using only the T-003 RLS repository boundary.
+> **T-014 (CODEX):** Claim and implement CI enforcement that lane-scoped changes include a matching WORK_LOG update and a valid live claim at change-set time.
 
 ---
 
@@ -68,6 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-006 · Added exact SPEC JSON-Schema validation, tenant-scoped agent/tool/policy create/get/list endpoints, canonical content/profile hashes, allowlisted SQL resource mapping, latest-policy selection and keyset cursors; 13 unit and three live Postgres integration tests pass · next: T-014 CODEX
 - 2026-08-25 · CODEX · T-005 · Added Cedar 4.8.7 DSL compiler, safe condition translation, immutable PolicySet cache, applies-to selection, Postgres ACTIVE-policy integration, parity/adversarial tests and benchmark; measured 6,896 eval/s at p99 0.1741 ms plus RLS lookup p99 gate <50 ms; accepted ADR-002 and resolved B-2 · next: T-006 CODEX
 - 2026-08-25 · CODEX · T-004 · Added FastAPI authorization core with asymmetric JWT verification, identity-derived tenancy, registry/resource/binding enrichment, RFC8785 hashes, fail-closed risk/evidence handling, deterministic idempotency, default DENY, atomic ADR+outbox Postgres adapter, six unit tests and live RLS-scoped integration round-trip; released claim and unblocked T-007/T-009/T-011/T-013 · next: T-005 CODEX
 - 2026-08-25 · CODEX · T-003 · Added PostgreSQL 16 schema/rollback for all SPEC §2 persisted models, typed ID domains/composite FKs, forced RLS on 21 tenant tables, immutable evidence triggers, transaction-safe evidence/DecisionEvent heads, Docker integration profile, and CI contract test; all checks pass; released claim and unblocked T-004/T-006/T-008 · next: T-004 CODEX

@@ -65,7 +65,7 @@ class PostgresAuthorizationRepository:
             return RegistryTool(
                 tenant_id=row[0], tool_id=row[1], profile_id=row[2], profile_version=row[3],
                 bound_pointers=row[4], volatile_pointers=row[5], risk_tier=doc["risk_tier"],
-                resource_owner=doc["owner"], data_classification=doc["data_classification"],
+                resource_owner=doc["resource_owner"], data_classification=doc["data_classification"],
                 executor_spiffe_ids=doc["execution"]["executor_spiffe_ids"],
             )
 

@@ -50,7 +50,7 @@ INSERT INTO mizan.binding_profiles(
 );
 INSERT INTO mizan.tools(tenant_id, tool_id, profile_id, profile_version, document)
 VALUES ('tnt_bank-a', 'tool_transfer', 'bp_transfer-v1', 1,
-  '{"tenant_id":"tnt_bank-a","tool_id":"tool_transfer","risk_tier":"HIGH","owner":"core-banking","data_classification":"financial","execution":{"executor_spiffe_ids":["spiffe://mizan/executor/wealth"]}}');
+  '{"tenant_id":"tnt_bank-a","tool_id":"tool_transfer","risk_tier":"HIGH","owner":"wealth-team","resource_owner":"core-banking","data_classification":"financial","execution":{"executor_spiffe_ids":["spiffe://mizan/executor/wealth"]}}');
 INSERT INTO mizan.agents(
   tenant_id, agent_id, version, lifecycle_state, document, created_at, updated_at
 ) VALUES (

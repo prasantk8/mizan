@@ -5,11 +5,13 @@ import time
 
 import pytest
 from mizan_control_plane.models import AuthenticatedIdentity
+from mizan_control_plane.registry import RegistryRepository
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
 from mizan_control_plane.service import AuthorizationService
 
 from tests.unit.test_authorization import context
+from tests.unit.test_registry import agent_document
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
@@ -43,3 +45,14 @@ def test_rls_policy_lookup_and_evaluation_stays_inside_authorization_budget() ->
         assert repository.matching_policies("tnt_bank-a", request) == []
         samples.append((time.perf_counter_ns() - started) / 1_000_000)
     assert sorted(samples)[98] < 50
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
+    repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    document = agent_document()
+    assert repository.create_agent("tnt_bank-a", document) == document
+    assert repository.get("tnt_bank-a", "agents", document["agent_id"]) == document
+    page = repository.list("tnt_bank-a", "agents", 200, None)
+    assert any(item["agent_id"] == document["agent_id"] for item in page.items)
+    assert page.next_cursor is None
