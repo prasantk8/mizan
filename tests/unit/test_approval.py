@@ -100,6 +100,29 @@ def test_stale_epoch_vote_loses_escalation_race() -> None:
 def test_veto_and_rejection_quorum_are_distinct() -> None:
     rejected, _ = vote(approval(), "prn_alice", vote="REJECT")
     assert rejected["state"] == "REJECTED"
+
+
+def test_review_epoch_is_fresh_and_rejecting_voter_has_no_inherited_authority() -> None:
+    triggered, _ = vote(
+        approval(rejection_mode="review_required"), "prn_alice", vote="REJECT"
+    )
+    assert triggered["state"] == "REVIEW_REQUIRED"
+    review_eligibility = eligibility() | {
+        "roles": ["compliance"],
+        "members": [eligibility()["members"][2]],
+    }
+    review = open_next_epoch(
+        triggered,
+        kind="review",
+        requirements=requirements(quorum=1),
+        eligibility=review_eligibility,
+        carry_forward_votes=False,
+        now=NOW,
+    )
+    assert review["epochs"][0]["outcome"] == "REVIEW_TRIGGERED"
+    assert review["epochs"][1]["carried_votes"] == []
+    with pytest.raises(Problem, match="absent from the epoch snapshot"):
+        vote(review, "prn_alice", epoch_number=2)
     pending = approval(rejection_mode="rejection_quorum", rejection_quorum_count=2)
     pending, _ = vote(pending, "prn_alice", vote="REJECT")
     assert pending["state"] == "PENDING"

@@ -133,7 +133,6 @@ class ApprovalRepository:
                 justification=request.get("justification"),
                 comment=request.get("comment"),
             )
-            epoch = current_epoch(updated)
             connection.execute(
                 """INSERT INTO mizan.approval_votes(
                      tenant_id,vote_id,approval_id,epoch_id,approver_id,control_domain,vote,voted_at,document
@@ -150,7 +149,37 @@ class ApprovalRepository:
                     json.dumps(recorded),
                 ),
             )
-            self._update(connection, tenant_id, updated)
+            if updated["state"] == "REVIEW_REQUIRED":
+                review = row["controls"].get("review")
+                if not review:
+                    raise Problem(
+                        409,
+                        "review_configuration_missing",
+                        "Review-triggering rejection has no review authority configuration",
+                    )
+                snapshot = self.authority_snapshot(
+                    connection, tenant_id, review["approver_roles"]
+                )
+                requirements = {
+                    "quorum": review["quorum"],
+                    "expiry_seconds": review["expiry_seconds"],
+                    "rejection_mode": review["rejection_mode"],
+                    "rejection_quorum_count": review.get("rejection_quorum_count"),
+                    "distinct_control_domains_required": review[
+                        "distinct_control_domains_required"
+                    ],
+                }
+                updated = open_next_epoch(
+                    updated,
+                    kind="review",
+                    requirements=requirements,
+                    eligibility=snapshot,
+                    carry_forward_votes=False,
+                    reset_expiry=True,
+                )
+                self._update_with_new_epoch(connection, tenant_id, updated)
+            else:
+                self._update(connection, tenant_id, updated)
             append_decision_event_tx(
                 connection,
                 tenant_id,
@@ -165,7 +194,26 @@ class ApprovalRepository:
                 },
                 datetime.now(UTC),
             )
-            if updated["state"] in {"APPROVED", "REJECTED", "OVERRIDDEN", "REVIEW_REQUIRED"}:
+            if updated["state"] == "REVIEW_REQUIRED":
+                self._event_opened(connection, tenant_id, updated)
+                review_epoch = current_epoch(updated)
+                connection.execute(
+                    "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                    "VALUES (%s,'approval',%s,'mizan.approval.review_required',%s)",
+                    (
+                        tenant_id,
+                        approval_id,
+                        json.dumps(
+                            {
+                                "approval_id": approval_id,
+                                "epoch_id": review_epoch["epoch_id"],
+                                "epoch_number": review_epoch["epoch_number"],
+                                "reviewer_pool": review_epoch["eligibility"]["roles"],
+                            }
+                        ),
+                    ),
+                )
+            elif updated["state"] in {"APPROVED", "REJECTED", "OVERRIDDEN"}:
                 append_decision_event_tx(
                     connection,
                     tenant_id,
@@ -174,7 +222,7 @@ class ApprovalRepository:
                     SYSTEM_ACTOR,
                     {
                         "approval_id": approval_id,
-                        "epoch_id": epoch["epoch_id"],
+                        "epoch_id": current_epoch(updated)["epoch_id"],
                         "approval_state": updated["state"],
                     },
                     datetime.now(UTC),

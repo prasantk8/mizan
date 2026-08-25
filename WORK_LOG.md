@@ -6,7 +6,7 @@
 
 ## Active Task
 
-R-003 implementation is complete through T-006; T-009 review epochs are next.
+R-003 runtime work is complete; T-007 final invariant and release audit is next.
 
 ## Agent Queue
 
@@ -20,7 +20,7 @@ R-003 implementation is complete through T-006; T-009 review epochs are next.
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | DONE |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
-| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | READY |
+| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | DONE |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | DONE |
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | DONE |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | DONE |
@@ -52,7 +52,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-009 (CODEX):** Implement the ratified independently controlled review epoch and prove its atomic persistence and vote isolation.
+> **T-007 (CODEX):** Close R-003 invariant/V-rule coverage, run every release gate and reconcile the queue, claims, blockers, and repository state.
 
 ---
 
@@ -71,6 +71,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-009 v1.3 · Made review-triggering rejection atomically close the original epoch, snapshot the independently configured authority pool, open an isolated no-carry review epoch, append decision evidence, and enqueue review notification; 85 unit plus four live integration tests pass; task DONE · next: T-007
 - 2026-08-25 · CODEX · T-006 v1.3 · Implemented the R-003 semantic policy hash, locked lifecycle endpoint, simulation-before-test and author/approver separation, UTC activation, prior-version supersession, transactional transition events, and lifecycle/hash regression coverage; task DONE · next: T-009
 - 2026-08-25 · CODEX · T-011 v1.3 · Required bounded arguments on execute, recomputed the pinned profile hash before both first redemption and idempotent retry, revalidated immutable normalized context against current agent/tool/resource/risk/delegation authority, and rejected changed bound arguments before CAS/lease reuse; 82 unit plus four live integration tests pass; task DONE · next: T-006
 - 2026-08-25 · CODEX · T-004 v1.3 · Added the ratified bounded transient argument contract, server-side binding validation/hash, raw-argument exclusion from policy/evidence/context hashes, and immutable tenant-RLS normalized context snapshots; 82 unit plus four live integration tests pass; task DONE · next: T-011

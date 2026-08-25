@@ -1,9 +1,9 @@
 # ADR-007: Approval Authority — Epochs, Dual Control & Rejection Semantics
 
-**Status:** DRAFT
+**Status:** ACCEPTED (R-003 ratified in all required roles)
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect, **Compliance/Business sign-off required** (this ADR defines approval semantics — WORK_LOG H-7 escalation)
 **Date:** 2026-08-25
-**Spec anchors:** SPEC v1.2 §2.7 (Approval/Epoch/Vote), §5.2, Guards G1–G9, Invariants I-6, I-15, I-22, V-2/V-3/V-4/V-5/V-14
+**Spec anchors:** SPEC v1.3 §2.2/§2.7 (Policy/Approval/Epoch/Vote), §5.2, Guards G1–G9, Invariants I-6, I-15, I-22, V-2/V-3/V-4/V-5/V-14
 **Trigger:** baseline review R-001 — undefined escalation membership and race semantics; role labels counted as authority; universal single-REJECT veto
 
 ## Context
@@ -79,3 +79,18 @@ Requiring `pool_mode` to be explicit is deliberate: a silent default here is pre
 - [ ] Should `carry_forward_votes = true` be permitted at all for HIGH/CRITICAL, or restricted to LOW/MEDIUM?
 - [ ] Escalation notification routing — does the escalation role get paged, or is it inbox-only? (Affects `trigger_fraction` tuning.)
 - [ ] Is `max_epochs = 2` right for the pilot, or should CRITICAL allow a third escalation tier?
+
+## R-003 Review-Epoch Amendment (ratified 2026-08-25)
+
+`review_required` is fully typed, not a transitional label awaiting an out-of-band workflow. Its
+policy configuration names an independent `approver_roles` pool, quorum, expiry, mandatory distinct
+control domains, and a terminal review rejection mode (`veto` or `rejection_quorum`). Recursive
+`review_required` and carried votes are forbidden.
+
+On the first initial-epoch REJECT, one locked database transaction records the vote, closes the
+original epoch with `REVIEW_TRIGGERED`, takes a fresh approved role-authority snapshot, opens the
+review epoch, advances `current_epoch_id`, appends decision events, and enqueues the typed
+`mizan.approval.review_required` notification. Failure to resolve or validate the reviewer pool
+rolls back the rejection as well, preventing an approval from becoming stranded in a state with no
+active authority set. Original voters have no inherited vote or eligibility unless independently
+present in the configured review snapshot; all later votes must cite the new epoch number.

@@ -251,6 +251,64 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         {"epoch_number": 1, "vote": "APPROVE"},
     )
     assert approved["state"] == "APPROVED"
+
+    review_decision = service.authorize(
+        identity, context("018f47a6-7b42-7c00-8000-000000000101")
+    )
+    review_controls = {
+        "quorum": 1,
+        "approver_roles": ["manager"],
+        "expiry_seconds": 900,
+        "rejection_mode": "review_required",
+        "distinct_roles_required": False,
+        "review": {
+            "approver_roles": ["compliance"],
+            "quorum": 1,
+            "expiry_seconds": 900,
+            "distinct_control_domains_required": True,
+            "rejection_mode": "veto",
+            "carry_forward_votes": False,
+        },
+    }
+    review_approval = approvals.create(
+        "tnt_bank-a",
+        review_decision.decision_id,
+        "prn_requester",
+        {"prn_requester"},
+        "b" * 64,
+        review_controls,
+    )
+    review_opened = approvals.vote(
+        "tnt_bank-a",
+        review_approval["approval_id"],
+        alice,
+        {"epoch_number": 1, "vote": "REJECT"},
+    )
+    assert review_opened["state"] == "REVIEW_REQUIRED"
+    assert review_opened["epochs"][0]["outcome"] == "REVIEW_TRIGGERED"
+    assert review_opened["epochs"][1]["kind"] == "review"
+    assert review_opened["epochs"][1]["carried_votes"] == []
+    with pytest.raises(Problem, match="absent from the epoch snapshot"):
+        approvals.vote(
+            "tnt_bank-a",
+            review_approval["approval_id"],
+            alice,
+            {"epoch_number": 2, "vote": "APPROVE"},
+        )
+    compliance = AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",
+        principal_id="prn_compliance",
+        identity_kind="human",
+        auth_strength="hardware",
+        roles=["compliance"],
+    )
+    reviewed = approvals.vote(
+        "tnt_bank-a",
+        review_approval["approval_id"],
+        compliance,
+        {"epoch_number": 2, "vote": "APPROVE"},
+    )
+    assert reviewed["state"] == "APPROVED"
     summary = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"]).dashboard_summary(
         "tnt_bank-a"
     )
