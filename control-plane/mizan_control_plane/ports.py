@@ -9,6 +9,10 @@ class EvidenceWriteError(RuntimeError):
     """Expected evidence-store unavailability, safe to translate to a controlled Problem."""
 
 
+class DuplicateRequestIdError(RuntimeError):
+    """The tenant/request idempotency key was committed by a concurrent writer."""
+
+
 class AuthorizationRepository(Protocol):
     def get_agent(self, tenant_id: str, agent_id: str) -> RegistryAgent | None: ...
     def get_tool(self, tenant_id: str, tool_id: str) -> RegistryTool | None: ...

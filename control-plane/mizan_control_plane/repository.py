@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Iterable
+from threading import Lock
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -17,7 +18,7 @@ from .models import (
     RegistryTool,
 )
 from .policy_engine import CedarPolicyEvaluator
-from .ports import EvidenceWriteError
+from .ports import DuplicateRequestIdError, EvidenceWriteError
 
 
 class PostgresAuthorizationRepository:
@@ -207,6 +208,7 @@ class InMemoryAuthorizationRepository:
         self.adr_documents: list[dict] = []
         self.normalized_contexts: dict[tuple[str, str], dict] = {}
         self.fail_writes = False
+        self._decision_lock = Lock()
 
     def get_agent(self, tenant_id: str, agent_id: str) -> RegistryAgent | None:
         return self.agents.get((tenant_id, agent_id))
@@ -227,8 +229,12 @@ class InMemoryAuthorizationRepository:
     ) -> None:
         if self.fail_writes:
             raise EvidenceWriteError("injected evidence failure")
-        self.decisions[(adr_document["tenant_id"], str(decision.request_id))] = decision
-        self.adr_documents.append(adr_document)
-        self.normalized_contexts[(adr_document["tenant_id"], decision.decision_id)] = copy.deepcopy(
-            normalized_context
-        )
+        key = (adr_document["tenant_id"], str(decision.request_id))
+        with self._decision_lock:
+            if key in self.decisions:
+                raise DuplicateRequestIdError("request_id was committed concurrently")
+            self.decisions[key] = decision
+            self.adr_documents.append(adr_document)
+            self.normalized_contexts[(adr_document["tenant_id"], decision.decision_id)] = (
+                copy.deepcopy(normalized_context)
+            )

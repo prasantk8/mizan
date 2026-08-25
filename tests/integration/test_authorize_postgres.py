@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +51,10 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         outbox_count = connection.execute(
             "SELECT count(*) FROM mizan.outbox WHERE aggregate_id=%s", (response.decision_id,)
         ).fetchone()[0]
+        adr_sequence = connection.execute(
+            "SELECT sequence_number FROM mizan.adr_records WHERE decision_id=%s",
+            (response.decision_id,),
+        ).fetchone()[0]
     assert (adr_count, outbox_count) == (1, 1)
     evidence_repository = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     page = evidence_repository.search_decisions(
@@ -63,7 +69,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         {"token_jti_hash": "d" * 64},
     )
     assert event["decision_sequence"] == 1
-    assert event["sequence_number"] == 1
+    assert event["sequence_number"] == adr_sequence + 1
     retried = evidence_repository.append_decision_event(
         "tnt_bank-a",
         response.decision_id,
@@ -491,3 +497,53 @@ def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
         if item["event_type"] == "mizan.security.redaction_failed"
     ]
     assert failures and "payload" not in failures[-1]["payload"]
+
+class BarrierPostgresAuthorizationRepository(PostgresAuthorizationRepository):
+    def __init__(self, database_url: str) -> None:
+        super().__init__(database_url)
+        self.initial_reads = Barrier(2)
+
+    def find_decision_by_request(self, tenant_id: str, request_id: str):
+        prior = super().find_decision_by_request(tenant_id, request_id)
+        if prior is None:
+            self.initial_reads.wait(timeout=5)
+        return prior
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_concurrent_duplicate_request_returns_one_postgres_decision() -> None:
+    repository = BarrierPostgresAuthorizationRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    service = AuthorizationService(repository, RegistryFloorRiskProvider(), "integration", "f" * 64)
+    identity = AuthenticatedIdentity(
+        tenant_id="tnt_bank-a",
+        agent_id="agt_wealth-01",
+        subject="test",
+        delegation_chain=["agt_wealth-01"],
+    )
+    active_tool = repository.get_tool("tnt_bank-a", "tool_transfer")
+    assert active_tool is not None
+
+    def concurrent_context():
+        request = context("018f47a6-7b42-7c00-8000-000000000199")
+        request.tool.binding_profile.profile_id = active_tool.profile_id
+        request.tool.binding_profile.profile_version = active_tool.profile_version
+        return request
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        futures = [
+            workers.submit(
+                service.authorize,
+                identity,
+                concurrent_context(),
+            )
+            for _ in range(2)
+        ]
+        responses = [future.result(timeout=10) for future in futures]
+    assert responses[0] == responses[1]
+    with repository.pool.connection() as connection, connection.transaction():
+        repository._scope(connection, "tnt_bank-a")
+        count = connection.execute(
+            "SELECT count(*) FROM mizan.adr_records WHERE request_id=%s",
+            ("018f47a6-7b42-7c00-8000-000000000199",),
+        ).fetchone()[0]
+    assert count == 1

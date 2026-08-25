@@ -10,6 +10,7 @@ from uuid import UUID
 
 import rfc8785
 from psycopg import Error as PostgresError
+from psycopg.errors import UniqueViolation
 
 from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .models import (
@@ -19,7 +20,12 @@ from .models import (
     PersistedDecision,
     PolicyMatch,
 )
-from .ports import AuthorizationRepository, EvidenceWriteError, RiskProvider
+from .ports import (
+    AuthorizationRepository,
+    DuplicateRequestIdError,
+    EvidenceWriteError,
+    RiskProvider,
+)
 from .problems import Problem
 
 RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
@@ -195,6 +201,15 @@ class AuthorizationService:
         )
         try:
             self.repository.persist_decision(persisted, adr, context_document)
+        except DuplicateRequestIdError:
+            return self._recover_concurrent_request(identity.tenant_id, context, context_hash)
+        except UniqueViolation as exc:
+            if exc.diag.constraint_name not in {
+                "adr_records_tenant_id_request_id_key",
+                "adr_records_pkey",
+            }:
+                raise
+            return self._recover_concurrent_request(identity.tenant_id, context, context_hash)
         except EXPECTED_EVIDENCE_ERRORS as exc:
             raise Problem(
                 503, "evidence_write_failed", "Decision was not returned because evidence failed"
@@ -202,6 +217,20 @@ class AuthorizationService:
         if terminal_problem is not None:
             raise terminal_problem
         return response
+
+    def _recover_concurrent_request(
+        self, tenant_id: str, context: EvaluationContext, context_hash: str
+    ) -> AuthorizationResponse:
+        prior = self.repository.find_decision_by_request(tenant_id, str(context.request_id))
+        if prior is None:
+            raise Problem(
+                409,
+                "idempotency_race_unresolved",
+                "request_id was committed concurrently but the prior decision is unreadable",
+            )
+        if prior.context_hash != context_hash:
+            raise Problem(409, "idempotency_conflict", "request_id was used for another context")
+        return prior.response
 
     def _system_fail_closed(
         self,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 import pytest
@@ -247,6 +249,18 @@ class UnexpectedPersistenceRepository(InMemoryAuthorizationRepository):
         raise ValueError("unexpected persistence defect")
 
 
+class ConcurrentReplayRepository(InMemoryAuthorizationRepository):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.initial_reads = Barrier(2)
+
+    def find_decision_by_request(self, tenant_id: str, request_id: str):
+        existing = super().find_decision_by_request(tenant_id, request_id)
+        if existing is None and not self.decisions:
+            self.initial_reads.wait(timeout=2)
+        return existing
+
+
 def _service_with_repository(
     repository: InMemoryAuthorizationRepository, risk_provider: Any = None
 ) -> AuthorizationService:
@@ -306,6 +320,20 @@ def test_unexpected_persistence_exception_is_not_swallowed() -> None:
     )
     with pytest.raises(ValueError, match="unexpected persistence defect"):
         _service_with_repository(repository).authorize(identity(), context())
+
+
+def test_concurrent_duplicate_request_returns_one_persisted_decision() -> None:
+    _, template = service()
+    repository = ConcurrentReplayRepository(
+        agents=template.agents.values(), tools=template.tools.values()
+    )
+    subject = _service_with_repository(repository)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        futures = [workers.submit(subject.authorize, identity(), context()) for _ in range(2)]
+        responses = [future.result(timeout=2) for future in futures]
+    assert responses[0].decision_id == responses[1].decision_id
+    assert responses[0] == responses[1]
+    assert len(repository.adr_documents) == 1
 
 
 def test_delegation_requires_registered_edge_depth_and_parent_tool_permission() -> None:

@@ -168,3 +168,19 @@ materialized by the security-event consumer. The object evidence publisher there
 `decision`, `decision_event`, and `audit` aggregate types; otherwise a payload-free SIEM event could
 crash or starve immutable segment publication. Execution-token replay emits a payload-free security
 notification containing only the decision id, authenticated workload, and a hash of `jti`.
+
+## Implementation Amendment E — request-id races converge on one record
+
+**Date:** 2026-08-25 · **Trigger:** R-004 F-6 · **Spec anchors:** SPEC v1.3.1 §3, I-1
+
+PostgreSQL remains the idempotency authority. Two authorization transactions may both observe no
+prior row, but only one may commit `UNIQUE(tenant_id, request_id)`. The loser recognizes only the
+named `adr_records_tenant_id_request_id_key` violation (or the deterministic decision-id primary-key
+collision for that same request), waits for transaction unwind, re-reads the
+winner under tenant RLS, and returns that response when `context_hash` matches. A missing winner or
+different context returns 409. Other uniqueness or persistence failures retain their own identity
+and must never be translated into idempotent success or generic evidence outage.
+
+The in-memory adapter applies the same atomic check under a lock, keeping unit evidence shape and
+concurrency semantics aligned with PostgreSQL. In either adapter exactly one ADR_Record and outbox
+event exists for a request id, even when both callers entered evaluation concurrently.
