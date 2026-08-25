@@ -82,6 +82,7 @@ answer here even when it is unflattering.
 | Date | Answer | Basis |
 |---|---|---|
 | 2026-08-25 | **No** | `OutboxPublisher.anchor()` signs with `Ed25519PrivateKey.generate()`; no external attestation exists (R-005 F-13/F-14) |
+| 2026-08-25 (CP-A) | **No** | Unchanged, and now stated by the tool itself: `verify_evidence_export.py` prints *"a party holding Mizan's database and signing key could rebuild and re-sign this history."* Anchors chain, order, and verify offline (T-030/T-032), which makes omission and replay visible — but the signer is still inside the boundary. Saying it out loud is better than silent falsity; it is not a yes (R-006 §4) |
 | _pending T-036_ | — | Re-apply once RFC 3161 attestation and offline verification are live |
 
 ---

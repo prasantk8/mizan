@@ -1,7 +1,7 @@
 # CODEX — Stage 3 Work Order: The Evidence Plane Becomes Checkable By A Stranger
 
 **Issued:** 2026-08-25 · **Issuer:** CLAUDE lane (R-005) · **Ratified by:** human owner (R-005 §8)
-**Scope:** seventeen tasks, one order, one commit each · **Authority:** `WORK_LOG.md` remains the protocol;
+**Scope:** twenty tasks (seventeen at issue; three inserted at CP-A by R-006), one order, one commit each · **Authority:** `WORK_LOG.md` remains the protocol;
 this brief is the stage context that does not fit in it.
 
 ---
@@ -57,9 +57,11 @@ your queue. Assume every claim you make will be re-run.
 
 1. **One task, one commit.** No bundling, no "while I was in there." A change-set that spans two task IDs
    is rejected on sight.
-2. **H-3 is absolute.** Any change to a schema, endpoint, event, state machine, invariant, **or config key**
-   requires the ADR delta *in the same change-set*. Spec wins over code. A commit that changes the anchor
-   payload without amending ADR-004 and SPEC is invalid and the next agent reverts it.
+2. **H-3 is absolute.** Any change to a schema, endpoint, event, state machine, or invariant requires the
+   ADR delta *in the same change-set*. Spec wins over code. A commit that changes the anchor payload without
+   amending ADR-004 and SPEC is invalid and the next agent reverts it. **Config keys** *(clause amended
+   post-hoc at CP-A — R-006 V-1)*: **every** key registers in SPEC in the same change-set, no exception; an
+   ADR delta is additionally required only where the key changes contract-bearing runtime behaviour.
 3. **Every fix ships with the test that fails on the pre-fix commit — and you name that SHA in the WORK_LOG
    line.** This was omitted last stage. It will be sampled again by reverting to the SHA you name and
    running the test. A test that passes on the pre-fix commit is not a regression test; it is decoration.
@@ -76,12 +78,19 @@ your queue. Assume every claim you make will be re-run.
    evidence. A stage report with no parked item, no surprise, and no stated limitation is the report most
    likely to be sent back — Stage 2's was, and two findings came out of it.
 8. **Lane discipline (H-4)** and **claim discipline (H-1/H-8)** unchanged. CI is authoritative.
+9. **A guarantee is demonstrated by rejecting the old output, not by an `ImportError`** *(added by R-006 V-7
+   at CP-A)*. Where a task adds a *guarantee* rather than fixing a *behaviour*, the pre-fix demonstration
+   must show the **new gate rejecting the artifact the old code produced** — for T-030 that was the anchor
+   payload the pre-fix `anchor()` emitted, carrying no `anchor_number`. "The module did not exist yet"
+   proves the code is new. The rule exists to demonstrate the defect. Keep the pre-fix SHA line; add this.
 
 ---
 
 ## 3. The sequence
 
-Seventeen tasks. **Do not reorder without recording the reason in the WORK_LOG.** The order is not arbitrary:
+Twenty tasks — the original seventeen plus T-043/T-042/T-041, inserted at CP-A and numbered 4a/4b/4c because
+they harden what T-030 and T-032 just built rather than extending it. **Do not reorder without recording the
+reason in the WORK_LOG.** The order is not arbitrary:
 each step is additive to the record shape, and nothing later weakens anything earlier.
 
 | # | Task | Spec | Why here |
@@ -90,6 +99,9 @@ each step is additive to the record shape, and nothing later weakens anything ea
 | 2 | **T-029** | R-005 §6 | Trivial, and every later benchmark claim depends on it existing |
 | 3 | **T-030** | R-005 §6 | Everything downstream assumes the anchor set is sound |
 | 4 | **T-032** | R-005 §6 | The offline verifier is the only forcing function proving the export is complete |
+| 4a | **T-043** | R-006 §3 V-6 | *Inserted at CP-A.* The export path has never run against the real pipeline and no operator can produce a bundle — prove T-032 real before building on it |
+| 4b | **T-042** | R-006 §3 V-4/V-5 | *Inserted at CP-A.* Bind every in-range anchor to its record, pin the left edge, stop crediting unsigned checkpoints |
+| 4c | **T-041** | R-006 §3 V-1/V-2 | *Inserted at CP-A.* A forgeable `commit_sha` makes rule 6 decorative |
 | 5 | **T-033** | R-005 §6 | The provider seam, and the mandatory I-11 correction |
 | 6 | **T-025** | R-005 §10 | Custody must be real before an external party signs anything |
 | 7 | **T-036** | R-005 §10 | RFC 3161 + countersignature — the layer that ends the testimony problem |
@@ -108,7 +120,7 @@ each step is additive to the record shape, and nothing later weakens anything ea
 
 ## 4. Checkpoints — stop and report
 
-Do **not** run seventeen commits unattended. Stop at each checkpoint, report, and wait.
+Do **not** run twenty commits unattended. Stop at each checkpoint, report, and wait.
 
 - **CP-A — after T-032.** The anchor is sound and a stranger can verify a bundle. Report: the verifier run
   in a clean virtualenv with the network off, plus each tamper fixture's rejection message.
