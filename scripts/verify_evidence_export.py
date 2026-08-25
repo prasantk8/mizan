@@ -145,6 +145,25 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
         )
     if anchors[-1]["payload"].get("head_hash") != records[-1]["record_hash"]:
         raise VerificationFailure("terminal anchor head does not match the terminal record")
+    records_by_sequence = {record["sequence_number"]: record for record in records}
+    preceding_anchor = None
+    for row in anchors:
+        payload = row["payload"]
+        terminal = payload["to_sequence"]
+        if terminal == range_start - 1:
+            preceding_anchor = payload
+        record = records_by_sequence.get(terminal)
+        if record is not None and payload.get("head_hash") != record["record_hash"]:
+            raise VerificationFailure(
+                f"anchor {payload['anchor_number']} head does not match record {terminal}"
+            )
+    if range_start > 0:
+        if preceding_anchor is None:
+            raise VerificationFailure("left-edge anchor is missing")
+        if preceding_anchor.get("head_hash") != records[0]["prev_hash"]:
+            raise VerificationFailure(
+                f"left-edge anchor head does not match record {range_start} previous hash"
+            )
 
     expected_checkpoint_from = range_start
     for index, checkpoint in enumerate(checkpoints):
@@ -181,7 +200,8 @@ def main() -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     print(
-        "PASS: The exported records, receipts, checkpoints, and complete anchor chain verified "
+        "PASS: The exported records, signed receipts, and complete signed anchor chain verified; "
+        "unsigned checkpoints were used only as a parallel-verification performance aid "
         f"for sequences {result['from_sequence']} through {result['to_sequence']} "
         f"({result['records']} records, {result['anchors']} anchors)."
     )

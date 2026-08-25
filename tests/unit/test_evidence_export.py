@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -19,13 +20,25 @@ class ExportRepository:
         self.anchor_rows = anchors
 
     def receipt_rows(self, tenant_id, stream_id, start=None, end=None):
-        return self.receipts
+        return [
+            row
+            for row in self.receipts
+            if (start is None or row["payload"]["sequence_number"] >= start)
+            and (end is None or row["payload"]["sequence_number"] <= end)
+        ]
 
     def anchors(self, tenant_id, stream_id):
         return self.anchor_rows
 
 
-def build_bundle(root: Path, count: int = 4) -> Path:
+def build_bundle(
+    root: Path,
+    count: int = 4,
+    *,
+    anchor_interval: int | None = None,
+    anchor_head_overrides: dict[int, str] | None = None,
+    export_start: int | None = None,
+) -> Path:
     signer = Ed25519EvidenceSigner.generate("local://evidence/export-test")
     store = LocalImmutableObjectStore(root / "objects")
     records: list[dict] = []
@@ -55,25 +68,32 @@ def build_bundle(root: Path, count: int = 4) -> Path:
             "key_id": signer.key_id,
         }
         receipts.append({"payload": payload, "signature": signer.sign(payload)})
-    anchor_payload = {
-        "anchor_id": "018f47a6-7b42-7c00-8000-00000000abcd",
-        "tenant_id": "tnt_bank-a",
-        "stream_id": "tnt_bank-a:adr:0",
-        "anchor_number": 0,
-        "prev_anchor_hash": "0" * 64,
-        "from_sequence": 0,
-        "to_sequence": count - 1,
-        "covered_record_count": count,
-        "head_hash": records[-1]["record_hash"],
-        "key_id": signer.key_id,
-        "anchored_at": "2026-08-25T00:00:00Z",
-        "object_key": "anchors/tnt_bank-a/export/3.json",
-        "object_version": "fixture-version",
-    }
-    repository = ExportRepository(
-        receipts,
-        [{"payload": anchor_payload, "signature": signer.sign(anchor_payload)}],
-    )
+    anchor_interval = anchor_interval or count
+    anchor_head_overrides = anchor_head_overrides or {}
+    anchor_rows = []
+    previous_anchor_hash = "0" * 64
+    for anchor_number, from_sequence in enumerate(range(0, count, anchor_interval)):
+        to_sequence = min(from_sequence + anchor_interval - 1, count - 1)
+        anchor_payload = {
+            "anchor_id": f"018f47a6-7b42-7c00-8000-{anchor_number:012d}",
+            "tenant_id": "tnt_bank-a",
+            "stream_id": "tnt_bank-a:adr:0",
+            "anchor_number": anchor_number,
+            "prev_anchor_hash": previous_anchor_hash,
+            "from_sequence": from_sequence,
+            "to_sequence": to_sequence,
+            "covered_record_count": to_sequence - from_sequence + 1,
+            "head_hash": anchor_head_overrides.get(
+                anchor_number, records[to_sequence]["record_hash"]
+            ),
+            "key_id": signer.key_id,
+            "anchored_at": "2026-08-25T00:00:00Z",
+            "object_key": f"anchors/tnt_bank-a/export/{to_sequence}.json",
+            "object_version": "fixture-version",
+        }
+        anchor_rows.append({"payload": anchor_payload, "signature": signer.sign(anchor_payload)})
+        previous_anchor_hash = canonical_hash(anchor_payload)
+    repository = ExportRepository(receipts, anchor_rows)
     return export_evidence_bundle(
         repository,
         store,
@@ -81,6 +101,7 @@ def build_bundle(root: Path, count: int = 4) -> Path:
         "tnt_bank-a",
         "tnt_bank-a:adr:0",
         root / "bundle",
+        start=export_start,
         checkpoint_interval=2,
     )
 
@@ -92,8 +113,9 @@ def refresh_manifest(bundle: Path, name: str) -> None:
 
 
 def run_verifier(bundle: Path) -> subprocess.CompletedProcess[str]:
+    verifier = os.getenv("MIZAN_TEST_VERIFIER", "scripts/verify_evidence_export.py")
     return subprocess.run(
-        [sys.executable, "scripts/verify_evidence_export.py", str(bundle)],
+        [sys.executable, verifier, str(bundle)],
         check=False,
         capture_output=True,
         text=True,
@@ -107,6 +129,7 @@ def test_standalone_export_verifies_and_discloses_self_signed_limit(tmp_path: Pa
     assert "PASS:" in result.stdout
     assert "anchor signature is Mizan's own" in result.stdout
     assert "holding Mizan's database and signing key" in result.stdout
+    assert "unsigned checkpoints were used only as a parallel-verification performance aid" in result.stdout
     source = Path("scripts/verify_evidence_export.py").read_text(encoding="utf-8")
     assert "mizan_control_plane" not in source
     assert "rfc8785==0.1.4 cryptography==50.0.0" in source
@@ -158,3 +181,28 @@ def test_bundle_is_self_contained_after_source_objects_disappear(tmp_path: Path)
     bundle = build_bundle(tmp_path)
     shutil.rmtree(tmp_path / "objects")
     assert run_verifier(bundle).returncode == 0
+
+
+def test_validly_signed_intermediate_anchor_must_bind_to_its_record(tmp_path: Path) -> None:
+    bundle = build_bundle(
+        tmp_path,
+        count=6,
+        anchor_interval=2,
+        anchor_head_overrides={1: "f" * 64},
+    )
+    result = run_verifier(bundle)
+    assert result.returncode == 1
+    assert "anchor 1 head does not match record 3" in result.stderr
+
+
+def test_non_genesis_range_is_pinned_by_preceding_anchor(tmp_path: Path) -> None:
+    bundle = build_bundle(
+        tmp_path,
+        count=4,
+        anchor_interval=2,
+        anchor_head_overrides={0: "e" * 64},
+        export_start=2,
+    )
+    result = run_verifier(bundle)
+    assert result.returncode == 1
+    assert "left-edge anchor head does not match record 2 previous hash" in result.stderr

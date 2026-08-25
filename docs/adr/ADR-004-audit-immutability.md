@@ -324,3 +324,12 @@ record documents only from receipt-addressed immutable objects. Deployment autho
 audit remain operator controls outside the CLI. A live PostgreSQL contract test must traverse authorization,
 outbox publication, anchoring, the operator command, and the standalone verifier across subprocess boundaries;
 hand-built fixtures alone are not evidence that the production pipeline and portable verifier agree.
+
+### G.8 Implementation delta — exported-range anchor binding (T-042)
+
+Offline verification binds every anchor whose terminal sequence falls within the exported range to that
+record's hash, not only the final anchor. For non-genesis exports, the complete anchor set must include the
+anchor ending immediately before the range, and its signed `head_hash` must equal the first exported record's
+`prev_hash`; the bundle may not establish its own left edge. Export checkpoints remain unsigned derived
+indexes for parallel verification and must be labelled as performance aids, never listed as independent
+evidence in a successful verdict.

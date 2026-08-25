@@ -1672,7 +1672,10 @@ Authorization transaction (single Postgres txn)
   after the prior anchor, and `covered_record_count = to_sequence - from_sequence + 1`. Allocation and
   insertion occur in one transaction while holding the stream's evidence-chain-head row lock. Verifiers
   reject missing anchor numbers, stale terminal anchors, non-dense ranges, broken prior-anchor hashes, and
-  a count that differs from either the declared range or the records actually present.
+  a count that differs from either the declared range or the records actually present. Every anchor ending
+  inside an exported range is additionally bound to that sequence's `record_hash`; for a non-genesis range,
+  the included anchor ending at `from_sequence - 1` must bind its `head_hash` to the first record's
+  `prev_hash`. Unsigned export checkpoints are performance aids, never independent evidence.
 - **Evidence export bundle v1.0** is a self-contained directory for one tenant/stream/range containing
   exactly `manifest.json`, `records.json`, `receipts.json`, `anchors.json`, `checkpoints.json`, and
   `keys.json`. The manifest binds every file by SHA-256 and declares the range and current assurance.
