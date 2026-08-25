@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Contract decision gates B-7 and B-8; all independently implementable tasks are implemented.
+Release completion audit; next finding is T-008 configuration drift.
 
 ## Agent Queue
 
@@ -25,7 +25,7 @@ Contract decision gates B-7 and B-8; all independently implementable tasks are i
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | REVIEW |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | REVIEW |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | REVIEW |
-| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | REVIEW |
+| T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | DONE |
 | T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | REVIEW |
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **HUMAN decision required:** Resolve B-7 by defining the authority source for a `review_required` epoch, and B-8 by selecting a bounded caller-argument contract. CODEX then completes T-009/T-004 and runs the final all-task release audit.
+> **T-008 (CODEX audit):** Reconcile evidence configuration defaults with SPEC §8, then continue the per-task completion audit.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-014 · Release audit found CI lacked uv installation and never ran lint/unit/invariant/performance gates; added locked setup-uv jobs for Ruff, 60 unit/property tests, 100k chain benchmark, and live Postgres suite; local equivalents pass; task independently audited DONE · next: T-008 audit
 - 2026-08-25 · CODEX · T-007 · Added Hypothesis chain/representability/approval fuzzing and I-1..I-26/V-1..V-21 coverage index; closed delegation, quorum, policy dual-control, binding unknown-field, DecisionEvent retry, external receipt validation, audit-attestation and encrypted degraded-WAL gaps; 60 unit + four live integration tests pass; B-7/B-8 remain contract decisions · next: HUMAN B-7/B-8
 - 2026-08-25 · CODEX · T-010 · Added responsive same-origin operator console for decision filters/details, audit browsing and signed-chain verification; implemented missing tenant-RLS decision/audit query endpoints with cursor pagination and live integration assertions; 43 unit + four live integration tests pass · next: T-007 CODEX
 - 2026-08-25 · CODEX · T-015 · Added independently anchored checkpoint-range verification with parallel workers and boundary-continuity checks, deterministic 100k fixture, corruption tests and Make target; M3 Max verified 100k in 0.917s vs <10s gate; 43 unit tests pass · next: T-010 CODEX
