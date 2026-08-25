@@ -208,6 +208,7 @@ class ApprovalVoteRequest(StrictModel):
 
 class ExecuteRequest(StrictModel):
     execution_token: str
+    arguments: dict[str, Any] = Field(max_length=256)
     idempotency_key: str | None = Field(default=None, max_length=128)
 
 

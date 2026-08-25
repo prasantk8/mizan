@@ -329,6 +329,7 @@ def create_app(
             request.execution_token,
             decision_id,
             peer_spiffe,
+            request.arguments,
             request.idempotency_key,
         )
 

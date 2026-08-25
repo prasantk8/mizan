@@ -100,14 +100,22 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
 
     codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
     execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, verifier)
+    execution_arguments = {"amount": 12500, "request_time": "execution-attempt-1"}
     token = execution.issue("tnt_bank-a", response.decision_id)
     with pytest.raises(Problem) as wrong_executor:
-        execution.redeem(token, response.decision_id, "spiffe://mizan/executor/attacker", "attack")
+        execution.redeem(
+            token,
+            response.decision_id,
+            "spiffe://mizan/executor/attacker",
+            execution_arguments,
+            "attack",
+        )
     assert wrong_executor.value.status == 403
     lease = execution.redeem(
         token,
         response.decision_id,
         "spiffe://mizan/executor/wealth",
+        execution_arguments,
         "execution-1",
     )
     assert (
@@ -115,15 +123,25 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
             token,
             response.decision_id,
             "spiffe://mizan/executor/wealth",
+            {"amount": 12500, "request_time": "legitimate-retry"},
             "execution-1",
         )["lease_id"]
         == lease["lease_id"]
     )
+    with pytest.raises(Problem, match="arguments differ"):
+        execution.redeem(
+            token,
+            response.decision_id,
+            "spiffe://mizan/executor/wealth",
+            {"amount": 99999, "request_time": "same-idempotency-key"},
+            "execution-1",
+        )
     with pytest.raises(Problem, match="consumed"):
         execution.redeem(
             token,
             response.decision_id,
             "spiffe://mizan/executor/wealth",
+            execution_arguments,
             "different-execution",
         )
     with execution.pool.connection() as connection, connection.transaction():
@@ -156,6 +174,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         expiring_token,
         response.decision_id,
         "spiffe://mizan/executor/wealth",
+        execution_arguments,
         "execution-expiry",
     )
     expired_at = "2020-01-01T00:00:00Z"

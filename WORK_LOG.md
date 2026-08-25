@@ -6,7 +6,7 @@
 
 ## Active Task
 
-R-003 ratified; T-004 complete and T-011 redemption revalidation is next.
+R-003 ratified; T-004/T-011 complete and T-006 semantic policy lifecycle is next.
 
 ## Agent Queue
 
@@ -22,7 +22,7 @@ R-003 ratified; T-004 complete and T-011 redemption revalidation is next.
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | DONE |
-| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | PARKED(B-8) |
+| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | DONE |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | DONE |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | DONE |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | DONE |
@@ -52,7 +52,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-011 (CODEX):** Require bounded arguments at redemption, recompute the pinned binding hash, rerun authoritative enrichment from the immutable normalized snapshot, and reject drift before CAS.
+> **T-006 (CODEX):** Implement the ratified semantic policy hash basis and lifecycle transition endpoint without invalidating historical ADR foreign keys.
 
 ---
 
@@ -71,6 +71,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-011 v1.3 · Required bounded arguments on execute, recomputed the pinned profile hash before both first redemption and idempotent retry, revalidated immutable normalized context against current agent/tool/resource/risk/delegation authority, and rejected changed bound arguments before CAS/lease reuse; 82 unit plus four live integration tests pass; task DONE · next: T-006
 - 2026-08-25 · CODEX · T-004 v1.3 · Added the ratified bounded transient argument contract, server-side binding validation/hash, raw-argument exclusion from policy/evidence/context hashes, and immutable tenant-RLS normalized context snapshots; 82 unit plus four live integration tests pass; task DONE · next: T-011
 - 2026-08-25 · HUMAN · R-003 · Ratified B-7 typed review authority, B-8 bounded arguments/fresh execution revalidation, and B-9 semantic policy hash in all required roles · next: SPEC v1.3 + T-004 CODEX
 - 2026-08-25 · CODEX · T-004 audit · Replaced permissive implementation-only context bags with exact typed customer/business/security/mapped/environment/timestamp models, removed non-schema tool/action fields, generated server trace evidence, and proved the context validates after isolating only the B-8 arguments gap; 80 unit plus four live integration tests pass; PARKED on R-003/B-8 · next: HUMAN ratify R-003

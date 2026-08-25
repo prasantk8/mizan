@@ -12,10 +12,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from psycopg.errors import UniqueViolation
 from psycopg_pool import ConnectionPool
 
-from .canonical import canonical_hash
+from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .evidence import append_decision_event_tx
+from .models import EvaluationContext
+from .ports import RiskProvider
 from .problems import Problem
+from .risk import RegistryFloorRiskProvider
 from .schema_validation import ContractSchemas
+
+RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
 
 def _jti_hash(jti: str) -> str:
@@ -78,10 +83,12 @@ class ExecutionService:
         database_url: str,
         codec: ExecutionTokenCodec,
         receipt_gate: ReceiptGate | None = None,
+        risk_provider: RiskProvider | None = None,
     ) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
         self.codec = codec
         self.receipt_gate = receipt_gate
+        self.risk_provider = risk_provider or RegistryFloorRiskProvider()
 
     @staticmethod
     def _scope(connection: Any, tenant_id: str) -> None:
@@ -181,6 +188,7 @@ class ExecutionService:
         token: str,
         decision_id: str,
         peer_spiffe: str,
+        arguments: dict[str, Any],
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         claims = self.codec.decode(token)
@@ -190,6 +198,7 @@ class ExecutionService:
         now = datetime.now(UTC)
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
+            existing = None
             if idempotency_key:
                 existing = connection.execute(
                     "SELECT document FROM mizan.execution_leases "
@@ -203,17 +212,19 @@ class ExecutionService:
                             "lease_executor_mismatch",
                             "Existing lease belongs to another executor",
                         )
-                    return existing[0]
+                    existing = existing[0]
             row = connection.execute(
-                """SELECT et.consumed_at,a.document,t.document,ag.lifecycle_state
+                """SELECT et.consumed_at,a.document,t.document,ag.lifecycle_state,ac.document
                      FROM mizan.execution_tokens et
                      JOIN mizan.adr_records a ON a.tenant_id=et.tenant_id AND a.decision_id=et.decision_id
+                     JOIN mizan.authorization_contexts ac ON ac.tenant_id=et.tenant_id AND ac.decision_id=et.decision_id
                      JOIN mizan.tools t ON t.tenant_id=et.tenant_id AND t.tool_id=et.tool_id
                      JOIN mizan.agents ag ON ag.tenant_id=et.tenant_id AND ag.agent_id=et.agent_id
+                     JOIN mizan.agent_tools at ON at.tenant_id=et.tenant_id AND at.agent_id=et.agent_id AND at.tool_id=et.tool_id
                     WHERE et.tenant_id=%s AND et.jti_hash=%s FOR UPDATE OF et""",
                 (tenant_id, _jti_hash(claims["jti"])),
             ).fetchone()
-            if row and row[0] is not None:
+            if row and row[0] is not None and existing is None:
                 self._record_security_event(
                     tenant_id,
                     "mizan.security.execution_token_replay",
@@ -230,8 +241,24 @@ class ExecutionService:
                 raise Problem(
                     403, "execution_token_consumed", "Execution capability is absent or consumed"
                 )
-            adr, tool, agent_state = row[1], row[2], row[3]
-            self._revalidate(connection, claims, adr, tool, agent_state)
+            adr, tool, agent_state, normalized_context = row[1], row[2], row[3], row[4]
+            self._revalidate(
+                connection,
+                claims,
+                adr,
+                tool,
+                agent_state,
+                normalized_context,
+                arguments,
+            )
+            if existing is not None:
+                if existing["redeemed_jti"] != claims["jti"]:
+                    raise Problem(
+                        409,
+                        "execution_idempotency_conflict",
+                        "Idempotency key belongs to another capability",
+                    )
+                return existing
             if adr["action"]["type"] == "financial_write":
                 self._require_receipts(connection, tenant_id, decision_id, adr)
             lease_id = "lse_" + uuid4().hex
@@ -460,13 +487,15 @@ class ExecutionService:
             ),
         )
 
-    @staticmethod
     def _revalidate(
+        self,
         connection: Any,
         claims: dict[str, Any],
         adr: dict[str, Any],
         tool: dict[str, Any],
         agent_state: str,
+        normalized_context: dict[str, Any],
+        arguments: dict[str, Any],
     ) -> None:
         expected = {
             "tenant_id": adr["tenant_id"],
@@ -497,6 +526,100 @@ class ExecutionService:
             )
         if agent_state not in {"ACTIVE", "MONITORED"}:
             raise Problem(403, "agent_not_active", "Agent is no longer active")
+        profile = connection.execute(
+            "SELECT bound_pointers,volatile_pointers FROM mizan.binding_profiles "
+            "WHERE tenant_id=%s AND profile_id=%s AND profile_version=%s",
+            (
+                claims["tenant_id"],
+                claims["binding_profile"]["profile_id"],
+                claims["binding_profile"]["profile_version"],
+            ),
+        ).fetchone()
+        if not profile:
+            raise Problem(403, "binding_profile_missing", "Pinned binding profile is unavailable")
+        validate_binding_arguments(arguments, profile[0], profile[1])
+        if binding_hash(arguments, profile[0]) != claims["parameters_hash"]:
+            raise Problem(
+                403, "execution_arguments_drift", "Execution arguments differ from authorization"
+            )
+        current_context = json.loads(json.dumps(normalized_context))
+        current_context["tool"]["arguments"] = arguments
+        try:
+            evaluation_context = EvaluationContext.model_validate(current_context)
+        except ValueError as exc:
+            raise Problem(
+                403, "execution_context_invalid", "Stored context cannot be revalidated"
+            ) from exc
+        agent = connection.execute(
+            "SELECT version,parent_agent_id,document FROM mizan.agents "
+            "WHERE tenant_id=%s AND agent_id=%s",
+            (claims["tenant_id"], claims["agent_id"]),
+        ).fetchone()
+        if not agent or agent[0] != evaluation_context.agent.version:
+            raise Problem(403, "agent_version_changed", "Agent version changed after authorization")
+        chain = adr["agent"]["delegation_chain"]
+        previous_document = None
+        root_document = None
+        for index, agent_id in enumerate(chain):
+            current = connection.execute(
+                "SELECT parent_agent_id,lifecycle_state,document,"
+                "EXISTS(SELECT 1 FROM mizan.agent_tools at WHERE at.tenant_id=a.tenant_id "
+                "AND at.agent_id=a.agent_id AND at.tool_id=%s) "
+                "FROM mizan.agents a WHERE tenant_id=%s AND agent_id=%s",
+                (claims["tool_id"], claims["tenant_id"], agent_id),
+            ).fetchone()
+            expected_parent = None if index == 0 else chain[index - 1]
+            if (
+                not current
+                or current[0] != expected_parent
+                or current[1] not in {"ACTIVE", "MONITORED"}
+                or not current[3]
+            ):
+                raise Problem(
+                    403,
+                    "delegation_authority_changed",
+                    "Delegation chain or tool authority changed after authorization",
+                )
+            if index and agent_id not in previous_document["delegation"]["allowed_agent_ids"]:
+                raise Problem(
+                    403,
+                    "delegation_authority_changed",
+                    "Delegation edge is no longer authorized",
+                )
+            previous_document = current[2]
+            if index == 0:
+                root_document = current[2]
+        if len(chain) > root_document.get("delegation", {}).get("max_delegation_depth", 0) + 1:
+            raise Problem(403, "delegation_authority_changed", "Delegation depth changed")
+        evaluation_context.resource.resource_owner = tool["resource_owner"]
+        classifications = [
+            "public",
+            "internal",
+            "confidential",
+            "pii",
+            "financial",
+            "secret",
+        ]
+        if classifications.index(tool["data_classification"]) > classifications.index(
+            evaluation_context.resource.data_classification
+        ):
+            evaluation_context.resource.data_classification = tool["data_classification"]
+        refreshed = evaluation_context.model_dump(mode="json", exclude={"tenant_id"})
+        refreshed["tool"].pop("arguments")
+        if canonical_hash(refreshed) != claims["context_hash"]:
+            raise Problem(403, "execution_context_drift", "Authoritative context changed")
+        try:
+            risk = self.risk_provider.evaluate(evaluation_context, tool["risk_tier"])
+        except Exception as exc:
+            raise Problem(
+                503, "risk_engine_unavailable", "Execution risk revalidation failed"
+            ) from exc
+        if RISK_ORDER[risk["level"]] < RISK_ORDER[tool["risk_tier"]]:
+            risk["level"] = tool["risk_tier"]
+        if RISK_ORDER[risk["level"]] > RISK_ORDER[adr["risk"]["level"]]:
+            raise Problem(
+                403, "execution_risk_increased", "Execution risk increased after authorization"
+            )
         if claims.get("approval_epoch_id") is not None:
             approval = connection.execute(
                 "SELECT document FROM mizan.approvals WHERE tenant_id=%s AND decision_id=%s",
