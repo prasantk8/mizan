@@ -1,0 +1,9 @@
+{
+  "anchors": [
+    {"payload": {"anchor_number": 0, "prev_anchor_hash": "0000000000000000000000000000000000000000000000000000000000000000", "from_sequence": 0, "to_sequence": 0, "covered_record_count": 1, "head_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+  ],
+  "records": [
+    {"sequence_number": 0, "record_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"sequence_number": 1, "record_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  ]
+}

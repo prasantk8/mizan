@@ -1666,5 +1666,12 @@ Authorization transaction (single Postgres txn)
 - **Object storage** holds the authoritative evidence corpus and the anchors that make tampering detectable *outside the Postgres administrative boundary* — which is what makes I-11 meaningful against a privileged operator.
 - Atomic publication is mandatory: outbox + idempotent consumers. A direct dual write to Postgres and Kafka is a spec violation (G8).
 - **Publication receipts close the pre-anchor execution gap.** The object-store writer returns a signed receipt binding tenant, stream, sequence, and record hash. `financial_write` redemption requires receipts covering the ADR_Record and the deciding approval DecisionEvent (I-25/V-20). Other actions may proceed asynchronously only while unpublished age remains below `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS`; exceeding it opens the evidence breaker.
+- **Anchor sets are dense chained evidence.** Every new signed anchor payload includes `anchor_number`
+  (zero-based and monotonic per tenant/stream), `prev_anchor_hash` (SHA-256 over the prior complete signed
+  payload, with `"0"*64` at genesis), and `covered_record_count`. Its range begins exactly one sequence
+  after the prior anchor, and `covered_record_count = to_sequence - from_sequence + 1`. Allocation and
+  insertion occur in one transaction while holding the stream's evidence-chain-head row lock. Verifiers
+  reject missing anchor numbers, stale terminal anchors, non-dense ranges, broken prior-anchor hashes, and
+  a count that differs from either the declared range or the records actually present.
 
 **Local development:** do not mock away hash semantics. The contract test set is (a) an in-memory deterministic chain writer for unit tests, (b) golden vectors for RFC 8785 canonicalization and corruption detection, (c) a containerized Postgres/Kafka/object-store integration suite, (d) a generated 100k-record fixture verified via checkpointed parallel ranges in a separate performance profile.

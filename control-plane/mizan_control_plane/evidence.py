@@ -502,11 +502,37 @@ class EvidenceRepository:
     def record_anchor(self, tenant_id: str, anchor: dict[str, Any], signature: str) -> None:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
+            chain_head = connection.execute(
+                "SELECT 1 FROM mizan.evidence_chain_heads "
+                "WHERE tenant_id=%s AND stream_id=%s FOR UPDATE",
+                (tenant_id, anchor["stream_id"]),
+            ).fetchone()
+            if not chain_head:
+                raise Problem(404, "evidence_stream_missing", "Evidence stream does not exist")
+            previous = connection.execute(
+                "SELECT anchor_number,to_sequence,signed_payload FROM mizan.evidence_anchors "
+                "WHERE tenant_id=%s AND stream_id=%s ORDER BY anchor_number DESC LIMIT 1",
+                (tenant_id, anchor["stream_id"]),
+            ).fetchone()
+            expected_number = 0 if previous is None else previous[0] + 1
+            expected_from = 0 if previous is None else previous[1] + 1
+            expected_hash = "0" * 64 if previous is None else canonical_hash(previous[2])
+            if (
+                anchor["anchor_number"] != expected_number
+                or anchor["from_sequence"] != expected_from
+                or anchor["prev_anchor_hash"] != expected_hash
+            ):
+                raise Problem(
+                    409,
+                    "anchor_head_conflict",
+                    "Anchor number, range, or previous hash lost the stream-head race",
+                )
             connection.execute(
                 """INSERT INTO mizan.evidence_anchors(
                      tenant_id,anchor_id,stream_id,from_sequence,to_sequence,head_hash,
+                     prev_anchor_hash,anchor_number,covered_record_count,
                      object_version,object_key,key_id,signature,signed_payload
-                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     tenant_id,
                     anchor["anchor_id"],
@@ -514,6 +540,9 @@ class EvidenceRepository:
                     anchor["from_sequence"],
                     anchor["to_sequence"],
                     anchor["head_hash"],
+                    anchor["prev_anchor_hash"],
+                    anchor["anchor_number"],
+                    anchor["covered_record_count"],
                     anchor["object_version"],
                     anchor["object_key"],
                     anchor["key_id"],
@@ -527,7 +556,7 @@ class EvidenceRepository:
             self._scope(connection, tenant_id)
             rows = connection.execute(
                 "SELECT signed_payload,signature FROM mizan.evidence_anchors "
-                "WHERE tenant_id=%s AND stream_id=%s ORDER BY to_sequence",
+                "WHERE tenant_id=%s AND stream_id=%s ORDER BY anchor_number NULLS FIRST,to_sequence",
                 (tenant_id, stream_id),
             ).fetchall()
             return [{"payload": row[0], "signature": row[1]} for row in rows]
@@ -714,7 +743,15 @@ class OutboxPublisher:
                 published += 1
         return published
 
-    def anchor(self, tenant_id: str, stream_id: str, from_sequence: int = 0) -> dict[str, Any]:
+    def anchor(
+        self, tenant_id: str, stream_id: str, from_sequence: int | None = None
+    ) -> dict[str, Any]:
+        prior = self.repository.anchors(tenant_id, stream_id)
+        previous_payload = prior[-1]["payload"] if prior else None
+        expected_from = 0 if previous_payload is None else previous_payload["to_sequence"] + 1
+        if from_sequence is not None and from_sequence != expected_from:
+            raise Problem(409, "anchor_range_not_dense", "Anchor range must continue the prior anchor")
+        from_sequence = expected_from
         receipts = self.repository.receipt_rows(tenant_id, stream_id, from_sequence)
         if not receipts:
             raise Problem(
@@ -728,8 +765,13 @@ class OutboxPublisher:
             "anchor_id": str(uuid4()),
             "tenant_id": tenant_id,
             "stream_id": stream_id,
+            "anchor_number": 0 if previous_payload is None else previous_payload["anchor_number"] + 1,
+            "prev_anchor_hash": (
+                "0" * 64 if previous_payload is None else canonical_hash(previous_payload)
+            ),
             "from_sequence": from_sequence,
             "to_sequence": last["sequence_number"],
+            "covered_record_count": len(receipts),
             "head_hash": last["record_hash"],
             "key_id": self.signer.key_id,
             "anchored_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -748,6 +790,82 @@ class VerificationResult:
     first_broken_sequence: int | None = None
     expected: str | None = None
     actual: str | None = None
+
+
+def verify_anchor_chain(
+    anchor_rows: list[dict[str, Any]], records: list[dict[str, Any]] | None = None
+) -> VerificationResult:
+    ordered = sorted(
+        anchor_rows,
+        key=lambda row: row.get("payload", {}).get("anchor_number", -1),
+    )
+    expected_previous = "0" * 64
+    expected_from = 0
+    for expected_number, row in enumerate(ordered):
+        payload = row.get("payload", {})
+        required = {
+            "anchor_number", "prev_anchor_hash", "from_sequence", "to_sequence",
+            "covered_record_count", "head_hash",
+        }
+        missing = required - set(payload)
+        if missing:
+            return VerificationResult(False, 0, None, "anchor chain metadata", f"missing {sorted(missing)}")
+        if payload["anchor_number"] != expected_number:
+            return VerificationResult(
+                False, 0, payload["from_sequence"],
+                f"anchor_number {expected_number}", f"anchor_number {payload['anchor_number']}",
+            )
+        if payload["prev_anchor_hash"] != expected_previous:
+            return VerificationResult(
+                False, 0, payload["from_sequence"], expected_previous, payload["prev_anchor_hash"]
+            )
+        if payload["from_sequence"] != expected_from:
+            return VerificationResult(
+                False, 0, payload["from_sequence"],
+                f"from_sequence {expected_from}", f"from_sequence {payload['from_sequence']}",
+            )
+        range_count = payload["to_sequence"] - payload["from_sequence"] + 1
+        if payload["covered_record_count"] != range_count:
+            return VerificationResult(
+                False, 0, payload["from_sequence"],
+                f"covered_record_count {range_count}",
+                f"covered_record_count {payload['covered_record_count']}",
+            )
+        if records is not None:
+            covered = [
+                record for record in records
+                if payload["from_sequence"] <= record["sequence_number"] <= payload["to_sequence"]
+            ]
+            if len(covered) != payload["covered_record_count"]:
+                return VerificationResult(
+                    False, len(covered), payload["from_sequence"],
+                    f"covered_record_count {payload['covered_record_count']}",
+                    f"covered records {len(covered)}",
+                )
+            if covered and covered[-1]["record_hash"] != payload["head_hash"]:
+                return VerificationResult(
+                    False, len(covered), payload["to_sequence"],
+                    payload["head_hash"], covered[-1]["record_hash"],
+                )
+        expected_from = payload["to_sequence"] + 1
+        expected_previous = canonical_hash(payload)
+    if records:
+        if not ordered:
+            return VerificationResult(
+                False,
+                len(records),
+                records[-1]["sequence_number"],
+                "signed anchor covering verified range",
+                "no covering anchor",
+            )
+        current = ordered[-1]["payload"]
+        if current["to_sequence"] != records[-1]["sequence_number"]:
+            return VerificationResult(
+                False, len(records), records[-1]["sequence_number"],
+                f"current anchor through {records[-1]['sequence_number']}",
+                f"stale anchor through {current['to_sequence']}",
+            )
+    return VerificationResult(True, 0 if records is None else len(records))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1016,7 +1134,7 @@ class ObjectEvidenceVerifier:
         result = verify_checkpointed_chain(records, checkpoints, self.workers)
         if not result.valid or not verify_anchors:
             return result
-        covered_anchor = False
+        verified_anchor_rows: list[dict[str, Any]] = []
         for anchor_row in self.repository.anchors(tenant_id, stream_id):
             payload = anchor_row["payload"]
             key = self.public_keys.get(payload["key_id"])
@@ -1060,27 +1178,13 @@ class ObjectEvidenceVerifier:
                     "signed anchor payload",
                     "anchor object mismatch",
                 )
-            anchored = [
-                record for record in records if record["sequence_number"] == payload["to_sequence"]
-            ]
-            if anchored:
-                covered_anchor = True
-                if anchored[0]["record_hash"] != payload["head_hash"]:
-                    return VerificationResult(
-                        False,
-                        len(records),
-                        payload["to_sequence"],
-                        payload["head_hash"],
-                        anchored[0]["record_hash"],
-                    )
-        if records and not covered_anchor:
-            return VerificationResult(
-                False,
-                len(records),
-                records[-1]["sequence_number"],
-                "signed anchor covering verified range",
-                "no covering anchor",
-            )
+            verified_anchor_rows.append(anchor_row)
+        anchor_result = verify_anchor_chain(
+            verified_anchor_rows,
+            records if start is None and end is None else None,
+        )
+        if not anchor_result.valid:
+            return anchor_result
         return result
 
     def verify_record_receipt(

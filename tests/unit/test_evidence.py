@@ -12,6 +12,8 @@ from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     LocalImmutableObjectStore,
     ObjectEvidenceVerifier,
+    OutboxPublisher,
+    verify_anchor_chain,
     verify_chain,
     verify_checkpointed_chain,
     verify_signature,
@@ -98,6 +100,9 @@ class FakeEvidenceRepository:
     def anchors(self, tenant_id, stream_id):
         return self.anchor_data
 
+    def record_anchor(self, tenant_id, anchor, signature):
+        self.anchor_data.append({"payload": anchor, "signature": signature})
+
 
 class CountingStore(LocalImmutableObjectStore):
     def __init__(self, root: Path) -> None:
@@ -135,8 +140,11 @@ def test_object_verifier_deduplicates_segments_and_requires_worm_anchor(tmp_path
         "anchor_id": "anchor-1",
         "tenant_id": "tnt_bank-a",
         "stream_id": "tnt_bank-a:adr:0",
+        "anchor_number": 0,
+        "prev_anchor_hash": "0" * 64,
         "from_sequence": 0,
         "to_sequence": 9,
+        "covered_record_count": 10,
         "head_hash": previous,
         "key_id": signer.key_id,
         "anchored_at": "2026-08-25T00:00:00Z",
@@ -155,3 +163,48 @@ def test_object_verifier_deduplicates_segments_and_requires_worm_anchor(tmp_path
     repository.anchor_data = []
     result = verifier.verify("tnt_bank-a", "tnt_bank-a:adr:0")
     assert not result.valid and result.actual == "no covering anchor"
+
+
+def test_publisher_builds_dense_chained_anchor_payloads(tmp_path: Path) -> None:
+    signer = Ed25519EvidenceSigner.generate()
+    repository = FakeEvidenceRepository([], [])
+    publisher = OutboxPublisher(repository, LocalImmutableObjectStore(tmp_path), signer)
+    for sequence in range(2):
+        repository.receipt_data.append(
+            {
+                "payload": {
+                    "sequence_number": sequence,
+                    "record_hash": ("a" if sequence == 0 else "b") * 64,
+                },
+                "signature": "not-used-by-anchor-builder",
+            }
+        )
+        anchor = publisher.anchor("tnt_bank-a", "tnt_bank-a:adr:0")
+        assert anchor["anchor_number"] == sequence
+        assert anchor["from_sequence"] == sequence
+        assert anchor["to_sequence"] == sequence
+        assert anchor["covered_record_count"] == 1
+    assert repository.anchor_data[1]["payload"]["prev_anchor_hash"] == canonical_hash(
+        repository.anchor_data[0]["payload"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_fragment"),
+    [
+        ("removed-middle-anchor", "anchor_number 1"),
+        ("stale-anchor-current", "stale anchor through"),
+        ("removed-record-in-range", "covered records 2"),
+    ],
+)
+def test_anchor_set_tamper_fixtures_are_rejected(
+    fixture_name: str, expected_fragment: str
+) -> None:
+    import json
+
+    fixture = json.loads(
+        Path(f"tests/fixtures/anchor_tamper/{fixture_name}.json").read_text(encoding="utf-8")
+    )
+    result = verify_anchor_chain(fixture["anchors"], fixture["records"])
+    assert not result.valid
+    assert expected_fragment in f"{result.expected} {result.actual}"

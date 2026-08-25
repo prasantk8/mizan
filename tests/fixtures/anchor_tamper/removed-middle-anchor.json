@@ -1,0 +1,11 @@
+{
+  "anchors": [
+    {"payload": {"anchor_number": 0, "prev_anchor_hash": "0000000000000000000000000000000000000000000000000000000000000000", "from_sequence": 0, "to_sequence": 0, "covered_record_count": 1, "head_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+    {"payload": {"anchor_number": 2, "prev_anchor_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "from_sequence": 2, "to_sequence": 2, "covered_record_count": 1, "head_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}
+  ],
+  "records": [
+    {"sequence_number": 0, "record_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"sequence_number": 1, "record_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    {"sequence_number": 2, "record_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+  ]
+}

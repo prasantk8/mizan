@@ -97,6 +97,9 @@ def test_live_control_plane_end_to_end(tmp_path: Path) -> None:
     )
     anchor = publisher.anchor("tnt_bank-a", "tnt_bank-a:adr:0")
     assert anchor["to_sequence"] == 1
+    assert anchor["anchor_number"] == 0
+    assert anchor["prev_anchor_hash"] == "0" * 64
+    assert anchor["covered_record_count"] == 2
     verifier = ObjectEvidenceVerifier(
         evidence_repository,
         store,

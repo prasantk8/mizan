@@ -294,3 +294,13 @@ Stated plainly so nothing is over-claimed to an auditor:
   separate administrative control from the Mizan operator, which must be a documented deployment prerequisite.
   "Same admin signs both" is not external attestation.
 - (~) The Merkle evolution path (Options Considered #2) is unchanged and still additive; T-040 takes it.
+
+### G.5 Implementation delta — chained anchor sets (T-030)
+
+Every new anchor signs a zero-based per-stream `anchor_number`, `prev_anchor_hash` over the prior complete
+signed payload (all-zero genesis), and `covered_record_count`. The range is dense from the prior anchor's
+terminal sequence, and insertion validates/allocates that position while holding the existing stream-head
+row lock. The additive database migration leaves legacy anchor rows nullable and identifiable rather than
+inventing historical chain metadata; offline verification reports those rows as lacking anchor-chain
+coverage. This closes removal, replay, and internal-range-density detection without changing who signs an
+anchor, which remains T-033/T-036.
