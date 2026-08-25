@@ -29,5 +29,5 @@ class Settings:
             evaluator_configuration_hash=environ.get(
                 "MIZAN_EVALUATOR_CONFIGURATION_HASH", "0" * 64
             ),
-            chain_shards_per_tenant=int(environ.get("MIZAN_CHAIN_SHARDS_PER_TENANT", "16")),
+            chain_shards_per_tenant=int(environ.get("MIZAN_CHAIN_SHARDS_PER_TENANT", "4")),
         )

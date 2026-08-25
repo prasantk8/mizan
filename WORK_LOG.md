@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; next finding is T-008 configuration drift.
+Release completion audit; next target is T-003 storage-contract review.
 
 ## Agent Queue
 
@@ -19,14 +19,14 @@ Release completion audit; next finding is T-008 configuration drift.
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | REVIEW |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | REVIEW |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | REVIEW |
-| T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | REVIEW |
+| T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | REVIEW |
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | REVIEW |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | REVIEW |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | REVIEW |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | DONE |
-| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | REVIEW |
+| T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | DONE |
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
 
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-008 (CODEX audit):** Reconcile evidence configuration defaults with SPEC §8, then continue the per-task completion audit.
+> **T-003 (CODEX audit):** Audit every §2 persisted model, RLS policy, immutable trigger, typed FK, and rollback path against the frozen schemas.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-008/T-015 audit · Replaced helper-only perf proof with the real receipt/object/anchor verifier; deduplicated segment reads, parallelized 100k Ed25519 receipt checks, required matching WORM anchors, handled missing/malformed evidence as controlled failures, and corrected shard default 16→4; actual 100k path passes in 6.409s; 61 unit + four live integration tests pass; both tasks DONE · next: T-003 audit
 - 2026-08-25 · CODEX · T-014 · Release audit found CI lacked uv installation and never ran lint/unit/invariant/performance gates; added locked setup-uv jobs for Ruff, 60 unit/property tests, 100k chain benchmark, and live Postgres suite; local equivalents pass; task independently audited DONE · next: T-008 audit
 - 2026-08-25 · CODEX · T-007 · Added Hypothesis chain/representability/approval fuzzing and I-1..I-26/V-1..V-21 coverage index; closed delegation, quorum, policy dual-control, binding unknown-field, DecisionEvent retry, external receipt validation, audit-attestation and encrypted degraded-WAL gaps; 60 unit + four live integration tests pass; B-7/B-8 remain contract decisions · next: HUMAN B-7/B-8
 - 2026-08-25 · CODEX · T-010 · Added responsive same-origin operator console for decision filters/details, audit browsing and signed-chain verification; implemented missing tenant-RLS decision/audit query endpoints with cursor pagination and live integration assertions; 43 unit + four live integration tests pass · next: T-007 CODEX

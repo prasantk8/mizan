@@ -765,10 +765,16 @@ class ObjectEvidenceVerifier:
         repository: EvidenceRepository,
         store: LocalImmutableObjectStore,
         public_keys: dict[str, Ed25519PublicKey],
+        checkpoint_interval: int = 1000,
+        workers: int = 4,
     ) -> None:
         self.repository = repository
         self.store = store
         self.public_keys = public_keys
+        if checkpoint_interval < 1 or workers < 1:
+            raise ValueError("verification checkpoint interval and worker count must be positive")
+        self.checkpoint_interval = checkpoint_interval
+        self.workers = workers
 
     def verify(
         self,
@@ -779,74 +785,205 @@ class ObjectEvidenceVerifier:
         verify_anchors: bool = True,
     ) -> VerificationResult:
         receipts = self.repository.receipt_rows(tenant_id, stream_id, start, end)
-        records: list[dict[str, Any]] = []
+        records_by_sequence: dict[int, dict[str, Any]] = {}
+        objects: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for receipt in receipts:
             payload = receipt["payload"]
+            if payload["key_id"] not in self.public_keys:
+                raise Problem(409, "evidence_key_unknown", "Receipt signing key is unavailable")
+            object_identity = payload["object_key"], payload["object_version"]
+            objects.setdefault(object_identity, []).append(payload)
+
+        def verify_receipt_group(group: list[dict[str, Any]]) -> dict[str, Any] | None:
+            for receipt in group:
+                payload = receipt["payload"]
+                try:
+                    verify_signature(
+                        payload, receipt["signature"], self.public_keys[payload["key_id"]]
+                    )
+                except Exception:
+                    return payload
+            return None
+
+        chunk_size = max(1, (len(receipts) + self.workers - 1) // self.workers)
+        receipt_groups = [
+            receipts[offset : offset + chunk_size] for offset in range(0, len(receipts), chunk_size)
+        ]
+        with ThreadPoolExecutor(
+            max_workers=min(self.workers, len(receipt_groups) or 1)
+        ) as executor:
+            invalid_receipts = [
+                item for item in executor.map(verify_receipt_group, receipt_groups) if item
+            ]
+        if invalid_receipts:
+            payload = min(invalid_receipts, key=lambda item: item["sequence_number"])
+            return VerificationResult(
+                False,
+                0,
+                payload["sequence_number"],
+                "valid receipt signature",
+                "invalid signature",
+            )
+        for (object_key, object_version), object_receipts in objects.items():
+            try:
+                raw = self.store.get(object_key)
+            except (FileNotFoundError, OSError):
+                return VerificationResult(
+                    False,
+                    len(records_by_sequence),
+                    object_receipts[0]["sequence_number"],
+                    object_version,
+                    "object missing",
+                )
+            actual_version = canonical_hash(
+                {
+                    "key": object_key,
+                    "payload_sha256": canonical_hash_bytes(raw),
+                }
+            )
+            if actual_version != object_version:
+                return VerificationResult(
+                    False,
+                    len(records_by_sequence),
+                    object_receipts[0]["sequence_number"],
+                    object_version,
+                    actual_version,
+                )
+            try:
+                stored = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return VerificationResult(
+                    False,
+                    len(records_by_sequence),
+                    object_receipts[0]["sequence_number"],
+                    "canonical JSON segment",
+                    "malformed object",
+                )
+            candidates = stored if isinstance(stored, list) else [stored]
+            indexed: dict[tuple[int, str], list[dict[str, Any]]] = {}
+            for record in candidates:
+                indexed.setdefault((record["sequence_number"], record["record_hash"]), []).append(
+                    record
+                )
+            for payload in object_receipts:
+                matches = indexed.get((payload["sequence_number"], payload["record_hash"]), [])
+                if len(matches) != 1 or payload["sequence_number"] in records_by_sequence:
+                    return VerificationResult(
+                        False,
+                        len(records_by_sequence),
+                        payload["sequence_number"],
+                        payload["record_hash"],
+                        "missing-or-duplicate",
+                    )
+                records_by_sequence[payload["sequence_number"]] = matches[0]
+        records = [records_by_sequence[sequence] for sequence in sorted(records_by_sequence)]
+        if records:
+            expected_first = 0 if start is None else start
+            if records[0]["sequence_number"] != expected_first:
+                return VerificationResult(
+                    False,
+                    0,
+                    records[0]["sequence_number"],
+                    str(expected_first),
+                    str(records[0]["sequence_number"]),
+                )
+            if expected_first == 0 and records[0]["prev_hash"] != "0" * 64:
+                return VerificationResult(
+                    False,
+                    0,
+                    0,
+                    "0" * 64,
+                    records[0]["prev_hash"],
+                )
+            if end is not None and records[-1]["sequence_number"] != end:
+                return VerificationResult(
+                    False,
+                    len(records),
+                    end,
+                    str(end),
+                    str(records[-1]["sequence_number"]),
+                )
+        elif start is not None or end is not None:
+            return VerificationResult(False, 0, start, "non-empty evidence range", "empty")
+        checkpoints: list[ChainCheckpoint] = []
+        for offset in range(0, len(records), self.checkpoint_interval):
+            group = records[offset : offset + self.checkpoint_interval]
+            checkpoints.append(
+                ChainCheckpoint(
+                    group[0]["sequence_number"],
+                    group[-1]["sequence_number"],
+                    group[0]["prev_hash"],
+                    group[-1]["record_hash"],
+                )
+            )
+        result = verify_checkpointed_chain(records, checkpoints, self.workers)
+        if not result.valid or not verify_anchors:
+            return result
+        covered_anchor = False
+        for anchor_row in self.repository.anchors(tenant_id, stream_id):
+            payload = anchor_row["payload"]
             key = self.public_keys.get(payload["key_id"])
             if key is None:
-                raise Problem(409, "evidence_key_unknown", "Receipt signing key is unavailable")
-            verify_signature(payload, receipt["signature"], key)
-            raw = self.store.get(payload["object_key"])
+                raise Problem(409, "evidence_key_unknown", "Anchor signing key is unavailable")
+            try:
+                verify_signature(payload, anchor_row["signature"], key)
+                raw_anchor = self.store.get(payload["object_key"])
+            except Exception:
+                return VerificationResult(
+                    False,
+                    len(records),
+                    payload["to_sequence"],
+                    "valid anchor signature and WORM object",
+                    "invalid or missing anchor",
+                )
             actual_version = canonical_hash(
                 {
                     "key": payload["object_key"],
-                    "payload_sha256": canonical_hash_bytes(raw),
+                    "payload_sha256": canonical_hash_bytes(raw_anchor),
                 }
             )
             if actual_version != payload["object_version"]:
                 return VerificationResult(
                     False,
                     len(records),
-                    payload["sequence_number"],
+                    payload["to_sequence"],
                     payload["object_version"],
                     actual_version,
                 )
-            stored = json.loads(raw)
-            candidates = stored if isinstance(stored, list) else [stored]
-            matches = [
-                record
-                for record in candidates
-                if record["sequence_number"] == payload["sequence_number"]
-                and record["record_hash"] == payload["record_hash"]
-            ]
-            if len(matches) != 1:
-                return VerificationResult(
-                    False,
-                    len(records),
-                    payload["sequence_number"],
-                    payload["record_hash"],
-                    "missing-or-duplicate",
-                )
-            record = matches[0]
-            if record["record_hash"] != payload["record_hash"]:
-                return VerificationResult(
-                    False,
-                    len(records),
-                    record["sequence_number"],
-                    payload["record_hash"],
-                    record["record_hash"],
-                )
-            records.append(record)
-        result = verify_chain(records, "0" * 64 if start in {None, 0} else None)
-        if not result.valid or not verify_anchors:
-            return result
-        for anchor_row in self.repository.anchors(tenant_id, stream_id):
-            payload = anchor_row["payload"]
-            key = self.public_keys.get(payload["key_id"])
-            if key is None:
-                raise Problem(409, "evidence_key_unknown", "Anchor signing key is unavailable")
-            verify_signature(payload, anchor_row["signature"], key)
-            anchored = [
-                record for record in records if record["sequence_number"] == payload["to_sequence"]
-            ]
-            if anchored and anchored[0]["record_hash"] != payload["head_hash"]:
+            unsigned = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"object_key", "object_version"}
+            }
+            if raw_anchor != rfc8785.dumps(unsigned):
                 return VerificationResult(
                     False,
                     len(records),
                     payload["to_sequence"],
-                    payload["head_hash"],
-                    anchored[0]["record_hash"],
+                    "signed anchor payload",
+                    "anchor object mismatch",
                 )
+            anchored = [
+                record for record in records if record["sequence_number"] == payload["to_sequence"]
+            ]
+            if anchored:
+                covered_anchor = True
+                if anchored[0]["record_hash"] != payload["head_hash"]:
+                    return VerificationResult(
+                        False,
+                        len(records),
+                        payload["to_sequence"],
+                        payload["head_hash"],
+                        anchored[0]["record_hash"],
+                    )
+        if records and not covered_anchor:
+            return VerificationResult(
+                False,
+                len(records),
+                records[-1]["sequence_number"],
+                "signed anchor covering verified range",
+                "no covering anchor",
+            )
         return result
 
     def verify_record_receipt(
