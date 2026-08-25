@@ -256,6 +256,26 @@ class EvidenceRepository:
             redacted, "source_commitment", None
         ):
             raise Problem(503, "redaction_commitment_missing", "Audit commitments are incomplete")
+        if canonical_hash(redacted.payload) != redacted.stored_payload_hash:
+            raise Problem(
+                503,
+                "redaction_payload_hash_mismatch",
+                "Stored audit payload does not match its redaction commitment",
+            )
+        manifest = attestation.get("manifest", [])
+        if dlp.get("findings_count") != len(manifest):
+            raise Problem(
+                503,
+                "redaction_manifest_incomplete",
+                "DLP finding count does not match the redaction manifest",
+            )
+        for entry in manifest:
+            if not self._manifest_transform_is_present(redacted.payload, entry):
+                raise Problem(
+                    503,
+                    "redaction_transform_missing",
+                    "Stored audit payload does not reflect its redaction manifest",
+                )
         now = datetime.now(UTC)
         stream_id = f"{tenant_id}:audit:{shard}"
         with self.pool.connection() as connection, connection.transaction():
@@ -324,6 +344,43 @@ class EvidenceRepository:
                 (tenant_id, audit_id, event_type, json.dumps(document)),
             )
             return document
+
+    @staticmethod
+    def _manifest_transform_is_present(payload: Any, entry: dict[str, Any]) -> bool:
+        if entry.get("transformation") == "drop":
+            # Array deletion shifts later indexes, so absence at the original pointer is not
+            # independently observable. The keyed field commitment remains the drop evidence.
+            return True
+        parts = entry.get("pointer", "").removeprefix("/").split("/")
+        current = payload
+        try:
+            for encoded in parts:
+                key = encoded.replace("~1", "/").replace("~0", "~")
+                current = current[int(key)] if isinstance(current, list) else current[key]
+        except (KeyError, IndexError, TypeError, ValueError):
+            return False
+        expected = {
+            "mask": "***REDACTED***",
+            "tokenize": "tok_" + entry.get("commitment", "")[:24],
+            "hash": "hmac_" + entry.get("commitment", ""),
+            "generalize": "[generalized]",
+        }
+        operation = entry.get("transformation")
+        return current == expected.get(operation)
+
+    def record_redaction_failure(self, tenant_id: str, details: dict[str, str]) -> None:
+        safe_details = {
+            key: details[key]
+            for key in ("redactor_build", "scanner_version", "coverage_profile")
+            if details.get(key)
+        }
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            connection.execute(
+                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                "VALUES (%s,'security',%s,'mizan.security.redaction_failed',%s)",
+                (tenant_id, "redaction-failure-" + uuid4().hex, json.dumps(safe_details)),
+            )
 
     def record_publication(
         self, tenant_id: str, outbox_id: int, receipt: dict[str, Any], signature: str

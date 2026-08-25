@@ -293,7 +293,13 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
 def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
-    redactor = Redactor(RuleBasedDlpScanner(), b"k" * 32, "hsm://audit/test-key")
+    repository = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    redactor = Redactor(
+        RuleBasedDlpScanner(),
+        b"k" * 32,
+        "hsm://audit/test-key",
+        lambda details: repository.record_redaction_failure("tnt_bank-a", details),
+    )
     policy = RedactionPolicy(
         "dlp_banking-v1",
         1,
@@ -304,7 +310,6 @@ def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
         {"email": "alice@example.test", "account_number": "AE001234", "safe": "ok"},
         policy,
     )
-    repository = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     audit = repository.append_audit(
         "tnt_bank-a",
         "mizan.security.redacted",
@@ -316,6 +321,19 @@ def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
     assert audit["redaction"]["dlp"]["status"] == "findings_redacted"
     page = repository.search_audit("tnt_bank-a", 10, event_type="mizan.security.redacted")
     assert any(item["audit_id"] == audit["audit_id"] for item in page["items"])
+    with pytest.raises(Problem, match="payload does not match"):
+        repository.append_audit(
+            "tnt_bank-a",
+            "mizan.security.redacted",
+            {"id": "bad-writer", "kind": "service"},
+            {"id": "agt_wealth-01", "kind": "agent"},
+            SimpleNamespace(
+                payload=redacted.payload,
+                stored_payload_hash="0" * 64,
+                source_commitment=redacted.source_commitment,
+                redaction=redacted.redaction,
+            ),
+        )
     with pytest.raises(Problem, match="attestation"):
         repository.append_audit(
             "tnt_bank-a",
@@ -324,3 +342,17 @@ def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
             {"id": "agt_wealth-01", "kind": "agent"},
             SimpleNamespace(payload={"email": "raw@example.test"}, redaction={}),
         )
+    repository.record_redaction_failure(
+        "tnt_bank-a",
+        {
+            "redactor_build": "mizan-redactor-1",
+            "scanner_version": "scanner-failed-1",
+            "coverage_profile": "banking-core-v1",
+        },
+    )
+    failures = [
+        item
+        for item in repository.unpublished("tnt_bank-a", 100)
+        if item["event_type"] == "mizan.security.redaction_failed"
+    ]
+    assert failures and "payload" not in failures[-1]["payload"]

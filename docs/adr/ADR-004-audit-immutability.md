@@ -139,3 +139,26 @@ The four-shard PostgreSQL sequencer benchmark completed 2,725 operations/second 
 DecisionEvent retry identity is the RFC 8785 hash of `(decision_id, event_type, actor, payload)`.
 The value is tenant/decision unique and checked before either chain head is locked. An identical retry
 returns the existing immutable event; a genuinely different transition receives a new dense sequence.
+
+---
+
+## Implementation Amendment D — Verifiable stored transforms and failure signaling
+
+**Date:** 2026-08-25 · **Trigger:** completion audit found that writers could submit an attestation
+whose hash or manifest did not describe the stored payload, and scanner failure signaling was not
+wired as a mandatory dependency · **Spec anchors:** SPEC v1.2 §2.5, I-12, I-18, I-19
+
+Before allocating a sequence, the evidence repository recomputes `stored_payload_hash`, requires the
+DLP findings count to equal the manifest length, and checks every non-drop replacement against its
+declared transformation and field commitment. List drops are performed deepest-first and in numeric
+descending-index order; lexical JSON Pointer ordering is unsafe for indexes such as 2 and 10.
+
+Every Redactor must be constructed with a failure-event sink. A scanner failure invokes that sink
+with build and coverage metadata only—never the source payload—and then rejects the audit write.
+The PostgreSQL sink records `mizan.security.redaction_failed` in the transactional outbox even though
+no AuditTrail containing the rejected payload is created. Failure to emit the security event remains
+a controlled redaction failure rather than allowing the write.
+
+This validates that declared transforms describe the bytes actually stored. It does not turn DLP
+classification into a cryptographic proof: a field the scanner never classified remains a coverage
+risk governed by the recorded profile and regression corpus, as stated in Amendment A.

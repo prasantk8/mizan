@@ -4,6 +4,7 @@ import copy
 import hashlib
 import hmac
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -132,12 +133,19 @@ def _transform(
         parent[key] = replacement
 
 
+def _transform_order(finding: Finding) -> tuple[int, str, int, str]:
+    parts = finding.pointer.removeprefix("/").split("/")
+    final = parts[-1]
+    return (len(parts), "/".join(parts[:-1]), int(final) if final.isdigit() else -1, final)
+
+
 class Redactor:
     def __init__(
         self,
         scanner: DlpScanner,
         commitment_key: bytes,
         key_ref: str,
+        failure_sink: Callable[[dict[str, str]], None],
         build: str = "mizan-redactor-1",
     ) -> None:
         if len(commitment_key) < 32:
@@ -146,18 +154,32 @@ class Redactor:
         self.commitment_key = commitment_key
         self.key_ref = key_ref
         self.build = build
+        self.failure_sink = failure_sink
 
     def redact(self, payload: dict[str, Any], policy: RedactionPolicy) -> RedactionResult:
         source = copy.deepcopy(payload)
         scan = self.scanner.scan(source)
         if scan.status == "scan_failed":
+            try:
+                self.failure_sink(
+                    {
+                        "event_type": "mizan.security.redaction_failed",
+                        "redactor_build": self.build,
+                        "scanner_version": scan.scanner_version,
+                        "coverage_profile": scan.coverage_profile,
+                    }
+                )
+            except Exception as exc:
+                raise RedactionError(
+                    "DLP scan and failure-event emission failed; audit write rejected"
+                ) from exc
             raise RedactionError("DLP scan failed; audit write rejected")
         if not scan.coverage_profile or not scan.scanner_version:
             raise RedactionError("DLP attestation is incomplete")
         stored = copy.deepcopy(source)
         manifest: list[dict[str, str]] = []
         # Descending pointers keep list indices stable when fields are dropped.
-        for finding in sorted(scan.findings, key=lambda item: item.pointer, reverse=True):
+        for finding in sorted(scan.findings, key=_transform_order, reverse=True):
             operation = policy.transformations.get(finding.classification)
             if finding.classification in {"pii", "secret"} and operation is None:
                 raise RedactionError(
