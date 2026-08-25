@@ -23,6 +23,7 @@ from .models import (
     ExecuteRequest,
     ExecutionCompleteRequest,
     PolicySimulationRequest,
+    PolicyTransitionRequest,
 )
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
@@ -194,6 +195,22 @@ def create_app(
             principal.principal_id,
             request.version,
         )
+
+    @app.post("/v1/policies/{policy_id}/transition")
+    def transition_policy(
+        policy_id: str,
+        request: PolicyTransitionRequest,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+    ) -> dict[str, Any]:
+        updated = registry_repository.transition_policy(
+            principal.tenant_id,
+            policy_id,
+            request.version,
+            request.target_status,
+            principal,
+        )
+        schemas.validate("Policy", updated)
+        return updated
 
     @app.post("/v1/audit/verify")
     def verify_audit(

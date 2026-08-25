@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 from mizan_control_plane.problems import Problem
-from mizan_control_plane.registry import RegistryRepository, decode_cursor, encode_cursor
+from mizan_control_plane.registry import (
+    RegistryRepository,
+    decode_cursor,
+    encode_cursor,
+    policy_semantic_hash,
+)
 from mizan_control_plane.schema_validation import ContractSchemas
 
 
@@ -87,6 +92,57 @@ def test_v3_v4_policy_escalation_and_rejection_semantics_are_explicit() -> None:
     }
     with pytest.raises(Problem, match="Rejection count"):
         RegistryRepository._validate_policy(invalid)
+
+
+def test_ratified_policy_hash_excludes_only_lifecycle_fields() -> None:
+    draft = {
+        "schema_version": "1.3",
+        "policy_id": "pol_hash-contract",
+        "tenant_id": "tnt_bank-a",
+        "name": "Hash contract",
+        "version": 1,
+        "status": "DRAFT",
+        "author": "prn_author",
+        "approver": None,
+        "effective_from": None,
+        "applies_to": {},
+        "conditions": {"all": []},
+        "decision": "DENY",
+        "priority": 100,
+        "content_hash": "0" * 64,
+        "created_at": "2026-08-25T00:00:00Z",
+    }
+    expected = policy_semantic_hash(draft)
+    active = draft | {
+        "status": "ACTIVE",
+        "approver": "prn_approver",
+        "effective_from": "2026-08-25T01:00:00Z",
+        "content_hash": expected,
+    }
+    assert policy_semantic_hash(active) == expected
+    assert policy_semantic_hash(active | {"priority": 101}) != expected
+
+
+def test_review_configuration_must_match_mode_and_internal_rejection_contract() -> None:
+    base = {
+        "status": "DRAFT",
+        "author": "prn_author",
+        "approval_requirements": {
+            "rejection_mode": "review_required",
+            "escalation": None,
+        },
+    }
+    with pytest.raises(Problem, match="Review configuration"):
+        RegistryRepository._validate_policy(base)
+    invalid_review = base | {
+        "approval_requirements": {
+            "rejection_mode": "review_required",
+            "escalation": None,
+            "review": {"rejection_mode": "rejection_quorum"},
+        }
+    }
+    with pytest.raises(Problem, match="Review rejection count"):
+        RegistryRepository._validate_policy(invalid_review)
 
 
 @pytest.mark.parametrize(

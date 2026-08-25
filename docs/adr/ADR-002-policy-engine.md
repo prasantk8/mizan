@@ -76,3 +76,16 @@ evaluation context. Ordered comparisons compile to the decimal methods (`greater
 `greaterThanOrEqual`, `lessThan`, `lessThanOrEqual`) rather than Cedar's integer operators. Values
 must be finite and exactly representable with Cedar's four-digit fractional precision; compilation
 fails closed otherwise. Integer values continue to use Cedar `Long` operators.
+
+### Semantic hash and lifecycle amendment (R-003, 2026-08-25)
+
+`Policy.content_hash` commits to the RFC 8785 canonical policy document after excluding exactly
+`content_hash`, `status`, `approver`, and `effective_from`. Those four governance fields may change
+through the locked lifecycle transition endpoint without breaking historical ADR references. Any
+other edit changes the semantic hash and therefore requires a new immutable policy version.
+
+The registry enforces `DRAFT → TESTED → APPROVED → ACTIVE → SUPERSEDED → RETIRED`; TESTED requires
+a recorded simulation, APPROVED requires a strongly authenticated human distinct from the author,
+and activation records a UTC effective time while atomically superseding an older ACTIVE version.
+Each transition verifies that the recomputed semantic hash still equals the stored hash and emits a
+transactional outbox event for cache invalidation and audit processing.

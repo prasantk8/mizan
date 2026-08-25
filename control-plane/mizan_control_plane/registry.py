@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -16,6 +16,15 @@ from .problems import Problem
 from .repository import PostgresAuthorizationRepository
 
 ResourceKind = Literal["agents", "tools", "policies"]
+POLICY_HASH_EXCLUDED_FIELDS = frozenset(
+    {"content_hash", "status", "approver", "effective_from"}
+)
+
+
+def policy_semantic_hash(document: dict[str, Any]) -> str:
+    return canonical_hash(
+        {key: value for key, value in document.items() if key not in POLICY_HASH_EXCLUDED_FIELDS}
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,9 +165,7 @@ class RegistryRepository(PostgresAuthorizationRepository):
         if document["status"] != "DRAFT":
             raise Problem(422, "policy_create_requires_draft", "New policies must begin in DRAFT")
         self._validate_policy(document)
-        expected_hash = canonical_hash(
-            {key: value for key, value in document.items() if key != "content_hash"}
-        )
+        expected_hash = policy_semantic_hash(document)
         if document["content_hash"] != expected_hash:
             raise Problem(
                 400, "content_hash_mismatch", "Policy content_hash is not canonical source hash"
@@ -185,6 +192,104 @@ class RegistryRepository(PostgresAuthorizationRepository):
             return document
         except UniqueViolation as exc:
             raise Problem(409, "policy_version_exists", "Policy version already exists") from exc
+
+    def transition_policy(
+        self,
+        tenant_id: str,
+        policy_id: str,
+        version: int,
+        target_status: str,
+        actor: AuthenticatedPrincipal,
+    ) -> dict[str, Any]:
+        if actor.identity_kind != "human" or actor.auth_strength not in {"mfa", "hardware"}:
+            raise Problem(403, "policy_transition_auth_insufficient", "Strong human auth is required")
+        allowed = {
+            "DRAFT": "TESTED",
+            "TESTED": "APPROVED",
+            "APPROVED": "ACTIVE",
+            "ACTIVE": "SUPERSEDED",
+            "SUPERSEDED": "RETIRED",
+        }
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT document FROM mizan.policies WHERE tenant_id=%s AND policy_id=%s "
+                "AND version=%s FOR UPDATE",
+                (tenant_id, policy_id, version),
+            ).fetchone()
+            if not row:
+                raise Problem(404, "registry_object_not_found", "Policy version was not found")
+            old = row[0]
+            if allowed.get(old["status"]) != target_status:
+                raise Problem(
+                    409,
+                    "illegal_policy_transition",
+                    f"Policy cannot transition {old['status']} → {target_status}",
+                )
+            if target_status == "TESTED":
+                simulated = connection.execute(
+                    "SELECT 1 FROM mizan.policy_simulations WHERE tenant_id=%s AND policy_id=%s "
+                    "AND policy_version=%s LIMIT 1",
+                    (tenant_id, policy_id, version),
+                ).fetchone()
+                if not simulated:
+                    raise Problem(409, "policy_simulation_required", "TESTED requires a simulation")
+            updated = dict(old)
+            updated["status"] = target_status
+            if target_status == "APPROVED":
+                if actor.principal_id == old["author"]:
+                    raise Problem(403, "policy_self_approval_forbidden", "Policy author cannot approve")
+                updated["approver"] = actor.principal_id
+            if target_status == "ACTIVE":
+                updated["effective_from"] = (
+                    datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                )
+                prior_rows = connection.execute(
+                    "SELECT version,document FROM mizan.policies WHERE tenant_id=%s AND policy_id=%s "
+                    "AND status='ACTIVE' AND version<>%s FOR UPDATE",
+                    (tenant_id, policy_id, version),
+                ).fetchall()
+                for prior_version, prior_document in prior_rows:
+                    prior_document["status"] = "SUPERSEDED"
+                    connection.execute(
+                        "UPDATE mizan.policies SET status='SUPERSEDED',document=%s "
+                        "WHERE tenant_id=%s AND policy_id=%s AND version=%s",
+                        (json.dumps(prior_document), tenant_id, policy_id, prior_version),
+                    )
+            if policy_semantic_hash(updated) != old["content_hash"]:
+                raise Problem(409, "policy_semantic_drift", "Lifecycle transition changed semantics")
+            self._validate_policy(updated)
+            connection.execute(
+                "UPDATE mizan.policies SET status=%s,effective_from=%s,document=%s "
+                "WHERE tenant_id=%s AND policy_id=%s AND version=%s",
+                (
+                    target_status,
+                    updated.get("effective_from"),
+                    json.dumps(updated),
+                    tenant_id,
+                    policy_id,
+                    version,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                "VALUES (%s,'policy',%s,'mizan.policy.transitioned',%s)",
+                (
+                    tenant_id,
+                    f"{policy_id}:{version}",
+                    json.dumps(
+                        {
+                            "policy_id": policy_id,
+                            "version": version,
+                            "from": old["status"],
+                            "to": target_status,
+                            "actor": actor.principal_id,
+                            "content_hash": old["content_hash"],
+                        }
+                    ),
+                ),
+            )
+            return updated
 
     def update_agent(
         self,
@@ -432,6 +537,21 @@ class RegistryRepository(PostgresAuthorizationRepository):
             raise Problem(
                 422, "rejection_quorum_invalid", "Rejection count must match rejection mode"
             )
+        review = requirements.get("review")
+        if (mode == "review_required") != (review is not None):
+            raise Problem(
+                422, "review_configuration_invalid", "Review configuration must match rejection mode"
+            )
+        if review:
+            review_count = review.get("rejection_quorum_count")
+            if (review["rejection_mode"] == "rejection_quorum") != (
+                review_count is not None
+            ):
+                raise Problem(
+                    422,
+                    "review_rejection_quorum_invalid",
+                    "Review rejection count must match its rejection mode",
+                )
 
     @staticmethod
     def _validate_agent_transition(current: str, target: str) -> None:

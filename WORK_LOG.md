@@ -6,7 +6,7 @@
 
 ## Active Task
 
-R-003 ratified; T-004/T-011 complete and T-006 semantic policy lifecycle is next.
+R-003 implementation is complete through T-006; T-009 review epochs are next.
 
 ## Agent Queue
 
@@ -17,10 +17,10 @@ R-003 ratified; T-004/T-011 complete and T-006 semantic policy lifecycle is next
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | DONE |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | DONE |
-| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | PARKED(B-9) |
-| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | PARKED(B-7,B-8) |
+| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | DONE |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
-| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
+| T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | READY |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | DONE |
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | DONE |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | DONE |
@@ -52,7 +52,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-006 (CODEX):** Implement the ratified semantic policy hash basis and lifecycle transition endpoint without invalidating historical ADR foreign keys.
+> **T-009 (CODEX):** Implement the ratified independently controlled review epoch and prove its atomic persistence and vote isolation.
 
 ---
 
@@ -71,6 +71,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-006 v1.3 · Implemented the R-003 semantic policy hash, locked lifecycle endpoint, simulation-before-test and author/approver separation, UTC activation, prior-version supersession, transactional transition events, and lifecycle/hash regression coverage; task DONE · next: T-009
 - 2026-08-25 · CODEX · T-011 v1.3 · Required bounded arguments on execute, recomputed the pinned profile hash before both first redemption and idempotent retry, revalidated immutable normalized context against current agent/tool/resource/risk/delegation authority, and rejected changed bound arguments before CAS/lease reuse; 82 unit plus four live integration tests pass; task DONE · next: T-006
 - 2026-08-25 · CODEX · T-004 v1.3 · Added the ratified bounded transient argument contract, server-side binding validation/hash, raw-argument exclusion from policy/evidence/context hashes, and immutable tenant-RLS normalized context snapshots; 82 unit plus four live integration tests pass; task DONE · next: T-011
 - 2026-08-25 · HUMAN · R-003 · Ratified B-7 typed review authority, B-8 bounded arguments/fresh execution revalidation, and B-9 semantic policy hash in all required roles · next: SPEC v1.3 + T-004 CODEX

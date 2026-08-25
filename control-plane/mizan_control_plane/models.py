@@ -198,6 +198,11 @@ class PolicySimulationRequest(StrictModel):
     version: int | None = Field(default=None, ge=1)
 
 
+class PolicyTransitionRequest(StrictModel):
+    version: int = Field(ge=1)
+    target_status: Literal["TESTED", "APPROVED", "ACTIVE", "SUPERSEDED", "RETIRED"]
+
+
 class ApprovalVoteRequest(StrictModel):
     vote: Literal["APPROVE", "REJECT", "ABSTAIN"]
     epoch_number: int = Field(ge=1)

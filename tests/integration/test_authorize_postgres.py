@@ -19,7 +19,7 @@ from mizan_control_plane.evidence import (
 from mizan_control_plane.execution import ExecutionService, ExecutionTokenCodec
 from mizan_control_plane.models import AuthenticatedIdentity, AuthenticatedPrincipal
 from mizan_control_plane.problems import Problem
-from mizan_control_plane.registry import RegistryRepository
+from mizan_control_plane.registry import RegistryRepository, policy_semantic_hash
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
 from mizan_control_plane.service import AuthorizationService
@@ -323,6 +323,40 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
         1,
     )
     assert simulation["matched"] is True and simulation["decision"] == "ALLOW"
+
+    lifecycle_policy = {
+        "schema_version": "1.3",
+        "policy_id": "pol_lifecycle-contract",
+        "tenant_id": "tnt_bank-a",
+        "name": "Lifecycle contract",
+        "version": 1,
+        "status": "DRAFT",
+        "author": "prn_policy-author",
+        "applies_to": {"tool_ids": ["tool_transfer"]},
+        "conditions": {"field": "action.type", "op": "eq", "value": "financial_write"},
+        "decision": "ALLOW",
+        "priority": 101,
+        "content_hash": "0" * 64,
+        "created_at": "2026-08-25T00:00:00Z",
+    }
+    lifecycle_policy["content_hash"] = policy_semantic_hash(lifecycle_policy)
+    repository.create_policy("tnt_bank-a", lifecycle_policy)
+    repository.simulate_policy(
+        "tnt_bank-a",
+        lifecycle_policy["policy_id"],
+        context(),
+        principal.principal_id,
+        1,
+    )
+    semantic_hash = lifecycle_policy["content_hash"]
+    for status in ("TESTED", "APPROVED", "ACTIVE"):
+        transitioned = repository.transition_policy(
+            "tnt_bank-a", lifecycle_policy["policy_id"], 1, status, principal
+        )
+        assert transitioned["status"] == status
+        assert transitioned["content_hash"] == semantic_hash
+    assert transitioned["approver"] == principal.principal_id
+    assert transitioned["effective_from"].endswith("Z")
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
