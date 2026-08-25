@@ -1,6 +1,6 @@
 # ADR-001: Identity & Authentication Strategy (Zero-Trust Machine-to-Machine)
 
-**Status:** DRAFT
+**Status:** ACCEPTED (T-001 ratified in all required roles)
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC_v1 §2.1 (`Agent.identity`), §3 (auth conventions), Invariant I-3

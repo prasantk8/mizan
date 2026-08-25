@@ -1,6 +1,6 @@
 # ADR-006: External Payload Boundary & Schema Evolution
 
-**Status:** DRAFT
+**Status:** ACCEPTED (T-001 ratified in all required roles)
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC v1.2 §0 rule 1, §2.4 (`mapped`), §2.8 (ExternalPayloadEnvelope), §8, Invariants I-17/I-25, V-18

@@ -1,6 +1,6 @@
 # ADR-008: Execution Token Binding & Long-Running Execution Leases
 
-**Status:** DRAFT
+**Status:** ACCEPTED (T-001/R-003 ratified in all required roles)
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC v1.2 §2.6 (`Tool.binding_profile`, `Tool.execution`), §2.10 (token claims), §2.11 (ExecutionLease), §2.12 (DecisionEvent), §5.5, Invariants I-10/I-14/I-23/I-25, V-8/V-9/V-13/V-17/V-20

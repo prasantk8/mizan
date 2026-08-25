@@ -1,6 +1,6 @@
 # ADR-003: Fail-Closed Mechanism & Circuit Breakers
 
-**Status:** DRAFT
+**Status:** ACCEPTED (T-001 ratified in all required roles)
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC_v1 §3 (503 semantics), §5.1 (FAIL_CLOSED state), Invariant I-7; PRD §29

@@ -1,6 +1,6 @@
 # ADR-005: Multi-Tenant Data Isolation Strategy
 
-**Status:** DRAFT
+**Status:** ACCEPTED (T-001 ratified in all required roles)
 **Deciders:** Product/Architecture Lead, Cybersecurity Architect
 **Date:** 2026-08-25
 **Spec anchors:** SPEC_v1 §0 rule 6, §3 (tenant from token), Invariant I-3; PRD §71, §72, §41

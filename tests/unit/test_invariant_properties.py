@@ -136,3 +136,55 @@ def test_g6_escalation_supersedes_original_epoch_and_stale_votes_fail() -> None:
             now=NOW,
         )
     assert error.value.status == 409
+
+
+@given(
+    rejector=st.sampled_from(["prn_alice", "prn_bob"]),
+    review_vote=st.sampled_from(["APPROVE", "REJECT"]),
+)
+def test_review_epoch_property_has_fresh_authority_and_terminal_review_mode(
+    rejector: str, review_vote: str
+) -> None:
+    initial = create_approval(
+        "tnt_bank-a",
+        "adr_decision-0001",
+        "a" * 64,
+        requirements(rejection_mode="review_required"),
+        eligibility(),
+        NOW,
+    )
+    triggered, _ = cast_vote(
+        initial,
+        epoch_number=1,
+        approver_id=rejector,
+        identity_kind="human",
+        auth_strength="mfa",
+        vote="REJECT",
+        forbidden_approvers=set(),
+        now=NOW,
+    )
+    reviewer = eligibility()["members"][2]
+    review = open_next_epoch(
+        triggered,
+        kind="review",
+        requirements=requirements(quorum=1),
+        eligibility=eligibility() | {"roles": ["compliance"], "members": [reviewer]},
+        carry_forward_votes=False,
+        now=NOW,
+    )
+    assert review["epochs"][0]["state"] == "CLOSED_SUPERSEDED"
+    assert review["epochs"][1]["carried_votes"] == []
+    assert {member["principal_id"] for member in review["epochs"][1]["eligibility"]["members"]} == {
+        "prn_eve"
+    }
+    resolved, _ = cast_vote(
+        review,
+        epoch_number=2,
+        approver_id="prn_eve",
+        identity_kind="human",
+        auth_strength="hardware",
+        vote=review_vote,
+        forbidden_approvers=set(),
+        now=NOW,
+    )
+    assert resolved["state"] == ("APPROVED" if review_vote == "APPROVE" else "REJECTED")

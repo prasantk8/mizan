@@ -6,7 +6,7 @@
 
 ## Active Task
 
-R-003 runtime work is complete; T-007 final invariant and release audit is next.
+Implementation baseline complete: T-001 through T-015 are DONE; no active claims or unresolved blockers.
 
 ## Agent Queue
 
@@ -18,7 +18,7 @@ R-003 runtime work is complete; T-007 final invariant and release audit is next.
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | DONE |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | DONE |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | DONE |
-| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | DONE |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | DONE |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | DONE |
@@ -52,7 +52,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-007 (CODEX):** Close R-003 invariant/V-rule coverage, run every release gate and reconcile the queue, claims, blockers, and repository state.
+> **BASELINE COMPLETE:** No queued implementation task remains. Create and atomically claim the next scoped task before changing lane-owned files.
 
 ---
 
@@ -71,6 +71,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-007 v1.3 · Closed I-1..I-26/V-1..V-21 and R-003 coverage, added fresh-review-authority property checks, reconciled ratified ADR statuses, and passed baseline/lint/JS, 86 unit/property, four live PostgreSQL, 2,708 ops/s sequencer, 6,018 eval/s policy, and 100k chain verification in 6.424s; all T-001..T-015 DONE · next: new scoped task
 - 2026-08-25 · CODEX · T-009 v1.3 · Made review-triggering rejection atomically close the original epoch, snapshot the independently configured authority pool, open an isolated no-carry review epoch, append decision evidence, and enqueue review notification; 85 unit plus four live integration tests pass; task DONE · next: T-007
 - 2026-08-25 · CODEX · T-006 v1.3 · Implemented the R-003 semantic policy hash, locked lifecycle endpoint, simulation-before-test and author/approver separation, UTC activation, prior-version supersession, transactional transition events, and lifecycle/hash regression coverage; task DONE · next: T-009
 - 2026-08-25 · CODEX · T-011 v1.3 · Required bounded arguments on execute, recomputed the pinned profile hash before both first redemption and idempotent retry, revalidated immutable normalized context against current agent/tool/resource/risk/delegation authority, and rejected changed bound arguments before CAS/lease reuse; 82 unit plus four live integration tests pass; task DONE · next: T-006
