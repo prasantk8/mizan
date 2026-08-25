@@ -75,3 +75,21 @@ Raw payload capture is transient. Every envelope declares one persistence dispos
 - `encrypted_evidence`: retain the original only in the short-retention legal-hold evidence store.
 
 Raw provider data is never written to searchable operational tables. The persistence worker verifies that required attestation/evidence references exist before acknowledging capture; schema prose alone is not treated as a retention control.
+
+---
+
+## Implementation Amendment B — Controlled side effects and parser edge cases
+
+**Date:** 2026-08-25 · **Trigger:** completion audit found unnormalized persistence faults and a
+post-persistence deadline check that could report failure after retaining raw evidence · **Spec
+anchors:** SPEC v1.2 §2.8, I-17, V-18
+
+The adapter deadline covers bounded transport decode, JSON parse, structure validation, projection,
+and mandatory drift recording. It is checked before any irreversible persistence call; evidence
+sinks own their separate timeout and acknowledgement contract. Sink and telemetry exceptions are
+normalized to controlled integration errors and never escape as service faults.
+
+Malformed RFC 6901 escapes and non-canonical array indexes are rejected when projections are
+defined or applied. JSON recursion, integer-conversion, and overflow failures are normalized rather
+than surfacing interpreter exceptions. Drift paths are truncated and then deduplicated so the
+closed envelope's `uniqueItems` constraint remains valid even when long provider keys collide.

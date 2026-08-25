@@ -65,6 +65,8 @@ class ProjectionField:
             raise ValueError("projection output names must be bounded identifiers")
         if self.json_pointer != "" and not self.json_pointer.startswith("/"):
             raise ValueError("projection source must be an RFC 6901 JSON pointer")
+        if re.search(r"~(?:[^01]|$)", self.json_pointer):
+            raise ValueError("projection source contains an invalid RFC 6901 escape")
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +187,12 @@ def _pointer_get(document: Any, pointer: str) -> Any:
     for token in pointer[1:].split("/"):
         token = token.replace("~1", "/").replace("~0", "~")
         try:
-            current = current[int(token)] if isinstance(current, list) else current[token]
+            if isinstance(current, list):
+                if not re.fullmatch(r"0|[1-9][0-9]*", token):
+                    raise ValueError("invalid array index")
+                current = current[int(token)]
+            else:
+                current = current[token]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ExternalPayloadError(
                 "PROJECTION_FAILED", f"projection source not found: {pointer}"
@@ -247,9 +254,13 @@ class ExternalPayloadProcessor:
         if schema_version_declared is not None and len(schema_version_declared) > 64:
             raise ExternalPayloadError("INVALID_ENVELOPE", "declared schema version is too long")
         if redaction_attestation_ref is not None and len(redaction_attestation_ref) > 256:
-            raise ExternalPayloadError("INVALID_ENVELOPE", "redaction attestation reference is too long")
+            raise ExternalPayloadError(
+                "INVALID_ENVELOPE", "redaction attestation reference is too long"
+            )
         if encrypted_evidence_ref is not None and len(encrypted_evidence_ref) > 256:
-            raise ExternalPayloadError("INVALID_ENVELOPE", "encrypted evidence reference is too long")
+            raise ExternalPayloadError(
+                "INVALID_ENVELOPE", "encrypted evidence reference is too long"
+            )
         if content_type.split(";", 1)[0].strip().lower() != "application/json":
             raise ExternalPayloadError(
                 "UNSUPPORTED_CONTENT_TYPE", "external payload must be application/json"
@@ -265,7 +276,11 @@ class ExternalPayloadProcessor:
             )
         except ExternalPayloadError:
             raise
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except RecursionError as exc:
+            raise ExternalPayloadError(
+                "JSON_DEPTH_EXCEEDED", "JSON nesting limit exceeded"
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, OverflowError) as exc:
             raise ExternalPayloadError("MALFORMED_JSON", "payload is not valid UTF-8 JSON") from exc
         _validate_structure(payload, self.budgets, started)
         raw_hash = hashlib.sha256(raw).hexdigest()
@@ -278,33 +293,50 @@ class ExternalPayloadProcessor:
                 )
             mapped[field.output_name] = value
         selected = {field.json_pointer for field in projection.fields}
-        dropped = sorted(path[:120] for path in _leaf_pointers(payload) - selected)
+        dropped = sorted({path[:120] for path in _leaf_pointers(payload) - selected})
         if dropped and self.telemetry:
-            self.telemetry.emit(
-                "mizan.integration.schema_drift",
-                {
-                    "tenant_id": tenant_id,
-                    "provider": provider,
-                    "projection_id": projection.projection_id,
-                    "projection_version": projection.version,
-                    "dropped_fields": dropped,
-                },
-            )
+            try:
+                self.telemetry.emit(
+                    "mizan.integration.schema_drift",
+                    {
+                        "tenant_id": tenant_id,
+                        "provider": provider,
+                        "projection_id": projection.projection_id,
+                        "projection_version": projection.version,
+                        "dropped_fields": dropped,
+                    },
+                )
+            except Exception as exc:
+                raise ExternalPayloadError(
+                    "TELEMETRY_FAILED", "schema drift telemetry could not be recorded"
+                ) from exc
+        # The adapter deadline covers decode, parse, validation, projection, and drift recording.
+        # Check it before an irreversible evidence-store call; persistence owns its own timeout/SLO.
+        _check_time(started, self.budgets)
         if disposition == "encrypted_evidence":
             if not encrypted_evidence_ref or not self.persistence:
                 raise ExternalPayloadError(
                     "PERSISTENCE_FAILED", "encrypted evidence reference and sink are required"
                 )
-            self.persistence.encrypted_evidence(raw, encrypted_evidence_ref)
+            try:
+                self.persistence.encrypted_evidence(raw, encrypted_evidence_ref)
+            except Exception as exc:
+                raise ExternalPayloadError(
+                    "PERSISTENCE_FAILED", "encrypted evidence persistence failed"
+                ) from exc
         elif disposition == "redacted_payload":
             if not redaction_attestation_ref or not self.persistence or redacted_payload is None:
                 raise ExternalPayloadError(
                     "PERSISTENCE_FAILED", "redacted payload, attestation, and sink are required"
                 )
-            self.persistence.redacted_payload(redacted_payload, redaction_attestation_ref)
+            try:
+                self.persistence.redacted_payload(redacted_payload, redaction_attestation_ref)
+            except Exception as exc:
+                raise ExternalPayloadError(
+                    "PERSISTENCE_FAILED", "redacted payload persistence failed"
+                ) from exc
         elif disposition != "discarded_after_projection":
             raise ExternalPayloadError("PERSISTENCE_FAILED", "unknown persistence disposition")
-        _check_time(started, self.budgets)
         envelope = {
             "schema_version": "1.2",
             "tenant_id": tenant_id,

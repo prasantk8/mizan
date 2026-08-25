@@ -44,6 +44,11 @@ class Persistence:
         self.redacted = payload, attestation_reference
 
 
+class BrokenPersistence(Persistence):
+    def encrypted_evidence(self, payload: bytes, reference: str) -> None:
+        raise OSError("object store unavailable")
+
+
 def test_projects_only_allowlisted_scalars_and_reports_drift() -> None:
     telemetry = Telemetry()
     body = json.dumps(
@@ -165,3 +170,54 @@ def test_persistence_dispositions_are_explicitly_acknowledged() -> None:
         redacted_payload={"safe": True},
     )
     assert sink.redacted == ({"safe": True}, "att://1")
+
+
+def test_sink_fault_is_a_controlled_tool_error() -> None:
+    with pytest.raises(ExternalPayloadError) as error:
+        ExternalPayloadProcessor(persistence=BrokenPersistence()).process(
+            tenant_id="tnt_bank",
+            provider="sys_kyc",
+            chunks=[b'{"verified":true}'],
+            projection=Projection("prj_verified", 1, (ProjectionField("verified", "/verified"),)),
+            disposition="encrypted_evidence",
+            encrypted_evidence_ref="obj://evidence/1",
+        )
+    assert error.value.code == "PERSISTENCE_FAILED"
+
+
+def test_projection_rejects_invalid_pointer_escapes_and_array_indexes() -> None:
+    with pytest.raises(ValueError, match="RFC 6901"):
+        ProjectionField("bad", "/value~2bad")
+    with pytest.raises(ExternalPayloadError) as error:
+        ExternalPayloadProcessor().process(
+            tenant_id="tnt_bank",
+            provider="sys_kyc",
+            chunks=[b'{"items":["zero","one"]}'],
+            projection=Projection("prj_item", 1, (ProjectionField("item", "/items/01"),)),
+        )
+    assert error.value.code == "PROJECTION_FAILED"
+
+
+def test_truncated_drift_paths_remain_unique_and_schema_valid() -> None:
+    prefix = "a" * 125
+    body = json.dumps({prefix + "x": 1, prefix + "y": 2, "selected": True}).encode()
+    envelope, _ = ExternalPayloadProcessor().process(
+        tenant_id="tnt_bank",
+        provider="sys_kyc",
+        chunks=[body],
+        projection=Projection("prj_selected", 1, (ProjectionField("selected", "/selected"),)),
+    )
+    assert len(envelope["projection"]["dropped_fields"]) == 1
+    ContractSchemas(Path("SPEC_v1.md")).validate("ExternalPayloadEnvelope", envelope)
+
+
+def test_parser_recursion_failure_is_controlled() -> None:
+    body = ("[" * 2000 + "0" + "]" * 2000).encode()
+    with pytest.raises(ExternalPayloadError) as error:
+        ExternalPayloadProcessor(ParserBudgets(max_depth=64)).process(
+            tenant_id="tnt_bank",
+            provider="sys_kyc",
+            chunks=[body],
+            projection=Projection("prj_root", 1, (ProjectionField("root", ""),)),
+        )
+    assert error.value.code == "JSON_DEPTH_EXCEEDED"
