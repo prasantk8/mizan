@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; next target is T-005/T-006 policy and registry review.
+Release completion audit; T-006 is parked on B-9 while T-005 remains independently auditable.
 
 ## Agent Queue
 
@@ -17,7 +17,7 @@ Release completion audit; next target is T-005/T-006 policy and registry review.
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | PARKED(B-8) |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | REVIEW |
-| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | REVIEW |
+| T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | PARKED(B-9) |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | REVIEW |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
@@ -48,10 +48,11 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-6 (resolved by T-008):** Four sharded streams measured 2,725 transaction-level allocations/second over 2,000 operations with p99 2.0087 ms on the M3 Max development host. ADR-004 is ACCEPTED; deployment-class Linux sizing must rerun the benchmark.
 - **B-7:** `rejection_mode=review_required` requires opening an independently controlled review epoch, but `Policy.approval_requirements` defines no review roles, quorum, TTL, or rejection semantics. T-009 implements and verifies every defined branch but is PARKED before inventing review authority. Required HUMAN contract decision: add a typed `review` configuration or define a normative reuse rule.
 - **B-8:** SPEC §3.1 requires recomputing `parameters_hash` from caller-sent arguments, but EvaluationContext §2.4 has no arguments field and has `additionalProperties:false`. T-004 currently uses an implementation-only `tool.parameters` field and is PARKED as non-conforming. Required HUMAN contract decision: add a bounded `arguments` object/envelope or define an authenticated out-of-band binding input.
+- **B-9:** Policy lifecycle transitions mutate `status`, but `content_hash` is normatively SHA-256 over the entire Policy JSON excluding only `content_hash` (therefore including `status`). Recomputing it breaks historical ADR `(policy_id,version,content_hash)` foreign keys; not recomputing it makes the document/hash false. Required HUMAN contract decision: exclude lifecycle/approval metadata from semantic `content_hash`, or make every transition a new policy version.
 
 ## Next Executable Action
 
-> **T-005/T-006 (CODEX audit):** Audit policy compilation/selection and registry transition/cross-field behavior against schema and API contracts.
+> **T-005 (CODEX audit):** Audit policy selector enrichment, Cedar parity, outcome ordering, and cache/version behavior; B-9 separately parks lifecycle transition completion.
 
 ---
 
@@ -70,6 +71,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-006 audit · Added authenticated agent lifecycle PATCH with real two-token dual control, normative transition graph, versioned immutable binding-profile publication, recorded policy simulation using the production compiler, delegation-edge persistence, and live tests; PARKED policy transition endpoint on content-hash contradiction B-9 · next: T-005 audit
 - 2026-08-25 · CODEX · T-003 audit · Removed runtime UPDATE/DELETE grants from immutable evidence, corrected `dgn_*` nonce storage, added receipt/anchor chain FKs, token↔lease relational bindings, approval-state/document checks, and a separately mounted rollback migration with destructive disposable-db verification; live schema/repository/rollback gates pass; task DONE · next: T-005/T-006 audit
 - 2026-08-25 · CODEX · T-008/T-015 audit · Replaced helper-only perf proof with the real receipt/object/anchor verifier; deduplicated segment reads, parallelized 100k Ed25519 receipt checks, required matching WORM anchors, handled missing/malformed evidence as controlled failures, and corrected shard default 16→4; actual 100k path passes in 6.409s; 61 unit + four live integration tests pass; both tasks DONE · next: T-003 audit
 - 2026-08-25 · CODEX · T-014 · Release audit found CI lacked uv installation and never ran lint/unit/invariant/performance gates; added locked setup-uv jobs for Ruff, 60 unit/property tests, 100k chain benchmark, and live Postgres suite; local equivalents pass; task independently audited DONE · next: T-008 audit

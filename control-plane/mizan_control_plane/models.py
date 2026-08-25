@@ -154,6 +154,19 @@ class AuditVerifyRequest(StrictModel):
     verify_anchors: bool = True
 
 
+class AgentPatchRequest(StrictModel):
+    document: dict[str, Any]
+
+
+class BindingProfilePublishRequest(StrictModel):
+    binding_profile: dict[str, Any]
+
+
+class PolicySimulationRequest(StrictModel):
+    context: EvaluationContext
+    version: int | None = Field(default=None, ge=1)
+
+
 class ApprovalVoteRequest(StrictModel):
     vote: Literal["APPROVE", "REJECT", "ABSTAIN"]
     epoch_number: int = Field(ge=1)

@@ -59,3 +59,8 @@ Key forces:
 ## Implementation Amendment (2026-08-25)
 
 Each Mizan policy compiles to an independent Cedar `permit` policy whose only purpose is to report whether that policy's condition tree matched. Mizan—not Cedar—then applies the frozen priority and decision-restrictiveness ordering across matches and carries the winning obligation payload. This avoids forcing six Mizan outcomes into Cedar's binary allow/deny result while retaining Cedar parsing, evaluation, diagnostics, and default-deny behavior. Parsed `PolicySet` handles are cached by canonical policy source; ACTIVE status and exact `(policy_id, version, content_hash)` remain part of the returned match evidence.
+
+Policy simulations use this identical compiler after substituting only the lifecycle gate in memory;
+the condition tree and semantic content are unchanged. Results are recorded in the tenant-RLS
+`policy_simulations` relation so `DRAFT → TESTED` can prove at least one run. Simulation never emits
+an ADR_Record or a decision event because it authorizes no action.

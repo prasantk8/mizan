@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
@@ -13,13 +13,16 @@ from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
 from .execution import ExecutionService
 from .models import (
+    AgentPatchRequest,
     ApprovalVoteRequest,
     AuditVerifyRequest,
     AuthenticatedPrincipal,
     AuthorizationResponse,
+    BindingProfilePublishRequest,
     EvaluationContext,
     ExecuteRequest,
     ExecutionCompleteRequest,
+    PolicySimulationRequest,
 )
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
@@ -90,6 +93,31 @@ def create_app(
     def get_agent(agent_id: str, tenant_id: str = Depends(tenant_from_token)) -> dict[str, Any]:
         return registry_repository.get(tenant_id, "agents", agent_id)
 
+    @app.patch("/v1/agents/{agent_id}")
+    def patch_agent(
+        agent_id: str,
+        request: AgentPatchRequest,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
+    ) -> dict[str, Any]:
+        schemas.validate("Agent", request.document)
+        second = None
+        if second_approval:
+            if not second_approval.startswith("Bearer "):
+                raise Problem(
+                    401, "invalid_second_approval", "Second approval must be a bearer token"
+                )
+            second = verifier.verify_principal(second_approval.removeprefix("Bearer ").strip())
+            if second.tenant_id != principal.tenant_id:
+                raise Problem(403, "tenant_mismatch", "Second approver belongs to another tenant")
+        return registry_repository.update_agent(
+            principal.tenant_id,
+            agent_id,
+            request.document,
+            principal,
+            second,
+        )
+
     @app.post("/v1/tools", status_code=201)
     def create_tool(
         document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
@@ -109,6 +137,21 @@ def create_app(
     @app.get("/v1/tools/{tool_id}")
     def get_tool(tool_id: str, tenant_id: str = Depends(tenant_from_token)) -> dict[str, Any]:
         return registry_repository.get(tenant_id, "tools", tool_id)
+
+    @app.post("/v1/tools/{tool_id}/binding-profile", status_code=201)
+    def publish_binding_profile(
+        tool_id: str,
+        request: BindingProfilePublishRequest,
+        tenant_id: str = Depends(tenant_from_token),
+    ) -> dict[str, Any]:
+        current = registry_repository.get(tenant_id, "tools", tool_id)
+        candidate = current | {"binding_profile": request.binding_profile}
+        schemas.validate("Tool", candidate)
+        return registry_repository.publish_binding_profile(
+            tenant_id,
+            tool_id,
+            request.binding_profile,
+        )
 
     @app.post("/v1/policies", status_code=201)
     def create_policy(
@@ -133,6 +176,24 @@ def create_app(
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         return registry_repository.get(tenant_id, "policies", policy_id, version)
+
+    @app.post("/v1/policies/{policy_id}/simulate")
+    def simulate_policy(
+        policy_id: str,
+        request: PolicySimulationRequest,
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+    ) -> dict[str, Any]:
+        if principal.identity_kind != "human" or principal.auth_strength not in {"mfa", "hardware"}:
+            raise Problem(
+                403, "simulation_auth_insufficient", "Simulation requires strong human auth"
+            )
+        return registry_repository.simulate_policy(
+            principal.tenant_id,
+            policy_id,
+            request.context,
+            principal.principal_id,
+            request.version,
+        )
 
     @app.post("/v1/audit/verify")
     def verify_audit(

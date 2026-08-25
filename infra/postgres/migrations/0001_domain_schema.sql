@@ -97,6 +97,21 @@ CREATE TABLE mizan.policies (
   CHECK ((document->>'version')::integer = version)
 );
 
+CREATE TABLE mizan.policy_simulations (
+  tenant_id mizan.tenant_id NOT NULL,
+  simulation_id uuid NOT NULL,
+  policy_id mizan.policy_id NOT NULL,
+  policy_version integer NOT NULL,
+  context_hash mizan.sha256_hex NOT NULL,
+  matched boolean NOT NULL,
+  result jsonb NOT NULL CHECK (jsonb_typeof(result) = 'object'),
+  simulated_by mizan.principal_id NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (tenant_id, simulation_id),
+  FOREIGN KEY (tenant_id, policy_id, policy_version)
+    REFERENCES mizan.policies(tenant_id, policy_id, version)
+);
+
 CREATE TABLE mizan.agent_tools (
   tenant_id mizan.tenant_id NOT NULL,
   agent_id mizan.agent_id NOT NULL,
@@ -487,7 +502,7 @@ DO $$
 DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
-    'tenants','agents','binding_profiles','tools','policies','agent_tools','agent_policies',
+    'tenants','agents','binding_profiles','tools','policies','policy_simulations','agent_tools','agent_policies',
     'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','approvals','role_authority_versions',
     'approval_epochs','approval_votes','execution_tokens','execution_leases','decision_events','decision_event_heads','audit_trails',
     'external_payload_envelopes','degraded_mode_grants','outbox','evidence_receipts','evidence_anchors'

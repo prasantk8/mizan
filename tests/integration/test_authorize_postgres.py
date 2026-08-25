@@ -210,6 +210,48 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
     page = repository.list("tnt_bank-a", "agents", 200, None)
     assert any(item["agent_id"] == document["agent_id"] for item in page.items)
     assert page.next_cursor is None
+    principal = AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",
+        principal_id="prn_registry-admin",
+        identity_kind="human",
+        auth_strength="hardware",
+        roles=["registry.admin"],
+    )
+    updated = document | {"lifecycle_state": "ACTIVE", "updated_at": "2026-08-25T00:01:00Z"}
+    assert (
+        repository.update_agent(
+            "tnt_bank-a",
+            document["agent_id"],
+            updated,
+            principal,
+            None,
+        )["lifecycle_state"]
+        == "ACTIVE"
+    )
+    profile = {
+        "profile_id": "bp_transfer-v1",
+        "profile_version": 2,
+        "canonicalization": "RFC8785",
+        "bound_pointers": ["/amount"],
+        "volatile_pointers": ["/request_time"],
+        "unknown_pointer_policy": "reject",
+    }
+    assert (
+        repository.publish_binding_profile(
+            "tnt_bank-a",
+            "tool_transfer",
+            profile,
+        )["binding_profile"]["profile_version"]
+        == 2
+    )
+    simulation = repository.simulate_policy(
+        "tnt_bank-a",
+        "pol_blocked-intent",
+        context(),
+        principal.principal_id,
+        1,
+    )
+    assert simulation["matched"] is True and simulation["decision"] == "ALLOW"
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")

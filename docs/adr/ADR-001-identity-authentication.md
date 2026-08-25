@@ -59,3 +59,11 @@ Adopt **Option 1 — layered identity**:
 - [ ] Do we mint a Mizan-internal token after IdP validation (token normalization) or pass through?
 
 **Resolved for execution capabilities:** Mizan mints a distinct internal capability after authorization. The open question applies only to ordinary control-plane access-token normalization; an external IdP token is never itself an execution capability.
+
+## Implementation Amendment — Registry dual control
+
+Production HIGH/CRITICAL agent changes authenticate two distinct human principals with the same
+allowlisted asymmetric IdP verifier. The primary principal uses the ordinary Authorization bearer;
+the second uses `X-Mizan-Second-Approval: Bearer …`. Both tokens must carry MFA or hardware strength,
+the same tenant, and different principal IDs. A caller-supplied name is never evidence of approval,
+and bearer values are neither persisted nor included in events.

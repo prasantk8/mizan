@@ -87,3 +87,30 @@ def test_v3_v4_policy_escalation_and_rejection_semantics_are_explicit() -> None:
     }
     with pytest.raises(Problem, match="Rejection count"):
         RegistryRepository._validate_policy(invalid)
+
+
+@pytest.mark.parametrize(
+    ("current", "target"),
+    [
+        ("PROPOSED", "ASSESSED"),
+        ("ACTIVE", "MONITORED"),
+        ("MONITORED", "ACTIVE"),
+        ("SUSPENDED", "REVIEWED"),
+        ("REVIEWED", "RETIRED"),
+    ],
+)
+def test_agent_lifecycle_allows_normative_edges(current: str, target: str) -> None:
+    RegistryRepository._validate_agent_transition(current, target)
+
+
+@pytest.mark.parametrize(
+    ("current", "target"),
+    [
+        ("PROPOSED", "ACTIVE"),
+        ("SUSPENDED", "ACTIVE"),
+        ("RETIRED", "ACTIVE"),
+    ],
+)
+def test_agent_lifecycle_rejects_skipped_or_terminal_edges(current: str, target: str) -> None:
+    with pytest.raises(Problem, match="cannot transition"):
+        RegistryRepository._validate_agent_transition(current, target)
