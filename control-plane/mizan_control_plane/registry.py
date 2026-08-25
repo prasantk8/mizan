@@ -11,7 +11,7 @@ from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from .canonical import canonical_hash
 from .models import AuthenticatedPrincipal, EvaluationContext
-from .policy_engine import compile_policy
+from .policy_engine import CedarPolicyEvaluator
 from .problems import Problem
 from .repository import PostgresAuthorizationRepository
 
@@ -331,8 +331,10 @@ class RegistryRepository(PostgresAuthorizationRepository):
     ) -> dict[str, Any]:
         document = self.get(tenant_id, "policies", policy_id, version)
         compilable = document | {"status": "ACTIVE"}
-        compiled = compile_policy(json.dumps(compilable, sort_keys=True, separators=(",", ":")))
-        matched = compiled.matches(context)
+        tool = self.get_tool(tenant_id, context.tool.id)
+        matched = bool(
+            CedarPolicyEvaluator().evaluate([compilable], context, tool.risk_tier if tool else None)
+        )
         result = {
             "simulation_id": str(uuid4()),
             "policy_id": policy_id,

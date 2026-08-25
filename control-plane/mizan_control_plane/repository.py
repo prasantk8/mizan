@@ -83,7 +83,9 @@ class PostgresAuthorizationRepository:
                 executor_spiffe_ids=doc["execution"]["executor_spiffe_ids"],
             )
 
-    def matching_policies(self, tenant_id: str, context: EvaluationContext) -> list[PolicyMatch]:
+    def matching_policies(
+        self, tenant_id: str, context: EvaluationContext, risk_level: str | None = None
+    ) -> list[PolicyMatch]:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
             documents = [
@@ -94,7 +96,7 @@ class PostgresAuthorizationRepository:
                     (tenant_id,),
                 ).fetchall()
             ]
-        return self.policy_evaluator.evaluate(documents, context)
+        return self.policy_evaluator.evaluate(documents, context, risk_level)
 
     def find_decision_by_request(self, tenant_id: str, request_id: str) -> PersistedDecision | None:
         with self.pool.connection() as connection, connection.transaction():
@@ -198,7 +200,9 @@ class InMemoryAuthorizationRepository:
     def get_tool(self, tenant_id: str, tool_id: str) -> RegistryTool | None:
         return self.tools.get((tenant_id, tool_id))
 
-    def matching_policies(self, tenant_id: str, context: EvaluationContext) -> list[PolicyMatch]:
+    def matching_policies(
+        self, tenant_id: str, context: EvaluationContext, risk_level: str | None = None
+    ) -> list[PolicyMatch]:
         return self.policies
 
     def find_decision_by_request(self, tenant_id: str, request_id: str) -> PersistedDecision | None:

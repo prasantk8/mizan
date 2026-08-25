@@ -127,7 +127,7 @@ class AuthorizationService:
         if RISK_ORDER[risk["level"]] < RISK_ORDER[tool.risk_tier]:
             risk = {"level": tool.risk_tier, "floor_source": "tool_registry_floor"}
 
-        matches = self.repository.matching_policies(identity.tenant_id, enriched)
+        matches = self.repository.matching_policies(identity.tenant_id, enriched, risk["level"])
         decision, reasons, constraints = self._combine(matches)
         now = datetime.now(UTC)
         decision_id = self._decision_id(identity.tenant_id, context.request_id)

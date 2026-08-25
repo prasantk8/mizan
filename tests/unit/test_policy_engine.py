@@ -72,3 +72,21 @@ def test_compiled_policy_handle_meets_hot_path_latency_budget() -> None:
     elapsed = time.perf_counter() - started
     assert iterations / elapsed >= 1_000
     assert elapsed / iterations < 0.005
+
+
+def test_decimal_conditions_use_cedar_decimal_extension() -> None:
+    request = context()
+    request.security["anomaly_score"] = 0.875
+    document = policy({"field": "security.anomaly_score", "op": "gte", "value": 0.75})
+    assert CedarPolicyEvaluator().evaluate([document], request) != []
+    document["conditions"]["value"] = 0.9
+    assert CedarPolicyEvaluator().evaluate([document], request) == []
+
+
+def test_risk_and_environment_selectors_use_enriched_values() -> None:
+    request = context()
+    request.environment["name"] = "production"
+    document = policy({"field": "action.type", "op": "eq", "value": "financial_write"})
+    document["applies_to"] |= {"risk_levels": ["HIGH"], "environments": ["production"]}
+    assert CedarPolicyEvaluator().evaluate([document], request, "HIGH") != []
+    assert CedarPolicyEvaluator().evaluate([document], request, "LOW") == []

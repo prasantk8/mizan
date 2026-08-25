@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -23,6 +24,15 @@ def _literal(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, int) and not isinstance(value, bool):
         return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise PolicyCompileError("non-finite policy numbers are forbidden")
+        rendered = format(value, ".4f").rstrip("0").rstrip(".")
+        if "." not in rendered:
+            rendered += ".0"
+        if float(rendered) != value:
+            raise PolicyCompileError("Cedar decimal values support at most four fractional digits")
+        return f'decimal("{rendered}")'
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list):
@@ -68,6 +78,14 @@ def compile_condition(node: dict[str, Any]) -> str:
             "lte": "<=",
         }
         if operator in comparisons:
+            if isinstance(value, float) and operator in {"gt", "gte", "lt", "lte"}:
+                decimal_methods = {
+                    "gt": "greaterThan",
+                    "gte": "greaterThanOrEqual",
+                    "lt": "lessThan",
+                    "lte": "lessThanOrEqual",
+                }
+                return f"(({presence}) && {target}.{decimal_methods[operator]}({_literal(value)}))"
             return f"(({presence}) && {target} {comparisons[operator]} {_literal(value)})"
         if operator in {"in", "not_in"}:
             if not isinstance(value, list):
@@ -97,9 +115,14 @@ def _cedar_context(value: Any) -> Any:
     if isinstance(value, list):
         return [_cedar_context(item) for item in value if item is not None]
     if isinstance(value, float):
-        if value.is_integer():
-            return int(value)
-        return str(value)
+        if not math.isfinite(value):
+            raise PolicyCompileError("non-finite evaluation numbers are forbidden")
+        rendered = format(value, ".4f").rstrip("0").rstrip(".")
+        if "." not in rendered:
+            rendered += ".0"
+        if float(rendered) != value:
+            raise PolicyCompileError("Cedar decimal values support at most four fractional digits")
+        return {"__extn": {"fn": "decimal", "arg": rendered}}
     return value
 
 
@@ -147,24 +170,34 @@ def compile_policy(document_json: str) -> CompiledPolicy:
 
 class CedarPolicyEvaluator:
     @staticmethod
-    def _applies(document: dict[str, Any], context: EvaluationContext) -> bool:
+    def _applies(
+        document: dict[str, Any], context: EvaluationContext, risk_level: str | None
+    ) -> bool:
         selectors = document.get("applies_to", {})
+        environment = (
+            context.environment.get("name")
+            if isinstance(context.environment, dict)
+            else context.environment
+        )
         values: dict[str, Any] = {
             "agent_ids": context.agent.id,
             "tool_ids": context.tool.id,
             "intents": context.intent,
             "action_types": context.action.type,
-            "environments": context.environment.get("name"),
-            "risk_levels": context.security.get("risk_level"),
+            "environments": environment,
+            "risk_levels": risk_level,
         }
         return all(values[key] in allowed for key, allowed in selectors.items())
 
     def evaluate(
-        self, documents: list[dict[str, Any]], context: EvaluationContext
+        self,
+        documents: list[dict[str, Any]],
+        context: EvaluationContext,
+        risk_level: str | None = None,
     ) -> list[PolicyMatch]:
         matches: list[PolicyMatch] = []
         for document in documents:
-            if not self._applies(document, context):
+            if not self._applies(document, context, risk_level):
                 continue
             canonical_source = json.dumps(document, sort_keys=True, separators=(",", ":"))
             compiled = compile_policy(canonical_source)

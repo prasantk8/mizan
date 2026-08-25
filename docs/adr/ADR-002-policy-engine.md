@@ -64,3 +64,15 @@ Policy simulations use this identical compiler after substituting only the lifec
 the condition tree and semantic content are unchanged. Results are recorded in the tenant-RLS
 `policy_simulations` relation so `DRAFT → TESTED` can prove at least one run. Simulation never emits
 an ADR_Record or a decision event because it authorizes no action.
+
+### Runtime parity clarification (2026-08-25)
+
+Production authorization and simulation both apply `applies_to` selectors before compiling the
+condition tree. The selector inputs are the registry-enriched tool risk tier and the normalized
+environment name; caller-provided security fields are not trusted as the tool's risk tier.
+
+JSON fractional numbers are represented by Cedar's `decimal` extension in both policy literals and
+evaluation context. Ordered comparisons compile to the decimal methods (`greaterThan`,
+`greaterThanOrEqual`, `lessThan`, `lessThanOrEqual`) rather than Cedar's integer operators. Values
+must be finite and exactly representable with Cedar's four-digit fractional precision; compilation
+fails closed otherwise. Integer values continue to use Cedar `Long` operators.
