@@ -150,9 +150,6 @@ class ExecutionService:
                 "binding_profile": adr["tool"]["binding_profile"],
                 "context_hash": adr["context_hash"],
                 "approval_epoch_id": approval_epoch,
-                "constraints_hash": canonical_hash(adr.get("constraints"))
-                if adr.get("constraints")
-                else None,
                 "iat": int(now.timestamp()),
                 "nbf": int(now.timestamp()),
                 "exp": int((now + timedelta(seconds=ttl)).timestamp()),
@@ -506,9 +503,6 @@ class ExecutionService:
             "context_hash": adr["context_hash"],
             "binding_profile": adr["tool"]["binding_profile"],
             "delegation_chain_hash": canonical_hash(adr["agent"]["delegation_chain"]),
-            "constraints_hash": canonical_hash(adr.get("constraints"))
-            if adr.get("constraints")
-            else None,
         }
         if any(claims[key] != value for key, value in expected.items()):
             raise Problem(

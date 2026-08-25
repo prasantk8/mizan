@@ -129,7 +129,16 @@ class AuthorizationService:
             risk = {"level": tool.risk_tier, "floor_source": "tool_registry_floor"}
 
         matches = self.repository.matching_policies(identity.tenant_id, enriched, risk["level"])
-        decision, reasons, constraints = self._combine(matches)
+        terminal_problem: Problem | None = None
+        try:
+            decision, reasons, constraints = self._combine(matches)
+        except Problem as exc:
+            if exc.code != "NOT_IMPLEMENTED":
+                raise
+            terminal_problem = exc
+            decision = "DENY"
+            reasons = [f"NOT_IMPLEMENTED: {exc.detail}"]
+            constraints = None
         now = datetime.now(UTC)
         decision_id = self._decision_id(identity.tenant_id, context.request_id)
         policies = [
@@ -161,6 +170,8 @@ class AuthorizationService:
             raise Problem(
                 503, "evidence_write_failed", "Decision was not returned because evidence failed"
             ) from exc
+        if terminal_problem is not None:
+            raise terminal_problem
         return response
 
     @staticmethod
@@ -213,6 +224,12 @@ class AuthorizationService:
         winner = max(matches, key=lambda p: (p.priority, DECISION_ORDER[p.decision]))
         same_priority = [p for p in matches if p.priority == winner.priority]
         winner = max(same_priority, key=lambda p: DECISION_ORDER[p.decision])
+        if winner.decision not in {"ALLOW", "DENY", "REQUIRE_APPROVAL"}:
+            raise Problem(
+                501,
+                "NOT_IMPLEMENTED",
+                f"Policy outcome {winner.decision} is not implemented in v1",
+            )
         return (
             winner.decision,
             [f"Matched {p.policy_id} v{p.version}" for p in matches],

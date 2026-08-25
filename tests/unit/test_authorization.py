@@ -7,6 +7,7 @@ from mizan_control_plane.canonical import binding_hash
 from mizan_control_plane.models import (
     AuthenticatedIdentity,
     EvaluationContext,
+    PolicyMatch,
     RegistryAgent,
     RegistryTool,
 )
@@ -107,6 +108,42 @@ def test_no_matching_policy_is_recorded_default_deny() -> None:
     assert repository.adr_documents[0]["decision_basis"] == "default_deny"
     assert repository.adr_documents[0]["resource"]["resource_owner"] == "core-banking"
     assert repository.adr_documents[0]["risk"]["level"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    ("policy_decision", "expected_status", "expected_record_decision"),
+    [
+        ("ALLOW", None, "ALLOW"),
+        ("DENY", None, "DENY"),
+        ("REQUIRE_APPROVAL", None, "REQUIRE_APPROVAL"),
+        ("CONSTRAIN", 501, "DENY"),
+        ("REDACT", 501, "DENY"),
+        ("ESCALATE", 501, "DENY"),
+    ],
+)
+def test_all_policy_decisions_have_explicit_auditable_dispositions(
+    policy_decision: str, expected_status: int | None, expected_record_decision: str
+) -> None:
+    subject, repository = service()
+    repository.policies = [
+        PolicyMatch(
+            policy_id="pol_decision-path",
+            version=1,
+            content_hash="a" * 64,
+            decision=policy_decision,
+            priority=100,
+            constraints={"max_amount": 100} if policy_decision in {"CONSTRAIN", "REDACT"} else None,
+        )
+    ]
+    if expected_status is None:
+        assert subject.authorize(identity(), context()).decision == expected_record_decision
+    else:
+        with pytest.raises(Problem) as raised:
+            subject.authorize(identity(), context())
+        assert raised.value.status == expected_status
+        assert raised.value.code == "NOT_IMPLEMENTED"
+    assert repository.adr_documents[0]["decision"] == expected_record_decision
+    ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
 
 
 def test_evaluation_context_matches_ratified_argument_contract() -> None:

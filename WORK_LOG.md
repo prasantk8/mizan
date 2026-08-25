@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Stage 2 remediation in progress. T-021 contract drift gates are in REVIEW; T-016 is the next executable task. B-11 remains isolated to T-025; no active claims.
+Stage 2 remediation in progress. T-021 and T-016 are in REVIEW; T-017 is the next executable task. B-11 remains isolated to T-025; no active claims.
 
 ## Agent Queue
 
@@ -27,7 +27,7 @@ Stage 2 remediation in progress. T-021 contract drift gates are in REVIEW; T-016
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | DONE |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | DONE |
 | T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | DONE |
-| T-016 | R-004 F-1 (B-10 Option A ratified): reject CONSTRAIN/REDACT/ESCALATE with `NOT_IMPLEMENTED` + auditable DENY; remove dead `constraints_hash` binding (SPEC §0 rule 2) | CODEX | — | READY |
+| T-016 | R-004 F-1 (B-10 Option A ratified): reject CONSTRAIN/REDACT/ESCALATE with `NOT_IMPLEMENTED` + auditable DENY; remove dead `constraints_hash` binding (SPEC §0 rule 2) | CODEX | — | REVIEW |
 | T-017 | R-004 F-2: `system_fail_closed` evidence on engine/dependency failure; wrap policy evaluation; narrow the blanket handler (I-8/V-15) | CODEX | — | READY |
 | T-018 | R-004 F-3/F-7/F-10: bind the real executor at issue, defensive delegation access, bounded security-event connection | CODEX | — | READY |
 | T-019 | R-004 F-6: concurrent duplicate `request_id` returns the prior decision, never `evidence_write_failed` | CODEX | — | READY |
@@ -68,7 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-016 (R-004 F-1) — claim and implement ratified B-10 Option A.** Reject CONSTRAIN/REDACT/ESCALATE with HTTP 501 `NOT_IMPLEMENTED`, persist a schema-valid DENY ADR_Record, remove dead ADR `constraints` reads, amend SPEC/ADR, and remove the temporary `NOT_IMPLEMENTED` waiver. Then T-017/T-018/T-019/T-020 in any order, followed by T-022. Full acceptance criteria: `docs/reviews/R-004-implementation-review-disposition.md` §4.
+> **T-017 (R-004 F-2) — claim and implement the system-fail-closed evidence path.** Record risk/policy engine failures as schema-valid DENY ADR_Records with `decision_basis=system_fail_closed`, return controlled Problems, narrow the blanket persistence handler, and add distinct evidence-double-failure telemetry. Then T-018/T-019/T-020 in any order, followed by T-022.
 
 ---
 
@@ -87,6 +87,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CLAUDE-rigor/CODEX · T-016 · Implemented ratified B-10 Option A across all six decision enums: unsupported winners persist schema-valid DENY evidence then return 501 NOT_IMPLEMENTED; removed both dead ADR constraints reads and the token claim, amended SPEC/ADR-008, retained a dated T-028 constraints_hash waiver; new six-enum test failed for CONSTRAIN/REDACT/ESCALATE on pre-fix `53d1035` and now passes; lint, 97 unit/property, and four live PostgreSQL tests pass · next: T-017 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-021 · Added blocking Draft 2020-12 meta-schema, I-16 typed-ID, behavioural reachability/dated-waiver, and closed ADR producibility gates with four committed negative fixtures; corrected five typed-ID schema violations with ADR-005 Amendment A; new reachability test failed on pre-fix `4267dac6ddf1c616506a38b3ec490b405e6e5b66` (NOT_IMPLEMENTED and system_fail_closed unreachable) and passes on the change; 91 unit tests and lint/check pass · next: T-016 CODEX
 - 2026-08-25 · HUMAN · R-004/B-10 · Ratified Option A: evaluator rejects CONSTRAIN/REDACT/ESCALATE with `NOT_IMPLEMENTED` plus an auditable DENY ADR_Record, dead `constraints_hash` binding removed, constrained execution deferred to v1.4 (T-028 PARKED); T-016 unblocked, B-11 key custody still open · next: T-021 then T-016 CODEX
 - 2026-08-25 · CLAUDE · R-004 · Reviewed the T-001..T-015 baseline against SPEC v1.3 and reproduced the lint/86-test/live-Postgres/100k-chain/Cedar/32-commit-ledger claims (sequencer ops/s not retained, superseded by T-023); dispositioned ten findings, headlined by CONSTRAIN/REDACT being unrecordable under the closed ADR_Record schema and `system_fail_closed` existing in SPEC but in zero lines of code; queued T-016..T-028 and filed B-10/B-11 for HUMAN · next: T-021 CODEX

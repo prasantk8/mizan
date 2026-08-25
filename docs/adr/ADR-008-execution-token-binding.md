@@ -29,7 +29,7 @@ Adopt **Option 1**.
 
 The result is the property that makes this usable: **a retry that changes only volatile fields still redeems; a change to any bound field never does** (I-14).
 
-**Token = permission to start.** `ExecutionTokenClaims` (§2.10) binds `jti`, `tenant_id`, `decision_id`, `tool_id`, `parameters_hash`, `binding_profile`, `context_hash`, optional `approval_epoch_id` (so an approved action is bound to the epoch that actually granted it), and optional `constraints_hash`. TTL comes from `Tool.execution.token_ttl_seconds` (default 300, overridable per policy) — named configuration, not a constant in code.
+**Token = permission to start.** `ExecutionTokenClaims` (§2.10) binds `jti`, `tenant_id`, `decision_id`, `tool_id`, `parameters_hash`, `binding_profile`, `context_hash`, and optional `approval_epoch_id` (so an approved action is bound to the epoch that actually granted it). TTL comes from `Tool.execution.token_ttl_seconds` (default 300, overridable per policy) — named configuration, not a constant in code.
 
 **Lease = permission to continue.** Redemption is a single transaction that CASes `jti` from unconsumed to consumed **and** creates an `ExecutionLease` (V-13). The lease carries `lease_ttl_seconds` (default 900), `heartbeat_interval_seconds` (default 60), and `max_extensions` (default 24), bounding total execution at `lease_ttl × (1 + max_extensions)`. A lapsed lease becomes `LEASE_EXPIRED` and emits an event; it does not silently become an untracked running job.
 
@@ -81,8 +81,8 @@ The issuer validates the complete `ExecutionTokenClaims` JSON Schema before sign
 gateway validates the same closed schema after JWT cryptographic, issuer, audience, and time
 checks. Missing, mistyped, wrongly prefixed, or unknown claims fail as a controlled 403. For
 approved actions, redemption also reloads the Approval and requires the token's
-`approval_epoch_id` to still be the current executable epoch. `constraints_hash` is revalidated
-alongside every other context binding.
+`approval_epoch_id` to still be the current executable epoch. Every implemented context binding is
+revalidated alongside it.
 
 Detecting an expired lease is a state transition, not merely an error response. The service commits
 `LEASE_EXPIRED` and its DecisionEvent first, then returns the controlled conflict to the caller, so
@@ -97,6 +97,17 @@ Authorization accepts bounded transient `tool.arguments` (64 KiB canonical bytes
 total keys, finite JSON numbers). The server validates pointer classification and computes the bound
 subset hash. Raw arguments are removed before context hashing and never enter policy evaluation,
 ADR evidence, logs, or operational storage.
+
+## Amendment D — v1 refuses unimplemented decision outcomes
+
+**Date:** 2026-08-25 · **Trigger:** ratified R-004/B-10 Option A · **Spec anchors:** SPEC v1.3.1
+§0 rule 2, §2.10, §5.1
+
+v1 issues capabilities only for `ALLOW` and completed approvals. A winning `CONSTRAIN`, `REDACT`,
+or `ESCALATE` policy outcome is persisted as a schema-valid DENY ADR_Record and returned as HTTP 501
+`NOT_IMPLEMENTED`. No constraint is silently discarded, and the token no longer contains the dead
+optional `constraints_hash` claim or pretends to revalidate a field ADR_Record cannot contain.
+Constrained execution, including an executor-side enforcement contract, remains T-028/v1.4.
 
 The exact normalized context used for authorization—without raw arguments—is persisted atomically in
 the immutable, tenant-RLS `authorization_contexts` relation and bound by the same `context_hash` as

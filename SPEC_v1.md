@@ -1014,7 +1014,8 @@ A degraded-allow path exists only under a signed, time-boxed, tenant-issued gran
 
 ### 2.10 ExecutionToken (claims)
 
-Issued on ALLOW/CONSTRAIN/REDACT and on approval. Single-use, redeemed atomically for a lease.
+Issued on ALLOW and after approval. CONSTRAIN/REDACT/ESCALATE are refused with an auditable DENY
+and HTTP 501 `NOT_IMPLEMENTED` in v1. Single-use, redeemed atomically for a lease.
 
 ```json
 {
@@ -1049,7 +1050,6 @@ Issued on ALLOW/CONSTRAIN/REDACT and on approval. Single-use, redeemed atomicall
     "context_hash":   { "$ref": "common#/$defs/Sha256Hex" },
     "approval_epoch_id": { "oneOf": [{ "$ref": "common#/$defs/EpochId" }, { "type": "null" }],
                            "description": "Present when the decision required approval — binds the token to the epoch that actually granted it." },
-    "constraints_hash": { "oneOf": [{ "$ref": "common#/$defs/Sha256Hex" }, { "type": "null" }] },
     "iat": { "type": "integer", "minimum": 0, "description": "JWT NumericDate (seconds since Unix epoch)." },
     "nbf": { "type": "integer", "minimum": 0, "description": "JWT NumericDate; normally equal to iat." },
     "exp": { "type": "integer", "minimum": 0, "description": "JWT NumericDate = iat + tool/policy token_ttl_seconds (§8). Governs time-to-START only." }
@@ -1399,7 +1399,7 @@ All events: CloudEvents 1.0 envelope, `source = /mizan/{tenant_id}/{component}`,
 
 ```text
 RECEIVED ──enrich (§3.1, fail-closed)──► EVALUATING ──┬─► ALLOW ──────────► token issued ─► (execution SM §5.5)
-                              │                        ├─► CONSTRAIN/REDACT ─► token issued (constraints_hash bound)
+                              │                        ├─► CONSTRAIN/REDACT/ESCALATE ─► DENY evidence + 501 NOT_IMPLEMENTED
                               │                        ├─► DENY ────────────► terminal (ADR written)
                               │                        ├─► REQUIRE_APPROVAL ─► (approval SM §5.2)
                               │                        └─► ESCALATE ────────► routed to security review, no token
