@@ -1582,6 +1582,8 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_EXECUTION_TOKEN_SIGNING_ALGORITHMS` | `EdDSA,ES256` | deployment | Explicit allowlist; `none`, symmetric algorithms, and algorithm/key-type confusion are rejected. |
 | `MIZAN_EXECUTION_TOKEN_KEYSET_REF` | *(required)* | deployment | Versioned verification keyset with rotation and revocation metadata. |
 | `MIZAN_EXECUTION_TOKEN_CLOCK_SKEW_SECONDS` | `30` | deployment | Maximum accepted NumericDate skew for `iat`/`nbf`/`exp`; larger skew fails closed. |
+| `MIZAN_SECURITY_EVENT_POOL_MAX_SIZE` | `2` | deployment | Dedicated connections reserved for rollback-independent replay evidence; never borrowed from the primary execution pool. |
+| `MIZAN_SECURITY_EVENT_POOL_TIMEOUT_SECONDS` | `0.25` | deployment | Bounded acquisition wait. Timeout drops and alerts the security event rather than deadlocking execution traffic. |
 | `Tool.execution.lease_ttl_seconds` | `900` | tool | Duration of one lease without heartbeat. |
 | `Tool.execution.heartbeat_interval_seconds` | `60` | tool | |
 | `Tool.execution.max_lease_extensions` | `24` | tool | Bounds total execution time to `lease_ttl × (1 + max_extensions)`. |

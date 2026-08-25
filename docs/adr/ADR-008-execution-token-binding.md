@@ -109,6 +109,22 @@ or `ESCALATE` policy outcome is persisted as a schema-valid DENY ADR_Record and 
 optional `constraints_hash` claim or pretends to revalidate a field ADR_Record cannot contain.
 Constrained execution, including an executor-side enforcement contract, remains T-028/v1.4.
 
+## Amendment E — issuance identity parity and bounded replay evidence
+
+**Date:** 2026-08-25 · **Trigger:** R-004 F-3/F-7/F-10 · **Spec anchors:** SPEC v1.3.1
+§2.6, §2.10, §8, I-23, V-17
+
+Capability issuance receives the verified workload SPIFFE identity and requires exact membership in
+the tool version's `executor_spiffe_ids`; it never selects array element zero. Redemption applies the
+same membership contract, so a second registered executor is first-class while an outsider fails at
+both boundaries. Missing or malformed historical delegation objects produce controlled 403 denial.
+
+Replay evidence retains its separate-transaction durability but uses a dedicated pool bounded by
+`MIZAN_SECURITY_EVENT_POOL_MAX_SIZE` and
+`MIZAN_SECURITY_EVENT_POOL_TIMEOUT_SECONDS`. Saturation increments `security_event_pool_timeout` and
+emits an error rather than waiting on, or consuming, the primary execution pool. This deliberately
+prefers an alertable missing replay event over a pool-wide deadlock; the token itself remains denied.
+
 The exact normalized context used for authorization—without raw arguments—is persisted atomically in
 the immutable, tenant-RLS `authorization_contexts` relation and bound by the same `context_hash` as
 the ADR_Record. Redemption requires the arguments again, recomputes the hash using the pinned profile,

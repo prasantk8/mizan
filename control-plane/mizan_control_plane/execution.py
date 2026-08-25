@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -10,7 +12,7 @@ from uuid import uuid4
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from psycopg.errors import UniqueViolation
-from psycopg_pool import ConnectionPool
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .evidence import append_decision_event_tx
@@ -21,6 +23,7 @@ from .risk import RegistryFloorRiskProvider
 from .schema_validation import ContractSchemas
 
 RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+LOGGER = logging.getLogger(__name__)
 
 
 def _jti_hash(jti: str) -> str:
@@ -84,17 +87,28 @@ class ExecutionService:
         codec: ExecutionTokenCodec,
         receipt_gate: ReceiptGate | None = None,
         risk_provider: RiskProvider | None = None,
+        security_event_pool: Any | None = None,
+        security_event_pool_max_size: int = 2,
+        security_event_pool_timeout_seconds: float = 0.25,
     ) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
+        self.security_event_pool = security_event_pool or ConnectionPool(
+            database_url,
+            min_size=0,
+            max_size=security_event_pool_max_size,
+            timeout=security_event_pool_timeout_seconds,
+            open=True,
+        )
         self.codec = codec
         self.receipt_gate = receipt_gate
         self.risk_provider = risk_provider or RegistryFloorRiskProvider()
+        self.security_event_counters: Counter[str] = Counter()
 
     @staticmethod
     def _scope(connection: Any, tenant_id: str) -> None:
         connection.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
 
-    def issue(self, tenant_id: str, decision_id: str) -> str:
+    def issue(self, tenant_id: str, decision_id: str, executor_spiffe: str) -> str:
         now = datetime.now(UTC)
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
@@ -109,7 +123,7 @@ class ExecutionService:
             if not row:
                 raise Problem(404, "decision_not_found", "Decision was not found")
             adr, tool, agent_state = row
-            if adr["decision"] not in {"ALLOW", "CONSTRAIN", "REDACT", "REQUIRE_APPROVAL"}:
+            if adr["decision"] not in {"ALLOW", "REQUIRE_APPROVAL"}:
                 raise Problem(403, "decision_not_executable", "Decision does not permit execution")
             approval_epoch = None
             if adr["decision"] == "REQUIRE_APPROVAL":
@@ -124,7 +138,7 @@ class ExecutionService:
                 approval_epoch = approval[0]["current_epoch_id"]
             if agent_state not in {"ACTIVE", "MONITORED"}:
                 raise Problem(403, "agent_not_active", "Agent is not active")
-            executor = tool["execution"]["executor_spiffe_ids"][0]
+            executor = self._authorized_executor(tool, executor_spiffe)
             ttl = tool["execution"]["token_ttl_seconds"]
             for policy_ref in adr["policies"]:
                 policy = connection.execute(
@@ -179,6 +193,16 @@ class ExecutionService:
                 now,
             )
             return self.codec.encode(claims)
+
+    @staticmethod
+    def _authorized_executor(tool: dict[str, Any], executor_spiffe: str) -> str:
+        if executor_spiffe not in tool.get("execution", {}).get("executor_spiffe_ids", []):
+            raise Problem(
+                403,
+                "executor_not_authorized",
+                "Issuing workload is not an authorized executor for this tool version",
+            )
+        return executor_spiffe
 
     def redeem(
         self,
@@ -338,24 +362,29 @@ class ExecutionService:
         jti: str,
         peer_spiffe: str,
     ) -> None:
-        with self.pool.connection() as connection, connection.transaction():
-            self._scope(connection, tenant_id)
-            connection.execute(
-                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
-                "VALUES (%s,'security',%s,%s,%s)",
-                (
-                    tenant_id,
-                    "security-" + uuid4().hex,
-                    event_type,
-                    json.dumps(
-                        {
-                            "decision_id": decision_id,
-                            "token_jti_hash": _jti_hash(jti),
-                            "authenticated_workload": peer_spiffe,
-                        }
+        try:
+            with self.security_event_pool.connection() as connection, connection.transaction():
+                self._scope(connection, tenant_id)
+                connection.execute(
+                    "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                    "VALUES (%s,'security',%s,%s,%s)",
+                    (
+                        tenant_id,
+                        "security-" + uuid4().hex,
+                        event_type,
+                        json.dumps(
+                            {
+                                "decision_id": decision_id,
+                                "token_jti_hash": _jti_hash(jti),
+                                "authenticated_workload": peer_spiffe,
+                            }
+                        ),
                     ),
-                ),
-            )
+                )
+        except PoolTimeout:
+            metric = "security_event_pool_timeout"
+            self.security_event_counters[metric] += 1
+            LOGGER.error(metric, extra={"tenant_id": tenant_id, "decision_id": decision_id})
 
     def heartbeat(
         self, tenant_id: str, decision_id: str, lease_id: str, peer_spiffe: str
@@ -574,12 +603,8 @@ class ExecutionService:
                     "delegation_authority_changed",
                     "Delegation chain or tool authority changed after authorization",
                 )
-            if index and agent_id not in previous_document["delegation"]["allowed_agent_ids"]:
-                raise Problem(
-                    403,
-                    "delegation_authority_changed",
-                    "Delegation edge is no longer authorized",
-                )
+            if index:
+                self._require_delegation_edge(previous_document, agent_id)
             previous_document = current[2]
             if index == 0:
                 root_document = current[2]
@@ -629,6 +654,24 @@ class ExecutionService:
                     "approval_epoch_changed",
                     "Approval epoch is no longer executable",
                 )
+
+    @staticmethod
+    def _require_delegation_edge(
+        previous_document: dict[str, Any] | None, agent_id: str
+    ) -> None:
+        delegation = (
+            previous_document.get("delegation")
+            if isinstance(previous_document, dict)
+            else None
+        )
+        if not isinstance(delegation, dict) or agent_id not in delegation.get(
+            "allowed_agent_ids", []
+        ):
+            raise Problem(
+                403,
+                "delegation_authority_changed",
+                "Delegation edge is no longer authorized",
+            )
 
     def _require_receipts(
         self, connection: Any, tenant_id: str, decision_id: str, adr: dict[str, Any]

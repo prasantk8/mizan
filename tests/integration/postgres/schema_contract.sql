@@ -63,7 +63,7 @@ INSERT INTO mizan.binding_profiles(
 );
 INSERT INTO mizan.tools(tenant_id, tool_id, profile_id, profile_version, document)
 VALUES ('tnt_bank-a', 'tool_transfer', 'bp_transfer-v1', 1,
-  '{"tenant_id":"tnt_bank-a","tool_id":"tool_transfer","risk_tier":"HIGH","owner":"wealth-team","resource_owner":"core-banking","data_classification":"financial","binding_profile":{"profile_id":"bp_transfer-v1","profile_version":1,"canonicalization":"RFC8785","bound_pointers":["/amount"],"volatile_pointers":["/request_time"],"unknown_pointer_policy":"reject"},"execution":{"executor_spiffe_ids":["spiffe://mizan/executor/wealth"],"token_ttl_seconds":300,"lease_ttl_seconds":900,"heartbeat_interval_seconds":60,"max_lease_extensions":24}}');
+  '{"tenant_id":"tnt_bank-a","tool_id":"tool_transfer","risk_tier":"HIGH","owner":"wealth-team","resource_owner":"core-banking","data_classification":"financial","binding_profile":{"profile_id":"bp_transfer-v1","profile_version":1,"canonicalization":"RFC8785","bound_pointers":["/amount"],"volatile_pointers":["/request_time"],"unknown_pointer_policy":"reject"},"execution":{"executor_spiffe_ids":["spiffe://mizan/executor/wealth","spiffe://mizan/executor/settlement"],"token_ttl_seconds":300,"lease_ttl_seconds":900,"heartbeat_interval_seconds":60,"max_lease_extensions":24}}');
 INSERT INTO mizan.agents(
   tenant_id, agent_id, version, lifecycle_state, document, created_at, updated_at
 ) VALUES (

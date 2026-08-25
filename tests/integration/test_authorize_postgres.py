@@ -101,7 +101,14 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
     codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
     execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, verifier)
     execution_arguments = {"amount": 12500, "request_time": "execution-attempt-1"}
-    token = execution.issue("tnt_bank-a", response.decision_id)
+    with pytest.raises(Problem) as invalid_issue_executor:
+        execution.issue(
+            "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/attacker"
+        )
+    assert invalid_issue_executor.value.status == 403
+    token = execution.issue(
+        "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/settlement"
+    )
     with pytest.raises(Problem) as wrong_executor:
         execution.redeem(
             token,
@@ -114,7 +121,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
     lease = execution.redeem(
         token,
         response.decision_id,
-        "spiffe://mizan/executor/wealth",
+        "spiffe://mizan/executor/settlement",
         execution_arguments,
         "execution-1",
     )
@@ -122,7 +129,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         execution.redeem(
             token,
             response.decision_id,
-            "spiffe://mizan/executor/wealth",
+            "spiffe://mizan/executor/settlement",
             {"amount": 12500, "request_time": "legitimate-retry"},
             "execution-1",
         )["lease_id"]
@@ -132,7 +139,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         execution.redeem(
             token,
             response.decision_id,
-            "spiffe://mizan/executor/wealth",
+            "spiffe://mizan/executor/settlement",
             {"amount": 99999, "request_time": "same-idempotency-key"},
             "execution-1",
         )
@@ -140,7 +147,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         execution.redeem(
             token,
             response.decision_id,
-            "spiffe://mizan/executor/wealth",
+            "spiffe://mizan/executor/settlement",
             execution_arguments,
             "different-execution",
         )
@@ -156,20 +163,22 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         "tnt_bank-a",
         response.decision_id,
         lease["lease_id"],
-        "spiffe://mizan/executor/wealth",
+        "spiffe://mizan/executor/settlement",
     )
     assert running["state"] == "EXECUTING"
     completed = execution.complete(
         "tnt_bank-a",
         response.decision_id,
         lease["lease_id"],
-        "spiffe://mizan/executor/wealth",
+        "spiffe://mizan/executor/settlement",
         "e" * 64,
         None,
     )
     assert completed["state"] == "EXECUTED"
 
-    expiring_token = execution.issue("tnt_bank-a", response.decision_id)
+    expiring_token = execution.issue(
+        "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth"
+    )
     expiring_lease = execution.redeem(
         expiring_token,
         response.decision_id,

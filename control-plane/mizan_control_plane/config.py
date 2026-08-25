@@ -13,6 +13,8 @@ class Settings:
     evaluator_build: str
     evaluator_configuration_hash: str
     chain_shards_per_tenant: int
+    security_event_pool_max_size: int
+    security_event_pool_timeout_seconds: float
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -30,4 +32,10 @@ class Settings:
                 "MIZAN_EVALUATOR_CONFIGURATION_HASH", "0" * 64
             ),
             chain_shards_per_tenant=int(environ.get("MIZAN_CHAIN_SHARDS_PER_TENANT", "4")),
+            security_event_pool_max_size=int(
+                environ.get("MIZAN_SECURITY_EVENT_POOL_MAX_SIZE", "2")
+            ),
+            security_event_pool_timeout_seconds=float(
+                environ.get("MIZAN_SECURITY_EVENT_POOL_TIMEOUT_SECONDS", "0.25")
+            ),
         )

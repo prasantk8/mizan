@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Stage 2 remediation in progress. T-021/T-016/T-017 are in REVIEW; T-018 is the next executable task. B-11 remains isolated to T-025; no active claims.
+Stage 2 remediation in progress. T-021/T-016/T-017/T-018 are in REVIEW; T-019 is the next executable task. B-11 remains isolated to T-025; no active claims.
 
 ## Agent Queue
 
@@ -29,7 +29,7 @@ Stage 2 remediation in progress. T-021/T-016/T-017 are in REVIEW; T-018 is the n
 | T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | DONE |
 | T-016 | R-004 F-1 (B-10 Option A ratified): reject CONSTRAIN/REDACT/ESCALATE with `NOT_IMPLEMENTED` + auditable DENY; remove dead `constraints_hash` binding (SPEC §0 rule 2) | CODEX | — | REVIEW |
 | T-017 | R-004 F-2: `system_fail_closed` evidence on engine/dependency failure; wrap policy evaluation; narrow the blanket handler (I-8/V-15) | CODEX | — | REVIEW |
-| T-018 | R-004 F-3/F-7/F-10: bind the real executor at issue, defensive delegation access, bounded security-event connection | CODEX | — | READY |
+| T-018 | R-004 F-3/F-7/F-10: bind the real executor at issue, defensive delegation access, bounded security-event connection | CODEX | — | REVIEW |
 | T-019 | R-004 F-6: concurrent duplicate `request_id` returns the prior decision, never `evidence_write_failed` | CODEX | — | READY |
 | T-020 | R-004 F-5: app-terminated mTLS populates `client_cert_spiffe`; deployment contract + ADR-001 delta (I-23) | CODEX | — | READY |
 | T-021 | R-004 F-4: contract drift gates — meta-schema, I-16 typed IDs, SPEC-string reachability, closed-schema producibility; negative fixtures in CI | CODEX | — | REVIEW |
@@ -68,7 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-018 (R-004 F-3/F-7/F-10) — claim execution issuance/redemption parity.** Bind the actual verified executor at issuance, use the same membership rule at redemption, make malformed delegation evidence fail 403, and bound separate security-event connection acquisition without weakening its rollback independence. Then T-019/T-020, followed by T-022.
+> **T-019 (R-004 F-6) — claim concurrent request-id replay semantics.** Catch only the `(tenant_id, request_id)` uniqueness race, re-read and return the committed prior decision, return 409 only when it remains unreadable, and prove two concurrent callers produce one ADR_Record. Then T-020, followed by T-022.
 
 ---
 
@@ -87,6 +87,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CLAUDE-rigor/CODEX · T-018 · Issuance now binds the verified requested SPIFFE executor using the same allowlist enforced at redemption; live two-executor flow redeems executor two and rejects outsiders at issue/redeem; malformed delegation evidence yields 403; replay evidence keeps separate-transaction durability on a named, bounded dedicated pool with timeout telemetry; amended SPEC config/ADR-008; three new tests failed on pre-fix `bf924ca` and now pass; lint/check, 104 unit/property, and four live PostgreSQL tests pass · next: T-019 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-017 · Risk and Cedar failures now persist schema-valid system_fail_closed DENY evidence before controlled HTTP 403 (a completed refusal, not service absence); double evidence failure alone returns 503 with a dedicated counter and critical alert, and persistence translation catches only expected store errors; amended SPEC/ADR-003 and I-8/V-15 coverage; three new failure-path tests failed on pre-fix `4338ae1` and now pass; lint/check, 101 unit/property, and four live PostgreSQL tests pass · next: T-018 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-016 · Implemented ratified B-10 Option A across all six decision enums: unsupported winners persist schema-valid DENY evidence then return 501 NOT_IMPLEMENTED; removed both dead ADR constraints reads and the token claim, amended SPEC/ADR-008, retained a dated T-028 constraints_hash waiver; new six-enum test failed for CONSTRAIN/REDACT/ESCALATE on pre-fix `53d1035` and now passes; lint, 97 unit/property, and four live PostgreSQL tests pass · next: T-017 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-021 · Added blocking Draft 2020-12 meta-schema, I-16 typed-ID, behavioural reachability/dated-waiver, and closed ADR producibility gates with four committed negative fixtures; corrected five typed-ID schema violations with ADR-005 Amendment A; new reachability test failed on pre-fix `4267dac6ddf1c616506a38b3ec490b405e6e5b66` (NOT_IMPLEMENTED and system_fail_closed unreachable) and passes on the change; 91 unit tests and lint/check pass · next: T-016 CODEX
