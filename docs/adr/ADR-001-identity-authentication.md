@@ -67,3 +67,18 @@ allowlisted asymmetric IdP verifier. The primary principal uses the ordinary Aut
 the second uses `X-Mizan-Second-Approval: Bearer …`. Both tokens must carry MFA or hardware strength,
 the same tenant, and different principal IDs. A caller-supplied name is never evidence of approval,
 and bearer values are neither persisted nor included in events.
+
+## Implementation Amendment B — application-terminated workload mTLS
+
+**Date:** 2026-08-25 · **Trigger:** R-004 F-5 · **Spec anchors:** SPEC v1.3.1 §3, I-23, V-17
+
+v1 terminates workload mTLS in the application process. The listener requires a client certificate
+against the deployment trust bundle and exposes the verified connection `SSLObject` to ASGI.
+`VerifiedPeerSpiffeMiddleware` extracts exactly one `spiffe://` URI SAN and populates
+`client_cert_spiffe`; missing, malformed, SAN-less, or ambiguous certificates remain 401. CN and
+subject DN are never identity sources.
+
+Trusted proxy headers are explicitly absent. Adding proxy termination later requires a new threat
+analysis proving the authenticated proxy-to-application hop and header stripping rules. Certificate
+issuance and rotation remain outside T-020; the normative listener/trust-bundle requirements are in
+`docs/deployment/mtls.md`.

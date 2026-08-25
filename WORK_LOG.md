@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Stage 2 remediation in progress. T-021/T-016/T-017/T-018/T-019 are in REVIEW; T-020 is the next executable task. B-11 remains isolated to T-025; no active claims.
+Stage 2 remediation in progress. T-016 through T-021 are in REVIEW; T-022 is the final Stage-2 task and next executable action. B-11 remains isolated to T-025; no active claims.
 
 ## Agent Queue
 
@@ -31,7 +31,7 @@ Stage 2 remediation in progress. T-021/T-016/T-017/T-018/T-019 are in REVIEW; T-
 | T-017 | R-004 F-2: `system_fail_closed` evidence on engine/dependency failure; wrap policy evaluation; narrow the blanket handler (I-8/V-15) | CODEX | — | REVIEW |
 | T-018 | R-004 F-3/F-7/F-10: bind the real executor at issue, defensive delegation access, bounded security-event connection | CODEX | — | REVIEW |
 | T-019 | R-004 F-6: concurrent duplicate `request_id` returns the prior decision, never `evidence_write_failed` | CODEX | — | REVIEW |
-| T-020 | R-004 F-5: app-terminated mTLS populates `client_cert_spiffe`; deployment contract + ADR-001 delta (I-23) | CODEX | — | READY |
+| T-020 | R-004 F-5: app-terminated mTLS populates `client_cert_spiffe`; deployment contract + ADR-001 delta (I-23) | CODEX | — | REVIEW |
 | T-021 | R-004 F-4: contract drift gates — meta-schema, I-16 typed IDs, SPEC-string reachability, closed-schema producibility; negative fixtures in CI | CODEX | — | REVIEW |
 | T-022 | R-004 F-8/F-9: decompose the over-cited integration test, raise `test_execution.py` coverage, re-chain the in-memory repo, reconcile doc drift | CODEX | T-017, T-018 | READY |
 | T-023 | Load & latency harness: SPEC §7 p95/throughput/outbox-lag on deployment-class Linux; JSON artifacts (closes B-2/B-6 rerun obligation) | CODEX | T-022 | BLOCKED(T-022) |
@@ -68,7 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-020 (R-004 F-5) — claim the app-terminated mTLS identity path.** Populate `client_cert_spiffe` only from a verified peer certificate URI SAN, reject missing/non-SPIFFE certificates, document TLS/trust-bundle deployment, and amend ADR-001. Then T-022 last.
+> **T-022 (R-004 F-8/F-9) — claim final Stage-2 consolidation.** Decompose the over-cited integration test, raise execution unit branch coverage, re-chain the in-memory repository, reconcile SPEC/API/allocation docs, and make CONTRACT_COVERAGE collected-name validation blocking. Do not rewrite unrelated passing tests.
 
 ---
 
@@ -87,6 +87,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CLAUDE-rigor/CODEX · T-020 · Added application-terminated mTLS middleware that accepts only a CERT_REQUIRED verified peer certificate with exactly one SPIFFE URI SAN, populates client_cert_spiffe, and rejects missing/SAN-less peers with 401; no CN/DN/header identity path exists; documented listener/trust-bundle contract from README and amended SPEC/ADR-001; the new certificate test failed to import on pre-fix `91bbbe2` and now passes; lint/check, 108 unit/property, and five live PostgreSQL tests pass · next: T-022 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-019 · Concurrent request-id writers now converge through exact ADR request/derived-decision uniqueness constraints, tenant-RLS re-read, and context-hash equality; unreadable/different winners are 409 and unrelated integrity faults surface; in-memory persistence mirrors the atomic uniqueness lock; unit regression failed on pre-fix `d81740d` with two ADRs and now passes; lint/check, 105 unit/property, and five live PostgreSQL tests (two threads, identical response/id, exactly one ADR) pass · next: T-020 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-018 · Issuance now binds the verified requested SPIFFE executor using the same allowlist enforced at redemption; live two-executor flow redeems executor two and rejects outsiders at issue/redeem; malformed delegation evidence yields 403; replay evidence keeps separate-transaction durability on a named, bounded dedicated pool with timeout telemetry; amended SPEC config/ADR-008; three new tests failed on pre-fix `bf924ca` and now pass; lint/check, 104 unit/property, and four live PostgreSQL tests pass · next: T-019 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-017 · Risk and Cedar failures now persist schema-valid system_fail_closed DENY evidence before controlled HTTP 403 (a completed refusal, not service absence); double evidence failure alone returns 503 with a dedicated counter and critical alert, and persistence translation catches only expected store errors; amended SPEC/ADR-003 and I-8/V-15 coverage; three new failure-path tests failed on pre-fix `4338ae1` and now pass; lint/check, 101 unit/property, and four live PostgreSQL tests pass · next: T-018 CODEX

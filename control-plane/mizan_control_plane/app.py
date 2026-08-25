@@ -25,6 +25,7 @@ from .models import (
     PolicySimulationRequest,
     PolicyTransitionRequest,
 )
+from .mtls import VerifiedPeerSpiffeMiddleware, require_workload_spiffe
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -52,6 +53,7 @@ def create_app(
         settings.evaluator_configuration_hash,
     )
     app = FastAPI(title="Mizan Control Plane API", version="1.1.0")
+    app.add_middleware(VerifiedPeerSpiffeMiddleware)
     app.add_exception_handler(Problem, problem_response)
 
     @app.post("/v1/authorize", response_model=AuthorizationResponse)
@@ -67,12 +69,7 @@ def create_app(
         return verifier.verify_principal(token)
 
     def workload_spiffe(request: Request) -> str:
-        identity = request.scope.get("client_cert_spiffe")
-        if not isinstance(identity, str) or not identity.startswith("spiffe://"):
-            raise Problem(
-                401, "workload_identity_missing", "A verified peer SPIFFE identity is required"
-            )
-        return identity
+        return require_workload_spiffe(request.scope)
 
     @app.post("/v1/agents", status_code=201)
     def create_agent(

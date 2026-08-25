@@ -1160,7 +1160,7 @@ Created by redeeming a token. This is what survives a long-running job.
 
 ## 3. API Contracts (OpenAPI 3.1 excerpt)
 
-Conventions: bearer/mTLS auth on every route (ADR-001); `tenant_id` derived from the token, never from the body (INVARIANT I-3); errors use RFC 9457 problem+json; all mutating POSTs are idempotent on `request_id`/`Idempotency-Key`. If concurrent `/v1/authorize` writers race on the same `(tenant_id, request_id)`, the uniqueness loser re-reads and returns the committed decision when `context_hash` matches; an unreadable winner or a different context is 409, never `evidence_write_failed`. Execution capability routes additionally require the peer mTLS/SPIFFE identity to equal `authorized_executor`; ordinary tenant authentication is insufficient (I-23, V-17).
+Conventions: bearer/mTLS auth on every route (ADR-001); `tenant_id` derived from the token, never from the body (INVARIANT I-3); errors use RFC 9457 problem+json; all mutating POSTs are idempotent on `request_id`/`Idempotency-Key`. If concurrent `/v1/authorize` writers race on the same `(tenant_id, request_id)`, the uniqueness loser re-reads and returns the committed decision when `context_hash` matches; an unreadable winner or a different context is 409, never `evidence_write_failed`. Execution capability routes additionally require the peer mTLS/SPIFFE identity to equal `authorized_executor`; ordinary tenant authentication is insufficient (I-23, V-17). v1 terminates mTLS in-process with mandatory client-certificate verification and derives workload identity only from exactly one SPIFFE URI SAN; headers, CN, and subject DN never establish identity.
 
 ### 3.1 Mandatory pre-evaluation enrichment
 
