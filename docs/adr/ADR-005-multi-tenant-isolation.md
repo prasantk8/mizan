@@ -57,3 +57,17 @@ Adopt **Option 1 as the SaaS baseline with Option 3 as the enterprise tier** —
 - [ ] Region cell topology for pilot (single UAE cell?) and cell failover story.
 - [ ] BYOK ceremony details for enterprise tier (who can rotate, break-glass).
 - [ ] Do approval UIs ever need cross-tenant views for MSP/partner operators? (Current stance: no; partners get per-tenant identities.)
+
+## Amendment A — machine-enforced typed identifier contract (T-021)
+
+The I-16 contract is now enforced at the frozen-SPEC boundary, not left to code review. Every JSON
+Schema property ending in `_id` must resolve through `common#/$defs/*Id`, and every `_ids` property
+must be an array whose items resolve that way. Foreign and workload identifiers remain semantically
+distinct types: `SessionId`, `DeviceId`, and `SpiffeId` deliberately have no Mizan prefix, while
+registry identifiers retain their disjoint prefixes. This prevents a structurally valid value from
+crossing identifier domains merely because both domains happened to use JSON strings.
+
+The same blocking gate also checks Draft 2020-12 meta-schema validity, behavioural-token
+reachability (or a dated waiver), and producibility of every policy decision path under the closed
+ADR_Record schema. Committed negative fixtures are executed by the gate so CI proves each control
+can reject its named defect class.

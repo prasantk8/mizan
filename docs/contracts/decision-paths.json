@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "paths": {
+    "ALLOW": {"record_decision": "ALLOW", "required_record_fields": []},
+    "DENY": {"record_decision": "DENY", "required_record_fields": []},
+    "REQUIRE_APPROVAL": {"record_decision": "REQUIRE_APPROVAL", "required_record_fields": ["approval"]},
+    "CONSTRAIN": {"record_decision": "DENY", "required_record_fields": []},
+    "REDACT": {"record_decision": "DENY", "required_record_fields": []},
+    "ESCALATE": {"record_decision": "DENY", "required_record_fields": []}
+  }
+}

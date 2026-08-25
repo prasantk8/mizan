@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Implementation baseline complete: T-001 through T-015 are DONE; no active claims or unresolved blockers.
+Stage 2 remediation in progress. T-021 contract drift gates are in REVIEW; T-016 is the next executable task. B-11 remains isolated to T-025; no active claims.
 
 ## Agent Queue
 
@@ -27,6 +27,19 @@ Implementation baseline complete: T-001 through T-015 are DONE; no active claims
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | DONE |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | DONE |
 | T-015 | Chain-verification perf harness: 100k-record fixture, checkpointed parallel range verify (<10s) | CODEX | T-008 | DONE |
+| T-016 | R-004 F-1 (B-10 Option A ratified): reject CONSTRAIN/REDACT/ESCALATE with `NOT_IMPLEMENTED` + auditable DENY; remove dead `constraints_hash` binding (SPEC §0 rule 2) | CODEX | — | READY |
+| T-017 | R-004 F-2: `system_fail_closed` evidence on engine/dependency failure; wrap policy evaluation; narrow the blanket handler (I-8/V-15) | CODEX | — | READY |
+| T-018 | R-004 F-3/F-7/F-10: bind the real executor at issue, defensive delegation access, bounded security-event connection | CODEX | — | READY |
+| T-019 | R-004 F-6: concurrent duplicate `request_id` returns the prior decision, never `evidence_write_failed` | CODEX | — | READY |
+| T-020 | R-004 F-5: app-terminated mTLS populates `client_cert_spiffe`; deployment contract + ADR-001 delta (I-23) | CODEX | — | READY |
+| T-021 | R-004 F-4: contract drift gates — meta-schema, I-16 typed IDs, SPEC-string reachability, closed-schema producibility; negative fixtures in CI | CODEX | — | REVIEW |
+| T-022 | R-004 F-8/F-9: decompose the over-cited integration test, raise `test_execution.py` coverage, re-chain the in-memory repo, reconcile doc drift | CODEX | T-017, T-018 | READY |
+| T-023 | Load & latency harness: SPEC §7 p95/throughput/outbox-lag on deployment-class Linux; JSON artifacts (closes B-2/B-6 rerun obligation) | CODEX | T-022 | BLOCKED(T-022) |
+| T-024 | Adversarial suite: token replay, cross-tenant fuzz, chain tamper, prompt-injection corpus; nightly CI (PRD §39/§62) | CODEX | T-022 | BLOCKED(T-022) |
+| T-025 | Signing-key custody, distribution and rotation across token/receipt/anchor/grant artifacts | CODEX | B-11 | BLOCKED(B-11) |
+| T-026 | Outbox drain operations: runner, backpressure, poison handling, lag SLO, SIEM delivery | CODEX | T-022 | BLOCKED(T-022) |
+| T-027 | Threat model v1 (`threat-models/` holds only a README) | HUMAN | — | READY |
+| T-028 | Constrained-execution specification incl. executor-side enforcement contract (B-10 Option B) | HUMAN | — | PARKED(v1.4) |
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
 
@@ -49,10 +62,13 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-8 (resolved 2026-08-25):** R-003 ratified bounded transient tool arguments at authorization/redemption plus fresh authoritative enrichment before execution.
 - **B-9 (resolved 2026-08-25):** R-003 ratified a normative semantic policy hash excluding only lifecycle governance fields.
 - **R-003 (ratified 2026-08-25):** User ratified B-7/B-8/B-9 in all Product/Architecture, Cybersecurity, and Compliance/Business roles.
+- **B-10 (resolved 2026-08-25):** Human owner ratified R-004 **Option A** — the evaluator rejects `CONSTRAIN`/`REDACT`/`ESCALATE` with `NOT_IMPLEMENTED` and an auditable `DENY` ADR_Record, and the dead `constraints_hash` binding is removed. Constrained execution (Option B) is deferred to v1.4 as T-028. T-016 unblocked; CODEX implements Option A exactly and does not extend the `ADR_Record` schema.
+- **B-11 (open, HUMAN):** Signing-key custody and rotation. All keys are process-generated (`evidence.py:75`); receipts and anchors become unverifiable across restart. Per H-7 (crypto/key management) the custody model is not CODEX's to choose. Gates T-025 and single-process deployability.
+- **R-004 (open, 2026-08-25):** Implementation review of the T-001..T-015 baseline. Ten findings dispositioned in `docs/reviews/R-004-implementation-review-disposition.md`; §0 records which WORK_LOG claims were independently reproduced and which were not.
 
 ## Next Executable Action
 
-> **BASELINE COMPLETE:** No queued implementation task remains. Create and atomically claim the next scoped task before changing lane-owned files.
+> **T-016 (R-004 F-1) — claim and implement ratified B-10 Option A.** Reject CONSTRAIN/REDACT/ESCALATE with HTTP 501 `NOT_IMPLEMENTED`, persist a schema-valid DENY ADR_Record, remove dead ADR `constraints` reads, amend SPEC/ADR, and remove the temporary `NOT_IMPLEMENTED` waiver. Then T-017/T-018/T-019/T-020 in any order, followed by T-022. Full acceptance criteria: `docs/reviews/R-004-implementation-review-disposition.md` §4.
 
 ---
 
@@ -71,6 +87,9 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CLAUDE-rigor/CODEX · T-021 · Added blocking Draft 2020-12 meta-schema, I-16 typed-ID, behavioural reachability/dated-waiver, and closed ADR producibility gates with four committed negative fixtures; corrected five typed-ID schema violations with ADR-005 Amendment A; new reachability test failed on pre-fix `4267dac6ddf1c616506a38b3ec490b405e6e5b66` (NOT_IMPLEMENTED and system_fail_closed unreachable) and passes on the change; 91 unit tests and lint/check pass · next: T-016 CODEX
+- 2026-08-25 · HUMAN · R-004/B-10 · Ratified Option A: evaluator rejects CONSTRAIN/REDACT/ESCALATE with `NOT_IMPLEMENTED` plus an auditable DENY ADR_Record, dead `constraints_hash` binding removed, constrained execution deferred to v1.4 (T-028 PARKED); T-016 unblocked, B-11 key custody still open · next: T-021 then T-016 CODEX
+- 2026-08-25 · CLAUDE · R-004 · Reviewed the T-001..T-015 baseline against SPEC v1.3 and reproduced the lint/86-test/live-Postgres/100k-chain/Cedar/32-commit-ledger claims (sequencer ops/s not retained, superseded by T-023); dispositioned ten findings, headlined by CONSTRAIN/REDACT being unrecordable under the closed ADR_Record schema and `system_fail_closed` existing in SPEC but in zero lines of code; queued T-016..T-028 and filed B-10/B-11 for HUMAN · next: T-021 CODEX
 - 2026-08-25 · CODEX · T-007 v1.3 · Closed I-1..I-26/V-1..V-21 and R-003 coverage, added fresh-review-authority property checks, reconciled ratified ADR statuses, and passed baseline/lint/JS, 86 unit/property, four live PostgreSQL, 2,708 ops/s sequencer, 6,018 eval/s policy, and 100k chain verification in 6.424s; all T-001..T-015 DONE · next: new scoped task
 - 2026-08-25 · CODEX · T-009 v1.3 · Made review-triggering rejection atomically close the original epoch, snapshot the independently configured authority pool, open an isolated no-carry review epoch, append decision evidence, and enqueue review notification; 85 unit plus four live integration tests pass; task DONE · next: T-007
 - 2026-08-25 · CODEX · T-006 v1.3 · Implemented the R-003 semantic policy hash, locked lifecycle endpoint, simulation-before-test and author/approver separation, UTC activation, prior-version supersession, transactional transition events, and lifecycle/hash regression coverage; task DONE · next: T-009

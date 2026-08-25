@@ -82,6 +82,9 @@ Every identifier in every schema below references this file. A build that inline
     "RequestId":   { "type": "string", "format": "uuid", "description": "Client-generated idempotency key; UUIDv7 recommended." },
     "TraceId":     { "type": "string", "pattern": "^[0-9a-f]{32}$" },
     "SpanId":      { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "SpiffeId":    { "type": "string", "pattern": "^spiffe://[A-Za-z0-9._/-]{3,256}$" },
+    "SessionId":   { "type": "string", "minLength": 1, "maxLength": 128 },
+    "DeviceId":    { "type": "string", "minLength": 1, "maxLength": 128 },
     "ModelId":     { "type": "string", "minLength": 1, "maxLength": 128 },
     "CustomerId":  { "type": "string", "minLength": 1, "maxLength": 128, "description": "Tenant-scoped foreign customer identifier." },
     "DlpPolicyId": { "type": "string", "pattern": "^dlp_[a-z0-9_.-]{3,64}$" },
@@ -206,7 +209,7 @@ Every identifier in every schema below references this file. A build that inline
       "properties": {
         "auth_method":    { "enum": ["oauth2_client_credentials", "oidc", "jwt_svid", "mtls", "workload_identity"] },
         "credential_ref": { "$ref": "common#/$defs/KeyRef", "description": "Pointer into external vault (never a secret value)" },
-        "spiffe_id":      { "type": ["string", "null"], "pattern": "^spiffe://[A-Za-z0-9._/-]{3,256}$" }
+        "spiffe_id":      { "oneOf": [{ "$ref": "common#/$defs/SpiffeId" }, { "type": "null" }] }
       }
     },
     "tools":    { "type": "array", "items": { "$ref": "common#/$defs/ToolId" },   "uniqueItems": true },
@@ -629,9 +632,9 @@ Fields that the evidence record requires are **required here or supplied by mand
         "business_process":  { "type": ["string", "null"], "maxLength": 120 } } },
     "security": { "type": ["object", "null"], "additionalProperties": false,
       "properties": {
-        "session_id":    { "type": ["string", "null"], "maxLength": 128 },
+        "session_id":    { "oneOf": [{ "$ref": "common#/$defs/SessionId" }, { "type": "null" }] },
         "source_ip":     { "type": ["string", "null"], "maxLength": 45 },
-        "device_id":     { "type": ["string", "null"], "maxLength": 128 },
+        "device_id":     { "oneOf": [{ "$ref": "common#/$defs/DeviceId" }, { "type": "null" }] },
         "anomaly_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "prior_denials_in_session": { "type": ["integer", "null"], "minimum": 0 } } },
     "mapped": {
@@ -676,7 +679,7 @@ One entry per event (§4). ADR_Records are the *decision* evidence; AuditTrail i
     "stream_id": { "$ref": "common#/$defs/EvidenceStreamId" },
     "sequence_number": { "type": "integer", "minimum": 0 },
     "event_type": { "type": "string", "pattern": "^mizan\\.[a-z_]+\\.[a-z_]+$" },
-    "trace_id":   { "type": ["string", "null"], "pattern": "^[0-9a-f]{32}$" },
+    "trace_id":   { "oneOf": [{ "$ref": "common#/$defs/TraceId" }, { "type": "null" }] },
     "actor": { "type": "object", "additionalProperties": false, "required": ["id", "kind"],
       "properties": { "id": { "$ref": "common#/$defs/ActorSubjectId" },
                       "kind": { "enum": ["human", "agent", "service", "system"] } } },
@@ -801,7 +804,7 @@ Promoted to a first-class schema in v1.1: the tool registry is now the authority
       "required": ["executor_spiffe_ids", "token_ttl_seconds", "lease_ttl_seconds", "heartbeat_interval_seconds", "max_lease_extensions"],
       "properties": {
         "executor_spiffe_ids": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^spiffe://[A-Za-z0-9._/-]{3,256}$" },
+          "items": { "$ref": "common#/$defs/SpiffeId" },
           "description": "Registry-authorized workloads that may execute this tool. Capability issuance selects exactly one as authorized_executor (V-21)." },
         "token_ttl_seconds":  { "type": "integer", "minimum": 30, "maximum": 3600, "default": 300,
                                 "description": "Time to START. Redeeming the token creates a lease; long jobs do not need a long-lived token." },

@@ -1,0 +1,1 @@
+{"check":"closed_schema","record_decision":"CONSTRAIN","required_record_fields":["constraints"],"adr_decisions":["ALLOW","DENY"],"adr_properties":["decision"]}

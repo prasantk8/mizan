@@ -1,0 +1,1 @@
+{"check":"typed_id","schema":{"$id":"https://example.test/broken.json","type":"object","properties":{"tool_id":{"type":"string"}}}}
