@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; T-004 now receives a full contract/runtime reconciliation before the remaining human gates.
+Release completion audit completed all independent work; R-003 awaits HUMAN ratification for B-7/B-8/B-9.
 
 ## Agent Queue
 
@@ -48,10 +48,11 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-7:** `rejection_mode=review_required` requires opening an independently controlled review epoch, but `Policy.approval_requirements` defines no review roles, quorum, TTL, or rejection semantics. T-009 implements and verifies every defined branch but is PARKED before inventing review authority. Required HUMAN contract decision: add a typed `review` configuration or define a normative reuse rule.
 - **B-8:** SPEC I-9/I-14 and §3.1 require redemption-time context comparison plus server recomputation of `parameters_hash` from caller-sent arguments, but EvaluationContext §2.4 has no arguments field and the execute request carries only a token/idempotency key. T-004 currently uses an implementation-only `tool.parameters` field; T-011 can only compare signed claims back to the same frozen ADR, not to fresh execution context. Required HUMAN contract decision: add a bounded authorization `arguments` envelope and a redemption-time context input/server-enrichment contract, or define authenticated out-of-band inputs for both.
 - **B-9:** Policy lifecycle transitions mutate `status`, but `content_hash` is normatively SHA-256 over the entire Policy JSON excluding only `content_hash` (therefore including `status`). Recomputing it breaks historical ADR `(policy_id,version,content_hash)` foreign keys; not recomputing it makes the document/hash false. Required HUMAN contract decision: exclude lifecycle/approval metadata from semantic `content_hash`, or make every transition a new policy version.
+- **R-003 proposed:** `docs/reviews/R-003-completion-blocker-disposition.md` defines the recommended typed review authority (B-7), transient bounded arguments plus fresh redemption enrichment (B-8), and immutable semantic policy hash basis (B-9). One explicit HUMAN ratification unblocks all remaining tasks.
 
 ## Next Executable Action
 
-> **T-004 (CODEX audit):** Reconcile EvaluationContext and enrichment against the frozen schema, enumerate every B-8 delta, and fix all authorization behavior independent of that human contract decision.
+> **HUMAN:** Ratify or amend R-003 for B-7/B-8/B-9. On ratification, CODEX applies SPEC v1.3 and completes T-004/T-006/T-007/T-009/T-011.
 
 ---
 
@@ -70,6 +71,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-004 audit · Replaced permissive implementation-only context bags with exact typed customer/business/security/mapped/environment/timestamp models, removed non-schema tool/action fields, generated server trace evidence, and proved the context validates after isolating only the B-8 arguments gap; 80 unit plus four live integration tests pass; PARKED on R-003/B-8 · next: HUMAN ratify R-003
 - 2026-08-25 · CODEX · T-007 audit · Reconciled the coverage index after T-011/T-012/T-013 hardening, added durable hashed-jti replay signaling, and separated security notifications from evidence-publisher outbox selection to prevent publication starvation; 79 unit plus four live integration tests pass; PARKED only where B-7/B-8 make complete invariant tests impossible · next: T-004 audit
 - 2026-08-25 · CODEX · T-010 audit · Added exact tenant-RLS dashboard aggregates for all seven PRD metrics, responsive control-center cards, agent registry/detail view, active-view refresh, and retained evidence-backed action/audit/verification views; 79 unit plus four live integration tests and JavaScript syntax pass; task DONE · next: T-007 audit
 - 2026-08-25 · CODEX · T-013 audit · Normalized telemetry/persistence/parser faults as controlled tool errors, moved timeout enforcement before irreversible persistence, enforced RFC 6901 pointer rules, and deduplicated truncated drift paths; 79 unit tests pass; task DONE · next: T-010 audit

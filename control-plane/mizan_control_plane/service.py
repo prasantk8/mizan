@@ -79,7 +79,7 @@ class AuthorizationService:
             raise Problem(422, "executor_mapping_missing", "Tool has no authorized executor")
 
         caller_classification = context.resource.data_classification
-        if caller_classification is not None and (
+        if (
             CLASSIFICATION_ORDER[caller_classification]
             < CLASSIFICATION_ORDER[tool.data_classification]
         ):
@@ -88,10 +88,10 @@ class AuthorizationService:
             )
         enriched.resource.resource_owner = tool.resource_owner
         enriched.resource.data_classification = max(
-            (caller_classification or tool.data_classification, tool.data_classification),
+            (caller_classification, tool.data_classification),
             key=CLASSIFICATION_ORDER.__getitem__,
         )
-        enriched.resource.classification_source = (
+        classification_source = (
             "caller_asserted_upgrade"
             if caller_classification
             and CLASSIFICATION_ORDER[caller_classification]
@@ -144,7 +144,9 @@ class AuthorizationService:
             constraints=constraints,
             degraded={"is_degraded": False, "reason": "none", "grant_ref": None},
         )
-        adr = self._adr_document(identity, enriched, response, context_hash, now)
+        adr = self._adr_document(
+            identity, enriched, response, context_hash, now, classification_source
+        )
         persisted = PersistedDecision(
             decision_id=decision_id,
             request_id=context.request_id,
@@ -228,14 +230,15 @@ class AuthorizationService:
         response: AuthorizationResponse,
         context_hash: str,
         now: datetime,
+        classification_source: str,
     ) -> dict:
         decision_basis = "matched_policy" if response.policies else "default_deny"
         document = {
             "schema_version": "1.2",
             "decision_id": response.decision_id,
             "tenant_id": identity.tenant_id,
-            "trace_id": context.environment.get("trace_id", "0" * 32),
-            "span_id": context.environment.get("span_id"),
+            "trace_id": hashlib.sha256(str(context.request_id).encode()).hexdigest()[:32],
+            "span_id": None,
             "timestamp": now.isoformat().replace("+00:00", "Z"),
             "principal": context.principal.model_dump(mode="json"),
             "agent": context.agent.model_dump(mode="json"),
@@ -243,7 +246,8 @@ class AuthorizationService:
             "intent": context.intent,
             "tool": context.tool.model_dump(mode="json", exclude={"parameters"}),
             "action": context.action.model_dump(mode="json"),
-            "resource": context.resource.model_dump(mode="json"),
+            "resource": context.resource.model_dump(mode="json")
+            | {"classification_source": classification_source},
             "context_hash": context_hash,
             "risk": response.risk,
             "policies": response.policies,

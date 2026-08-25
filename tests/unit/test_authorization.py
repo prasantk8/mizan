@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from mizan_control_plane.canonical import binding_hash
 from mizan_control_plane.models import (
@@ -11,6 +13,7 @@ from mizan_control_plane.models import (
 from mizan_control_plane.problems import Problem
 from mizan_control_plane.repository import InMemoryAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
+from mizan_control_plane.schema_validation import ContractSchemas
 from mizan_control_plane.service import AuthorizationService
 
 TENANT = "tnt_bank-a"
@@ -41,10 +44,17 @@ def context(request_id: str = "018f47a6-7b42-7c00-8000-000000000001") -> Evaluat
             },
             "action": {
                 "type": "financial_write",
-                "estimated_value": {"amount": 12500, "currency": "AED"},
             },
-            "resource": {"id": "portfolio/42", "type": "portfolio"},
-            "environment": {"trace_id": "a" * 32},
+            "resource": {
+                "id": "portfolio/42",
+                "type": "portfolio",
+                "resource_owner": "core-banking",
+                "data_classification": "financial",
+            },
+            "business": {"transaction_value": {"amount": 12500, "currency": "AED"}},
+            "security": {"anomaly_score": 0.0},
+            "environment": "production",
+            "timestamp": "2026-08-25T00:00:00Z",
         }
     )
 
@@ -97,6 +107,12 @@ def test_no_matching_policy_is_recorded_default_deny() -> None:
     assert repository.adr_documents[0]["decision_basis"] == "default_deny"
     assert repository.adr_documents[0]["resource"]["resource_owner"] == "core-banking"
     assert repository.adr_documents[0]["risk"]["level"] == "HIGH"
+
+
+def test_evaluation_context_matches_frozen_contract_except_b8_arguments_gap() -> None:
+    document = context().model_dump(mode="json")
+    document["tool"].pop("parameters")
+    ContractSchemas(Path("SPEC_v1.md")).validate("EvaluationContext", document)
 
 
 def test_tenant_is_derived_from_identity() -> None:

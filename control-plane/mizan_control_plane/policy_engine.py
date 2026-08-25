@@ -174,11 +174,7 @@ class CedarPolicyEvaluator:
         document: dict[str, Any], context: EvaluationContext, risk_level: str | None
     ) -> bool:
         selectors = document.get("applies_to", {})
-        environment = (
-            context.environment.get("name")
-            if isinstance(context.environment, dict)
-            else context.environment
-        )
+        environment = context.environment
         values: dict[str, Any] = {
             "agent_ids": context.agent.id,
             "tool_ids": context.tool.id,

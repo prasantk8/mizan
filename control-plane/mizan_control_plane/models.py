@@ -32,7 +32,6 @@ class BindingProfileRef(StrictModel):
 
 class ToolInput(StrictModel):
     id: str = Field(pattern=r"^tool_[a-z0-9_.-]{3,64}$")
-    version: str | None = None
     parameters_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     binding_profile: BindingProfileRef
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -49,17 +48,48 @@ class ActionInput(StrictModel):
         "delete",
         "delegate",
     ]
-    estimated_value: dict[str, Any] | None = None
+
+
+class CustomerInput(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    segment: str | None = Field(default=None, max_length=64)
+
+
+class MoneyInput(StrictModel):
+    amount: int
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class BusinessInput(StrictModel):
+    transaction_value: MoneyInput | None = None
+    customer_consent: bool | None = None
+    risk_profile: str | None = Field(default=None, max_length=64)
+    channel: str | None = Field(default=None, max_length=64)
+    jurisdiction: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    business_process: str | None = Field(default=None, max_length=120)
+
+
+class SecurityInput(StrictModel):
+    session_id: str | None = Field(default=None, max_length=128)
+    source_ip: str | None = Field(default=None, max_length=45)
+    device_id: str | None = Field(default=None, max_length=128)
+    anomaly_score: float | None = Field(default=None, ge=0, le=1)
+    prior_denials_in_session: int | None = Field(default=None, ge=0)
+
+
+class MappedInput(StrictModel):
+    source: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9._-]{1,63}$")
+    projection_id: str | None = Field(default=None, pattern=r"^prj_[a-z0-9_.-]{3,64}$")
+    projection_version: int | None = Field(default=None, ge=1)
+    raw_envelope_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    fields: dict[str, str | int | float | bool | None] = Field(default_factory=dict, max_length=64)
 
 
 class ResourceInput(StrictModel):
     id: str
     type: str = Field(max_length=64)
-    resource_owner: str | None = None
-    data_classification: (
-        Literal["public", "internal", "confidential", "pii", "financial", "secret"] | None
-    ) = None
-    classification_source: Literal["registry", "caller_asserted_upgrade"] = "registry"
+    resource_owner: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{1,63}$")
+    data_classification: Literal["public", "internal", "confidential", "pii", "financial", "secret"]
 
 
 class EvaluationContext(StrictModel):
@@ -68,15 +98,16 @@ class EvaluationContext(StrictModel):
     tenant_id: str | None = Field(default=None, pattern=r"^tnt_[a-z0-9-]{4,64}$")
     principal: PrincipalInput
     agent: AgentInput
-    customer: dict[str, Any] | None = None
+    customer: CustomerInput | None = None
     intent: str = Field(max_length=120)
     tool: ToolInput
     action: ActionInput
     resource: ResourceInput
-    business: dict[str, Any] = Field(default_factory=dict)
-    security: dict[str, Any] = Field(default_factory=dict)
-    environment: dict[str, Any] = Field(default_factory=dict)
-    mapped: dict[str, Any] = Field(default_factory=dict)
+    business: BusinessInput | None = None
+    security: SecurityInput | None = None
+    mapped: MappedInput | None = None
+    environment: Literal["development", "staging", "production"]
+    timestamp: datetime
 
 
 class AuthenticatedIdentity(StrictModel):

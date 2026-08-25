@@ -37,7 +37,7 @@ def test_nested_dsl_compiles_and_matches_with_explanation_identity() -> None:
         {
             "all": [
                 {"field": "action.type", "op": "eq", "value": "financial_write"},
-                {"field": "action.estimated_value.amount", "op": "gte", "value": 10000},
+                {"field": "business.transaction_value.amount", "op": "gte", "value": 10000},
                 {"not": {"field": "security.blocked", "op": "present"}},
             ]
         }
@@ -76,7 +76,7 @@ def test_compiled_policy_handle_meets_hot_path_latency_budget() -> None:
 
 def test_decimal_conditions_use_cedar_decimal_extension() -> None:
     request = context()
-    request.security["anomaly_score"] = 0.875
+    request.security.anomaly_score = 0.875
     document = policy({"field": "security.anomaly_score", "op": "gte", "value": 0.75})
     assert CedarPolicyEvaluator().evaluate([document], request) != []
     document["conditions"]["value"] = 0.9
@@ -85,7 +85,6 @@ def test_decimal_conditions_use_cedar_decimal_extension() -> None:
 
 def test_risk_and_environment_selectors_use_enriched_values() -> None:
     request = context()
-    request.environment["name"] = "production"
     document = policy({"field": "action.type", "op": "eq", "value": "financial_write"})
     document["applies_to"] |= {"risk_levels": ["HIGH"], "environments": ["production"]}
     assert CedarPolicyEvaluator().evaluate([document], request, "HIGH") != []
