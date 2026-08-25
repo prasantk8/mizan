@@ -32,7 +32,7 @@ from tests.unit.test_registry import agent_document
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
-def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
+def test_live_control_plane_end_to_end(tmp_path: Path) -> None:
     repository = PostgresAuthorizationRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     service = AuthorizationService(repository, RegistryFloorRiskProvider(), "integration", "f" * 64)
     identity = AuthenticatedIdentity(
@@ -547,3 +547,150 @@ def test_concurrent_duplicate_request_returns_one_postgres_decision() -> None:
             ("018f47a6-7b42-7c00-8000-000000000199",),
         ).fetchone()[0]
     assert count == 1
+
+
+def _focused_authorization(request_id: str):
+    repository = PostgresAuthorizationRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    active_tool = repository.get_tool("tnt_bank-a", "tool_transfer")
+    assert active_tool is not None
+    request = context(request_id)
+    request.tool.binding_profile.profile_id = active_tool.profile_id
+    request.tool.binding_profile.profile_version = active_tool.profile_version
+    principal = AuthenticatedIdentity(
+        tenant_id="tnt_bank-a",
+        agent_id="agt_wealth-01",
+        subject="test",
+        delegation_chain=["agt_wealth-01"],
+    )
+    response = AuthorizationService(
+        repository, RegistryFloorRiskProvider(), "integration", "f" * 64
+    ).authorize(principal, request)
+    return repository, response
+
+
+def _publish_focused_evidence(repository, tmp_path: Path):
+    evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    signer = Ed25519EvidenceSigner.generate()
+    store = LocalImmutableObjectStore(tmp_path)
+    publisher = OutboxPublisher(evidence, store, signer)
+    publisher.drain("tnt_bank-a")
+    publisher.anchor("tnt_bank-a", "tnt_bank-a:adr:0")
+    return ObjectEvidenceVerifier(evidence, store, {signer.key_id: signer.public_key})
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_i1_authorization_commits_one_adr_and_outbox() -> None:
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000201")
+    with repository.pool.connection() as connection, connection.transaction():
+        repository._scope(connection, "tnt_bank-a")
+        adr_count = connection.execute(
+            "SELECT count(*) FROM mizan.adr_records WHERE decision_id=%s",
+            (response.decision_id,),
+        ).fetchone()[0]
+        outbox_count = connection.execute(
+            "SELECT count(*) FROM mizan.outbox WHERE aggregate_type='decision' AND aggregate_id=%s",
+            (response.decision_id,),
+        ).fetchone()[0]
+    assert (adr_count, outbox_count) == (1, 1)
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_v19_identical_decision_event_retry_returns_same_event() -> None:
+    _, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000202")
+    evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    actor = {"kind": "system", "id": "mizan-control-plane", "authenticated_workload": None}
+    payload = {"token_jti_hash": "d" * 64}
+    first = evidence.append_decision_event(
+        "tnt_bank-a", response.decision_id, "CAPABILITY_ISSUED", actor, payload
+    )
+    retry = evidence.append_decision_event(
+        "tnt_bank-a", response.decision_id, "CAPABILITY_ISSUED", actor, payload
+    )
+    assert retry["event_id"] == first["event_id"]
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_i9_bound_argument_change_is_rejected_at_redemption(tmp_path: Path) -> None:
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000203")
+    verifier = _publish_focused_evidence(repository, tmp_path)
+    execution = ExecutionService(
+        os.environ["MIZAN_TEST_DATABASE_URL"],
+        ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate()),
+        verifier,
+    )
+    token = execution.issue(
+        "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth"
+    )
+    with pytest.raises(Problem) as raised:
+        execution.redeem(
+            token,
+            response.decision_id,
+            "spiffe://mizan/executor/wealth",
+            {"amount": 99999, "request_time": "changed"},
+        )
+    assert raised.value.code == "execution_arguments_drift"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_i10_redeemed_capability_cannot_create_a_second_lease(tmp_path: Path) -> None:
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000204")
+    verifier = _publish_focused_evidence(repository, tmp_path)
+    execution = ExecutionService(
+        os.environ["MIZAN_TEST_DATABASE_URL"],
+        ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate()),
+        verifier,
+    )
+    arguments = {"amount": 12500, "request_time": "first"}
+    token = execution.issue(
+        "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth"
+    )
+    execution.redeem(
+        token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
+    )
+    with pytest.raises(Problem) as replay:
+        execution.redeem(
+            token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
+        )
+    assert replay.value.code == "execution_token_consumed"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_i23_second_registered_executor_redeems_its_own_token(tmp_path: Path) -> None:
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000205")
+    verifier = _publish_focused_evidence(repository, tmp_path)
+    execution = ExecutionService(
+        os.environ["MIZAN_TEST_DATABASE_URL"],
+        ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate()),
+        verifier,
+    )
+    token = execution.issue(
+        "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/settlement"
+    )
+    lease = execution.redeem(
+        token,
+        response.decision_id,
+        "spiffe://mizan/executor/settlement",
+        {"amount": 12500, "request_time": "second-executor"},
+    )
+    assert lease["authorized_executor"] == "spiffe://mizan/executor/settlement"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_i25_financial_execution_waits_for_immutable_receipt(tmp_path: Path) -> None:
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000206")
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, SimpleNamespace())
+    token = execution.issue(
+        "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth"
+    )
+    arguments = {"amount": 12500, "request_time": "receipt-gate"}
+    with pytest.raises(Problem) as missing:
+        execution.redeem(
+            token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
+        )
+    assert missing.value.code == "immutable_receipt_missing"
+    execution.receipt_gate = _publish_focused_evidence(repository, tmp_path)
+    lease = execution.redeem(
+        token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
+    )
+    assert lease["state"] == "LEASED"

@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.execution import ExecutionService, ExecutionTokenCodec
 from mizan_control_plane.problems import Problem
 from psycopg_pool import PoolTimeout
+
+from tests.unit.test_authorization import context, identity
+from tests.unit.test_authorization import service as authorization_service
 
 
 def claims() -> dict:
@@ -130,3 +135,223 @@ def test_replay_security_events_use_bounded_pool_without_exhausting_primary() ->
         for future in futures:
             future.result(timeout=1)
     assert service.security_event_counters["security_event_pool_timeout"] == 64
+
+
+def test_policy_ttl_can_only_clamp_tool_ttl() -> None:
+    assert ExecutionService._clamp_token_ttl(300, []) == 300
+    assert ExecutionService._clamp_token_ttl(300, [600, 120, 240]) == 120
+
+
+class QueryResult:
+    def __init__(self, row) -> None:
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class RevalidationConnection:
+    def __init__(self) -> None:
+        self.profile = (["/amount"], ["/request_time"])
+        self.agent = (
+            "1.0.0",
+            None,
+            {"delegation": {"allowed_agent_ids": [], "max_delegation_depth": 0}},
+        )
+        self.chain_rows = [
+            (
+                None,
+                "ACTIVE",
+                {"delegation": {"allowed_agent_ids": [], "max_delegation_depth": 0}},
+                True,
+            )
+        ]
+        self.approval = None
+
+    def execute(self, query: str, parameters=None) -> QueryResult:
+        if "bound_pointers,volatile_pointers" in query:
+            return QueryResult(self.profile)
+        if "SELECT version,parent_agent_id,document" in query:
+            return QueryResult(self.agent)
+        if "SELECT parent_agent_id,lifecycle_state,document" in query:
+            return QueryResult(self.chain_rows.pop(0))
+        if "FROM mizan.approvals" in query:
+            return QueryResult(self.approval)
+        raise AssertionError(f"unexpected query: {query}")
+
+
+class FixedRiskProvider:
+    def __init__(self, level: str = "HIGH", error: Exception | None = None) -> None:
+        self.level = level
+        self.error = error
+
+    def evaluate(self, evaluation_context, floor: str) -> dict:
+        if self.error:
+            raise self.error
+        return {"level": self.level, "floor_source": "risk_engine"}
+
+
+def revalidation_case():
+    authorizer, repository = authorization_service()
+    response = authorizer.authorize(
+        identity(), context("018f47a6-7b42-7c00-8000-000000000061")
+    )
+    adr = deepcopy(repository.adr_documents[0])
+    normalized = deepcopy(repository.normalized_contexts[("tnt_bank-a", response.decision_id)])
+    tool = {
+        "binding_profile": deepcopy(adr["tool"]["binding_profile"]),
+        "execution": {"executor_spiffe_ids": ["spiffe://mizan/executor/wealth"]},
+        "risk_tier": "HIGH",
+        "resource_owner": "core-banking",
+        "data_classification": "financial",
+    }
+    claims = {
+        "tenant_id": adr["tenant_id"],
+        "agent_id": adr["agent"]["id"],
+        "principal_id": adr["principal"]["id"],
+        "tool_id": adr["tool"]["id"],
+        "parameters_hash": adr["tool"]["parameters_hash"],
+        "context_hash": adr["context_hash"],
+        "binding_profile": deepcopy(adr["tool"]["binding_profile"]),
+        "delegation_chain_hash": canonical_hash(adr["agent"]["delegation_chain"]),
+        "authorized_executor": "spiffe://mizan/executor/wealth",
+        "approval_epoch_id": None,
+        "decision_id": adr["decision_id"],
+    }
+    execution = object.__new__(ExecutionService)
+    execution.risk_provider = FixedRiskProvider()
+    return execution, RevalidationConnection(), claims, adr, tool, normalized
+
+
+def invoke_revalidation(case, agent_state: str = "ACTIVE") -> None:
+    execution, connection, token_claims, adr, tool, normalized = case
+    execution._revalidate(
+        connection,
+        token_claims,
+        adr,
+        tool,
+        agent_state,
+        normalized,
+        {"amount": 12500, "request_time": "retry"},
+    )
+
+
+def test_revalidate_accepts_unchanged_authoritative_state() -> None:
+    invoke_revalidation(revalidation_case())
+
+
+def test_revalidate_rejects_inactive_agent() -> None:
+    with pytest.raises(Problem) as raised:
+        invoke_revalidation(revalidation_case(), "SUSPENDED")
+    assert raised.value.status == 403
+    assert raised.value.code == "agent_not_active"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "code"),
+    [
+        (lambda case: case[2].update({"tool_id": "tool_other"}), "execution_context_drift"),
+        (
+            lambda case: case[4].update(
+                {"binding_profile": {"profile_id": "bp_other-v1", "profile_version": 1}}
+            ),
+            "binding_profile_mismatch",
+        ),
+        (
+            lambda case: case[4]["execution"].update({"executor_spiffe_ids": []}),
+            "executor_mapping_changed",
+        ),
+        (lambda case: setattr(case[1], "profile", None), "binding_profile_missing"),
+        (
+            lambda case: setattr(
+                case[1],
+                "agent",
+                ("2.0.0", None, {"delegation": {"max_delegation_depth": 0}}),
+            ),
+            "agent_version_changed",
+        ),
+        (
+            lambda case: setattr(
+                case[1],
+                "chain_rows",
+                [(None, "SUSPENDED", {"delegation": {}}, True)],
+            ),
+            "delegation_authority_changed",
+        ),
+        (
+            lambda case: case[4].update({"resource_owner": "changed-owner"}),
+            "execution_context_drift",
+        ),
+        (
+            lambda case: setattr(case[0], "risk_provider", FixedRiskProvider("CRITICAL")),
+            "execution_risk_increased",
+        ),
+        (
+            lambda case: case[2].update({"approval_epoch_id": "epo_12345678"}),
+            "approval_epoch_changed",
+        ),
+    ],
+)
+def test_each_revalidate_403_branch_is_reached(mutation, code: str) -> None:
+    case = revalidation_case()
+    mutation(case)
+    with pytest.raises(Problem) as raised:
+        invoke_revalidation(case)
+    assert raised.value.status == 403
+    assert raised.value.code == code
+
+
+def test_revalidate_rejects_changed_bound_arguments() -> None:
+    case = revalidation_case()
+    execution, connection, token_claims, adr, tool, normalized = case
+    with pytest.raises(Problem) as raised:
+        execution._revalidate(
+            connection,
+            token_claims,
+            adr,
+            tool,
+            "ACTIVE",
+            normalized,
+            {"amount": 99999, "request_time": "retry"},
+        )
+    assert raised.value.status == 403
+    assert raised.value.code == "execution_arguments_drift"
+
+
+def test_revalidate_rejects_invalid_stored_context_and_risk_dependency_failure() -> None:
+    case = revalidation_case()
+    case[5].pop("intent")
+    with pytest.raises(Problem) as invalid:
+        invoke_revalidation(case)
+    assert invalid.value.code == "execution_context_invalid"
+
+    case = revalidation_case()
+    case[0].risk_provider = FixedRiskProvider(error=RuntimeError("risk down"))
+    with pytest.raises(Problem) as unavailable:
+        invoke_revalidation(case)
+    assert unavailable.value.status == 503
+    assert unavailable.value.code == "risk_engine_unavailable"
+
+
+@pytest.mark.parametrize("root_document", [{}, {"delegation": {"max_delegation_depth": 0}}])
+def test_revalidate_rejects_missing_edge_or_reduced_delegation_depth(root_document) -> None:
+    case = revalidation_case()
+    execution, connection, token_claims, adr, _tool, normalized = case
+    adr["agent"]["delegation_chain"] = ["agt_wealth-01", "agt_child-01"]
+    normalized["agent"]["delegation_chain"] = ["agt_wealth-01", "agt_child-01"]
+    token_claims["delegation_chain_hash"] = canonical_hash(adr["agent"]["delegation_chain"])
+    connection.chain_rows = [
+        (None, "ACTIVE", root_document, True),
+        (
+            "agt_wealth-01",
+            "ACTIVE",
+            {"delegation": {"allowed_agent_ids": [], "max_delegation_depth": 0}},
+            True,
+        ),
+    ]
+    if root_document.get("delegation") is not None:
+        root_document["delegation"]["allowed_agent_ids"] = ["agt_child-01"]
+    with pytest.raises(Problem) as raised:
+        invoke_revalidation(case)
+    assert raised.value.status == 403
+    assert raised.value.code == "delegation_authority_changed"

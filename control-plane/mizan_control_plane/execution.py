@@ -140,13 +140,15 @@ class ExecutionService:
                 raise Problem(403, "agent_not_active", "Agent is not active")
             executor = self._authorized_executor(tool, executor_spiffe)
             ttl = tool["execution"]["token_ttl_seconds"]
+            policy_ttls: list[int] = []
             for policy_ref in adr["policies"]:
                 policy = connection.execute(
                     "SELECT document FROM mizan.policies WHERE tenant_id=%s AND policy_id=%s AND version=%s",
                     (tenant_id, policy_ref["policy_id"], policy_ref["version"]),
                 ).fetchone()
                 if policy and policy[0].get("execution_token_ttl_seconds"):
-                    ttl = min(ttl, policy[0]["execution_token_ttl_seconds"])
+                    policy_ttls.append(policy[0]["execution_token_ttl_seconds"])
+            ttl = self._clamp_token_ttl(ttl, policy_ttls)
             jti = uuid4().hex
             claims = {
                 "token_version": "1.2",
@@ -203,6 +205,10 @@ class ExecutionService:
                 "Issuing workload is not an authorized executor for this tool version",
             )
         return executor_spiffe
+
+    @staticmethod
+    def _clamp_token_ttl(tool_ttl: int, policy_ttls: list[int]) -> int:
+        return min([tool_ttl, *policy_ttls])
 
     def redeem(
         self,

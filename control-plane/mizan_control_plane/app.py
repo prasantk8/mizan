@@ -52,7 +52,7 @@ def create_app(
         settings.evaluator_build,
         settings.evaluator_configuration_hash,
     )
-    app = FastAPI(title="Mizan Control Plane API", version="1.1.0")
+    app = FastAPI(title="Mizan Control Plane API", version="1.3.0")
     app.add_middleware(VerifiedPeerSpiffeMiddleware)
     app.add_exception_handler(Problem, problem_response)
 

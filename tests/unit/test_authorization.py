@@ -6,7 +6,7 @@ from threading import Barrier
 from typing import Any
 
 import pytest
-from mizan_control_plane.canonical import binding_hash
+from mizan_control_plane.canonical import binding_hash, canonical_hash
 from mizan_control_plane.models import (
     AuthenticatedIdentity,
     EvaluationContext,
@@ -209,6 +209,21 @@ def test_idempotent_retry_returns_same_decision() -> None:
     second = subject.authorize(identity(), context())
     assert second == first
     assert len(repository.adr_documents) == 1
+
+
+def test_i13_in_memory_repository_assigns_persisted_chain_fields() -> None:
+    subject, repository = service()
+    subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000051"))
+    subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000052"))
+    first, second = repository.adr_documents
+    assert first["sequence_number"] == 0
+    assert first["prev_hash"] == "0" * 64
+    assert second["sequence_number"] == 1
+    assert second["prev_hash"] == first["record_hash"]
+    for record in (first, second):
+        assert record["record_hash"] == canonical_hash(
+            {name: value for name, value in record.items() if name != "record_hash"}
+        )
 
 
 def test_request_id_reuse_with_different_context_is_conflict() -> None:

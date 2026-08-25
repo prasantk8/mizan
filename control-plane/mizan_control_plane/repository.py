@@ -209,6 +209,7 @@ class InMemoryAuthorizationRepository:
         self.normalized_contexts: dict[tuple[str, str], dict] = {}
         self.fail_writes = False
         self._decision_lock = Lock()
+        self._chain_heads: dict[tuple[str, str], tuple[int, str]] = {}
 
     def get_agent(self, tenant_id: str, agent_id: str) -> RegistryAgent | None:
         return self.agents.get((tenant_id, agent_id))
@@ -233,8 +234,17 @@ class InMemoryAuthorizationRepository:
         with self._decision_lock:
             if key in self.decisions:
                 raise DuplicateRequestIdError("request_id was committed concurrently")
+            document = copy.deepcopy(adr_document)
+            stream_key = (document["tenant_id"], document["stream_id"])
+            sequence, previous_hash = self._chain_heads.get(stream_key, (0, "0" * 64))
+            document["sequence_number"] = sequence
+            document["prev_hash"] = previous_hash
+            document["record_hash"] = canonical_hash(
+                {name: value for name, value in document.items() if name != "record_hash"}
+            )
             self.decisions[key] = decision
-            self.adr_documents.append(adr_document)
-            self.normalized_contexts[(adr_document["tenant_id"], decision.decision_id)] = (
+            self.adr_documents.append(document)
+            self._chain_heads[stream_key] = (sequence + 1, document["record_hash"])
+            self.normalized_contexts[(document["tenant_id"], decision.decision_id)] = (
                 copy.deepcopy(normalized_context)
             )

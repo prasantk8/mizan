@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Stage 2 remediation in progress. T-016 through T-021 are in REVIEW; T-022 is the final Stage-2 task and next executable action. B-11 remains isolated to T-025; no active claims.
+Stage 2 remediation implementation complete. T-016 through T-022 are in REVIEW with no active claims; Stage 3 remains gated until independent R-004 validation marks Stage 2 DONE. B-11 remains isolated to T-025.
 
 ## Agent Queue
 
@@ -33,11 +33,11 @@ Stage 2 remediation in progress. T-016 through T-021 are in REVIEW; T-022 is the
 | T-019 | R-004 F-6: concurrent duplicate `request_id` returns the prior decision, never `evidence_write_failed` | CODEX | — | REVIEW |
 | T-020 | R-004 F-5: app-terminated mTLS populates `client_cert_spiffe`; deployment contract + ADR-001 delta (I-23) | CODEX | — | REVIEW |
 | T-021 | R-004 F-4: contract drift gates — meta-schema, I-16 typed IDs, SPEC-string reachability, closed-schema producibility; negative fixtures in CI | CODEX | — | REVIEW |
-| T-022 | R-004 F-8/F-9: decompose the over-cited integration test, raise `test_execution.py` coverage, re-chain the in-memory repo, reconcile doc drift | CODEX | T-017, T-018 | READY |
-| T-023 | Load & latency harness: SPEC §7 p95/throughput/outbox-lag on deployment-class Linux; JSON artifacts (closes B-2/B-6 rerun obligation) | CODEX | T-022 | BLOCKED(T-022) |
-| T-024 | Adversarial suite: token replay, cross-tenant fuzz, chain tamper, prompt-injection corpus; nightly CI (PRD §39/§62) | CODEX | T-022 | BLOCKED(T-022) |
+| T-022 | R-004 F-8/F-9: decompose the over-cited integration test, raise `test_execution.py` coverage, re-chain the in-memory repo, reconcile doc drift | CODEX | T-017, T-018 | REVIEW |
+| T-023 | Load & latency harness: SPEC §7 p95/throughput/outbox-lag on deployment-class Linux; JSON artifacts (closes B-2/B-6 rerun obligation) | CODEX | T-022 | READY |
+| T-024 | Adversarial suite: token replay, cross-tenant fuzz, chain tamper, prompt-injection corpus; nightly CI (PRD §39/§62) | CODEX | T-022 | READY |
 | T-025 | Signing-key custody, distribution and rotation across token/receipt/anchor/grant artifacts | CODEX | B-11 | BLOCKED(B-11) |
-| T-026 | Outbox drain operations: runner, backpressure, poison handling, lag SLO, SIEM delivery | CODEX | T-022 | BLOCKED(T-022) |
+| T-026 | Outbox drain operations: runner, backpressure, poison handling, lag SLO, SIEM delivery | CODEX | T-022 | READY |
 | T-027 | Threat model v1 (`threat-models/` holds only a README) | HUMAN | — | READY |
 | T-028 | Constrained-execution specification incl. executor-side enforcement contract (B-10 Option B) | HUMAN | — | PARKED(v1.4) |
 
@@ -68,7 +68,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-022 (R-004 F-8/F-9) — claim final Stage-2 consolidation.** Decompose the over-cited integration test, raise execution unit branch coverage, re-chain the in-memory repository, reconcile SPEC/API/allocation docs, and make CONTRACT_COVERAGE collected-name validation blocking. Do not rewrite unrelated passing tests.
+> **Independent R-004 validation — no implementation claim.** Re-run §6 against commits `53d1035` through the T-022 commit, disposition T-016..T-022 from REVIEW to DONE or return a named task to READY with evidence. Do not start Stage 3 until all seven Stage-2 rows are DONE. After acceptance, T-023 is the recommended next scoped implementation task; T-025 remains BLOCKED(B-11).
 
 ---
 
@@ -87,6 +87,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · TEST-rigor/CODEX · T-022 · Replaced the over-cited integration primary evidence with focused I-1/I-9/I-10/I-23/I-25/V-19 live tests; added direct token/TTL/executor and every reachable _revalidate rejection-path unit coverage with a 50% module floor; in-memory ADRs now allocate/re-chain like Postgres; coverage rows are CI-validated against collection and capped at three citations; reconciled I-1..I-26/V-1..V-21 and API v1.3; new chain, TTL, and coverage gates failed on pre-fix `f75821e` and now pass; 125 unit/property and 11 live PostgreSQL tests pass · next: independent R-004 §6 validation
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-020 · Added application-terminated mTLS middleware that accepts only a CERT_REQUIRED verified peer certificate with exactly one SPIFFE URI SAN, populates client_cert_spiffe, and rejects missing/SAN-less peers with 401; no CN/DN/header identity path exists; documented listener/trust-bundle contract from README and amended SPEC/ADR-001; the new certificate test failed to import on pre-fix `91bbbe2` and now passes; lint/check, 108 unit/property, and five live PostgreSQL tests pass · next: T-022 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-019 · Concurrent request-id writers now converge through exact ADR request/derived-decision uniqueness constraints, tenant-RLS re-read, and context-hash equality; unreadable/different winners are 409 and unrelated integrity faults surface; in-memory persistence mirrors the atomic uniqueness lock; unit regression failed on pre-fix `d81740d` with two ADRs and now passes; lint/check, 105 unit/property, and five live PostgreSQL tests (two threads, identical response/id, exactly one ADR) pass · next: T-020 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-018 · Issuance now binds the verified requested SPIFFE executor using the same allowlist enforced at redemption; live two-executor flow redeems executor two and rejects outsiders at issue/redeem; malformed delegation evidence yields 403; replay evidence keeps separate-transaction durability on a named, bounded dedicated pool with timeout telemetry; amended SPEC config/ADR-008; three new tests failed on pre-fix `bf924ca` and now pass; lint/check, 104 unit/property, and four live PostgreSQL tests pass · next: T-019 CODEX

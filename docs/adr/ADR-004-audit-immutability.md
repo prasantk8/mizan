@@ -184,3 +184,12 @@ and must never be translated into idempotent success or generic evidence outage.
 The in-memory adapter applies the same atomic check under a lock, keeping unit evidence shape and
 concurrency semantics aligned with PostgreSQL. In either adapter exactly one ADR_Record and outbox
 event exists for a request id, even when both callers entered evaluation concurrently.
+
+## Implementation Amendment F — in-memory evidence has persisted chain shape
+
+**Date:** 2026-08-25 · **Trigger:** R-004 F-8 · **Spec anchors:** SPEC v1.3.1 I-2, I-13, I-20
+
+The in-memory authorization repository now owns a locked chain head per `(tenant_id, stream_id)`,
+assigns the dense sequence and prior hash, and recomputes the canonical record hash after allocation,
+matching the PostgreSQL writer's ordering. Unit-level representability and chain properties therefore
+exercise the document that is actually stored rather than the service's pre-allocation placeholder.
