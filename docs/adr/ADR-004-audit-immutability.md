@@ -54,9 +54,12 @@ Adopt **Option 1 now, with Option 2's proof shape as the evolution path**:
 
 ## Open Questions
 
-- [ ] Anchor cadence (records vs. time) and per-tier defaults.
-- [ ] RFC 3161 TSA integration in enterprise tier — pilot requirement or later?
-- [ ] Do we expose a customer-side verification CLI in v0.1 (recommended: yes, it demos brilliantly)?
+- [x] Anchor cadence (records vs. time) and per-tier defaults. — **Closed by Amendment G.** Governed by
+  `MIZAN_AUDIT_ANCHOR_INTERVAL_SECONDS` (300) and `MIZAN_AUDIT_ANCHOR_INTERVAL_RECORDS` (10000), whichever first.
+- [x] RFC 3161 TSA integration in enterprise tier — pilot requirement or later? — **Closed by Amendment G.**
+  Not enterprise-tier and not later: TSA attestation is the mandatory floor for every production anchor.
+- [x] Do we expose a customer-side verification CLI in v0.1? — **Closed by Amendment G.** Yes, and it is
+  the load-bearing deliverable rather than a demo: T-032/T-037.
 
 ---
 
@@ -193,3 +196,101 @@ The in-memory authorization repository now owns a locked chain head per `(tenant
 assigns the dense sequence and prior hash, and recomputes the canonical record hash after allocation,
 matching the PostgreSQL writer's ordering. Unit-level representability and chain properties therefore
 exercise the document that is actually stored rather than the service's pre-allocation placeholder.
+
+---
+
+## Amendment G — Key custody and the external attesting party (ratifies B-11 + B-12)
+
+**Date:** 2026-08-25 · **Status:** RATIFIED by the human owner · **Trigger:** R-005 F-13, findings on the
+"Evidence Plane First" brief · **Spec anchors:** SPEC v1.3.1 §8, §10, I-11, I-24, I-25 · **Supersedes:**
+the "signature via KMS/HSM key" clause of the original Decision, which named a custody model no code implemented
+
+Amendment A stated the doctrine — *"External anchoring moves from 'nice to have' to mandatory: without it,
+I-11 is only an assertion about grants."* R-005 found that no code implements it: `OutboxPublisher.anchor()`
+signs with an `Ed25519PrivateKey.generate()` created in the process it is attesting for. I-11's second clause
+is therefore currently false in the tree. This amendment ratifies both halves of the fix. They are one
+decision and are ratified together, because durable custody alone fixes operability and leaves the
+evidentiary defect untouched: **a durable key that Mizan controls is still Mizan's word.**
+
+### G.1 Custody (B-11)
+
+**Four key roles**, separately held, separately rotatable, never interchangeable: `evidence-receipt`,
+`evidence-anchor`, `execution-token`, `degraded-grant`. A single key serving two roles means one compromise
+collapses two guarantees.
+
+- **Custody is KMS/HSM.** Where the provider supports sign-in-place, private key material never enters the
+  control-plane process. Where it cannot (on-prem file adapter), a `local://` key reference is permitted
+  **only** under `MIZAN_KEY_CUSTODY_MODE=development`. With `MIZAN_ENV=production` and any `local://`
+  reference, the control plane **refuses to start**. A dev key that boots in production is the whole defect
+  restated, so this is a startup assertion, not a warning.
+- **Published verification keyset.** Every `key_id` resolves through a keyset carrying algorithm, public key,
+  `not_before`, `not_after` and `revoked_at`, served at `/v1/audit/keys` **and copied into every export
+  bundle**. Verifying a five-year-old record must never require the key in use today.
+- **Rotation is additive and never retroactive.** New records sign under the new `key_id`; history is left
+  alone. **Re-signing history is forbidden** — a re-signed corpus is byte-indistinguishable from a forged one,
+  so the operation that would "repair" a rotation is exactly the operation an attacker needs.
+- **Compromise semantics — and why G.2 is inseparable from G.1.** If an anchor key is compromised, every
+  anchor it ever signed becomes forgeable *retroactively*, and without an independent time source there is no
+  way to tell which anchors predate the compromise. An RFC 3161 timestamp converts that from "all history is
+  now doubtful" into "history attested before the compromise timestamp remains sound." Custody bounds the
+  blast radius; external attestation is what lets you locate its edge.
+
+### G.2 The attesting party (B-12)
+
+**Floor — RFC 3161 timestamping, on every production anchor.** Not an enterprise upsell, not deferred. The
+TSA request carries the SHA-256 of the canonical anchor payload and nothing else: no record content, no
+payload, no tenant identifier, no PII. What leaves the boundary is a hash and a request for a countersigned
+time.
+
+**Enterprise tier — customer countersignature, additive.** The customer's own KMS signs the anchor digest and
+the result is recorded as a second attestation. This is the direct answer to "why should I believe your logs":
+the answer stops being Mizan's word and becomes the customer's own key. It never replaces the TSA floor.
+
+**Blockchain anchoring remains rejected** (Options Considered #4, unchanged).
+
+- **Anchor payload gains `attestations[]`** — an ordered array, each entry
+  `{type, status, authority, obtained_at, evidence}` with `type ∈ {rfc3161, customer_countersignature,
+  none_development}` and `status ∈ {attested, pending, failed}`. An array, not a field: two independent
+  authorities mean one compromised TSA does not collapse the claim. `MIZAN_ANCHOR_TSA_ENDPOINTS` requires
+  ≥1 endpoint in production; two independent authorities are recommended for the enterprise tier.
+- **Attestation is asynchronous and is never on the authorization hot path.** A TSA outage must not make a
+  decision unrecordable — that would convert an availability failure of a third party into a control-plane
+  outage. Anchors are written immediately with `status: pending`.
+- **Pending is bounded and alarming, not warning.** Exceeding
+  `MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS` (default 900) **opens the evidence breaker**, in the same
+  escalation class as `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS`. While any anchor in a stream is `pending`,
+  no API, report, or verifier output may describe that stream as externally anchored.
+- **Verification is offline, and the trust anchor is not ours to supply.** The export bundle carries the TSA
+  token and its full certificate chain; the *pinned trust root is supplied by the verifier's operator*
+  (`--tsa-trust-anchor`, defaulting to the system store). A trust root shipped by Mizan inside a Mizan bundle
+  returns the auditor to trusting Mizan. The verifier must print which trust root it used.
+
+### G.3 What this buys, and what it does not
+
+Stated plainly so nothing is over-claimed to an auditor:
+
+- (+) A hostile party holding the database **and** the signing key can no longer rewrite history undetected.
+  Rewriting requires re-anchoring, re-anchoring requires new timestamps, and new timestamps carry today's
+  date against a chain whose earlier anchors carry the original one.
+- (+) Verification survives key rotation, key compromise, and Mizan's own disappearance.
+- (−) It still does not prove **completeness**: a record dropped before it was ever chained leaves no trace in
+  the chain. Partial mitigations: `covered_record_count` and anchor-number continuity (T-030), and
+  caller-retained inclusion proofs (T-040), which move a copy of the evidence outside Mizan entirely.
+- (−) It does not prevent Mizan from withholding an entire anchor; it makes the gap visible in the anchor
+  numbering rather than invisible.
+- (−) Operational cost: one timestamp request per anchor per stream shard, at the Amendment-G cadence — for
+  four shards at the 300s/10000-record default, on the order of 1,150 timestamps per tenant-day worst case.
+  Budget it as a real dependency with an SLO, not as a background nicety.
+
+### G.4 Consequences
+
+- (+) I-11's second clause becomes true in code rather than in prose, and the T-021 reachability gate becomes
+  a meaningful test of it rather than a check on a sentence.
+- (+) The compliance story stops being "our logs say so" and becomes an artifact a hostile third party can
+  check without us.
+- (−) Two new external dependencies on the evidence path (KMS, TSA), each with its own availability envelope,
+  each capable of opening the evidence breaker.
+- (−) Air-gapped deployments cannot reach a public TSA; they require an in-perimeter RFC 3161 authority under
+  separate administrative control from the Mizan operator, which must be a documented deployment prerequisite.
+  "Same admin signs both" is not external attestation.
+- (~) The Merkle evolution path (Options Considered #2) is unchanged and still additive; T-040 takes it.
