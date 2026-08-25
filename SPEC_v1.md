@@ -1673,5 +1673,14 @@ Authorization transaction (single Postgres txn)
   insertion occur in one transaction while holding the stream's evidence-chain-head row lock. Verifiers
   reject missing anchor numbers, stale terminal anchors, non-dense ranges, broken prior-anchor hashes, and
   a count that differs from either the declared range or the records actually present.
+- **Evidence export bundle v1.0** is a self-contained directory for one tenant/stream/range containing
+  exactly `manifest.json`, `records.json`, `receipts.json`, `anchors.json`, `checkpoints.json`, and
+  `keys.json`. The manifest binds every file by SHA-256 and declares the range and current assurance.
+  Records are reconstructed from immutable objects referenced by signed receipts, not copied from the
+  searchable Postgres document. `scripts/verify_evidence_export.py` verifies the bundle without a database,
+  Mizan package, credential, or network, using only pinned `rfc8785==0.1.4` and `cryptography==50.0.0`.
+  Until T-036, successful output must state that anchors are Mizan-self-signed and cannot withstand a party
+  holding both Mizan's database and signing key; it must also disclose pre-chain omission and withheld-final-
+  anchor limits.
 
 **Local development:** do not mock away hash semantics. The contract test set is (a) an in-memory deterministic chain writer for unit tests, (b) golden vectors for RFC 8785 canonicalization and corruption detection, (c) a containerized Postgres/Kafka/object-store integration suite, (d) a generated 100k-record fixture verified via checkpointed parallel ranges in a separate performance profile.

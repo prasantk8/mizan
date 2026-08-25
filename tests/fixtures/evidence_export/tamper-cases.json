@@ -1,0 +1,6 @@
+[
+  {"case": "record_byte_mutated", "expected": "record hash mismatch at sequence 1"},
+  {"case": "receipt_dropped", "expected": "receipt coverage missing at sequence 2"},
+  {"case": "anchor_removed", "expected": "anchor set is empty"},
+  {"case": "records_swapped", "expected": "record order mismatch: expected sequence 1, got 2"}
+]

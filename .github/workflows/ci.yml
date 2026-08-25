@@ -71,6 +71,23 @@ jobs:
       - name: Validate migrations, forced RLS, typed IDs, and immutability
         run: make test-postgres
 
+  offline-evidence-verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Create isolated two-dependency verifier environment
+        run: |
+          python -m venv .offline-verifier
+          .offline-verifier/bin/pip install rfc8785==0.1.4 cryptography==50.0.0
+      - name: Verify committed bundle with the network namespace disabled
+        run: |
+          sudo unshare --net -- .offline-verifier/bin/python \
+            scripts/verify_evidence_export.py tests/fixtures/evidence_export/golden/bundle
+
   implementation-gates:
     runs-on: ubuntu-latest
     timeout-minutes: 5

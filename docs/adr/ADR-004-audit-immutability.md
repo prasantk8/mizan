@@ -304,3 +304,13 @@ row lock. The additive database migration leaves legacy anchor rows nullable and
 inventing historical chain metadata; offline verification reports those rows as lacking anchor-chain
 coverage. This closes removal, replay, and internal-range-density detection without changing who signs an
 anchor, which remains T-033/T-036.
+
+### G.6 Implementation delta — independently runnable export (T-032)
+
+The v1 export is a manifest-bound directory containing canonical records recovered from immutable receipt
+objects, signed receipts, the complete chained anchor set, verification checkpoints, and the public keys
+needed for those signatures. The standalone verifier imports no Mizan code and needs only pinned RFC 8785
+and cryptography packages; CI runs it in a clean environment with the network namespace disabled. Until
+Amendment G.2 is implemented by T-036, its passing output labels the anchor as Mizan-self-signed and gives
+the database-plus-signing-key rewrite limitation equal prominence. This creates portable checkability now
+without misrepresenting self-attestation as external proof.
