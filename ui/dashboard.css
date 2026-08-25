@@ -1,0 +1,38 @@
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+.metric {
+  min-height: 145px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.metric span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+.metric strong { font: 500 42px Georgia, serif; }
+.metric.attention { border-top: 3px solid var(--amber); }
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.agent-card {
+  display: block;
+  text-align: left;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 20px;
+}
+.agent-card > strong, .agent-card > small { display: block; }
+.agent-card > strong { font: 500 24px Georgia, serif; margin-top: 18px; }
+.agent-card > small { color: var(--muted); }
+.agent-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0 0; }
+.agent-card dl div { border-top: 1px solid var(--line); padding-top: 8px; }
+.agent-card dt { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+.agent-card dd { margin: 2px 0 0; }
+.agent-card:hover { border-color: var(--green); }

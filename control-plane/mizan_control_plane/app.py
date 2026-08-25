@@ -260,6 +260,10 @@ def create_app(
             to_time=to_time,
         )
 
+    @app.get("/v1/dashboard/summary")
+    def dashboard_summary(tenant_id: str = Depends(tenant_from_token)) -> dict[str, int]:
+        return evidence_repository.dashboard_summary(tenant_id)
+
     @app.get("/v1/audit")
     def search_audit(
         limit: int = Query(50, ge=1, le=200),

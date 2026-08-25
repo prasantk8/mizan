@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; contract blockers remain parked while T-010 receives an independent audit.
+Release completion audit; contract blockers remain parked while T-007 receives its final coverage audit.
 
 ## Agent Queue
 
@@ -21,7 +21,7 @@ Release completion audit; contract blockers remain parked while T-010 receives a
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | REVIEW |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
-| T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | REVIEW |
+| T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | DONE |
 | T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | PARKED(B-8) |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | DONE |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | DONE |
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-010 (CODEX audit):** Complete PRD §44 dashboard and agent/action/operator views, then verify safe rendering and responsive behavior.
+> **T-007 (CODEX audit):** Reconcile the I-1..I-26/V-1..V-21 coverage matrix against the audited implementation and close independently testable gaps.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-010 audit · Added exact tenant-RLS dashboard aggregates for all seven PRD metrics, responsive control-center cards, agent registry/detail view, active-view refresh, and retained evidence-backed action/audit/verification views; 79 unit plus four live integration tests and JavaScript syntax pass; task DONE · next: T-007 audit
 - 2026-08-25 · CODEX · T-013 audit · Normalized telemetry/persistence/parser faults as controlled tool errors, moved timeout enforcement before irreversible persistence, enforced RFC 6901 pointer rules, and deduplicated truncated drift paths; 79 unit tests pass; task DONE · next: T-010 audit
 - 2026-08-25 · CODEX · T-012 audit · Recomputed stored-payload hashes, verified manifest counts and concrete transforms, fixed numeric/depth ordering for array drops, and made payload-free redaction-failure outbox signaling a mandatory Redactor dependency; 75 unit plus four live integration tests pass; task DONE · next: T-013 audit
 - 2026-08-25 · CODEX · T-011 audit · Enforced the complete closed token-claims schema at issue and redeem, revalidated constraints and live approval epoch, and fixed expired lease state/evidence rollback by committing before the controlled error; 74 unit plus four live integration tests pass; PARKED only on B-8 argument recomputation · next: T-012 audit

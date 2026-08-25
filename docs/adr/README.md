@@ -14,6 +14,7 @@
 | [ADR-006](ADR-006-external-payload-boundary.md) | External Payload Boundary & Schema Evolution | DRAFT | + Amendment A: parser budgets + raw-payload disposition |
 | [ADR-007](ADR-007-approval-authority-epochs.md) | Approval Authority — Epochs, Dual Control & Rejection Semantics | DRAFT | Control-domain source resolved; **needs compliance/business sign-off** (H-7) |
 | [ADR-008](ADR-008-execution-token-binding.md) | Execution Token Binding & Long-Running Leases | DRAFT | + Amendment A: executor-bound capabilities |
+| [ADR-009](ADR-009-operator-console-read-model.md) | Operator Console Read Model | DRAFT | Tenant-scoped exact dashboard aggregates and evidence-backed detail views |
 
 ADR-006/007/008 and the first amendments were written in response to the SPEC v1.0 baseline review — see [`docs/reviews/R-001-baseline-review-disposition.md`](../reviews/R-001-baseline-review-disposition.md). SPEC v1.2 and the later amendments dispose of re-audit findings in [`docs/reviews/R-002-baseline-review-disposition.md`](../reviews/R-002-baseline-review-disposition.md).
 

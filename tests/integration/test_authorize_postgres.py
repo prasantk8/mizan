@@ -224,6 +224,13 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
         {"epoch_number": 1, "vote": "APPROVE"},
     )
     assert approved["state"] == "APPROVED"
+    summary = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"]).dashboard_summary(
+        "tnt_bank-a"
+    )
+    assert summary["agents"] >= 1
+    assert summary["tools"] >= 1
+    assert summary["actions_today"] >= 1
+    assert summary["high_risk_actions"] >= 1
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")

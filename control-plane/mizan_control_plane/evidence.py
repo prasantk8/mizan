@@ -598,6 +598,38 @@ class EvidenceRepository:
         next_cursor = self._page_cursor(rows[-1][1], rows[-1][2]) if more else None
         return {"items": [row[0] for row in rows], "next_cursor": next_cursor}
 
+    def dashboard_summary(self, tenant_id: str) -> dict[str, int]:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            registry = connection.execute(
+                "SELECT (SELECT count(*) FROM mizan.agents WHERE tenant_id=%s), "
+                "(SELECT count(*) FROM mizan.tools WHERE tenant_id=%s)",
+                (tenant_id, tenant_id),
+            ).fetchone()
+            actions = connection.execute(
+                "SELECT count(*), count(*) FILTER (WHERE decision='DENY'), "
+                "count(*) FILTER (WHERE decision='REQUIRE_APPROVAL'), "
+                "count(*) FILTER (WHERE document->'risk'->>'level' IN ('HIGH','CRITICAL')) "
+                "FROM mizan.adr_records WHERE tenant_id=%s "
+                "AND created_at >= date_trunc('day', now())",
+                (tenant_id,),
+            ).fetchone()
+            alerts = connection.execute(
+                "SELECT count(*) FROM mizan.audit_trails WHERE tenant_id=%s "
+                "AND occurred_at >= date_trunc('day', now()) "
+                "AND document->>'event_type' LIKE 'mizan.security.%%'",
+                (tenant_id,),
+            ).fetchone()[0]
+        return {
+            "agents": registry[0],
+            "tools": registry[1],
+            "actions_today": actions[0],
+            "denied_actions": actions[1],
+            "approval_requests": actions[2],
+            "security_alerts": alerts,
+            "high_risk_actions": actions[3],
+        }
+
     def search_audit(
         self,
         tenant_id: str,
