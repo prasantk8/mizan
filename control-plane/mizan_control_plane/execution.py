@@ -213,7 +213,20 @@ class ExecutionService:
                     WHERE et.tenant_id=%s AND et.jti_hash=%s FOR UPDATE OF et""",
                 (tenant_id, _jti_hash(claims["jti"])),
             ).fetchone()
-            if not row or row[0] is not None:
+            if row and row[0] is not None:
+                self._record_security_event(
+                    tenant_id,
+                    "mizan.security.execution_token_replay",
+                    decision_id,
+                    claims["jti"],
+                    peer_spiffe,
+                )
+                raise Problem(
+                    403,
+                    "execution_token_consumed",
+                    "Execution capability was already consumed and replayed",
+                )
+            if not row:
                 raise Problem(
                     403, "execution_token_consumed", "Execution capability is absent or consumed"
                 )
@@ -292,6 +305,33 @@ class ExecutionService:
                 now,
             )
             return lease
+
+    def _record_security_event(
+        self,
+        tenant_id: str,
+        event_type: str,
+        decision_id: str,
+        jti: str,
+        peer_spiffe: str,
+    ) -> None:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            connection.execute(
+                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                "VALUES (%s,'security',%s,%s,%s)",
+                (
+                    tenant_id,
+                    "security-" + uuid4().hex,
+                    event_type,
+                    json.dumps(
+                        {
+                            "decision_id": decision_id,
+                            "token_jti_hash": _jti_hash(jti),
+                            "authenticated_workload": peer_spiffe,
+                        }
+                    ),
+                ),
+            )
 
     def heartbeat(
         self, tenant_id: str, decision_id: str, lease_id: str, peer_spiffe: str

@@ -208,13 +208,21 @@ class EvidenceRepository:
     def _scope(connection: Any, tenant_id: str) -> None:
         connection.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
 
-    def unpublished(self, tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    def unpublished(
+        self, tenant_id: str, limit: int = 100, evidence_only: bool = False
+    ) -> list[dict[str, Any]]:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
+            clause = (
+                " AND aggregate_type IN ('decision','decision_event','audit')"
+                if evidence_only
+                else ""
+            )
             rows = connection.execute(
-                """SELECT outbox_id,event_type,payload,created_at
-                     FROM mizan.outbox WHERE tenant_id=%s AND published_at IS NULL
-                     ORDER BY outbox_id LIMIT %s FOR UPDATE SKIP LOCKED""",
+                "SELECT outbox_id,event_type,payload,created_at FROM mizan.outbox "
+                "WHERE tenant_id=%s AND published_at IS NULL"
+                + clause
+                + " ORDER BY outbox_id LIMIT %s FOR UPDATE SKIP LOCKED",
                 (tenant_id, limit),
             ).fetchall()
             return [
@@ -676,7 +684,7 @@ class OutboxPublisher:
     def drain(self, tenant_id: str, limit: int = 100) -> int:
         published = 0
         groups: dict[str, list[dict[str, Any]]] = {}
-        for item in self.repository.unpublished(tenant_id, limit):
+        for item in self.repository.unpublished(tenant_id, limit, evidence_only=True):
             groups.setdefault(item["payload"]["stream_id"], []).append(item)
         for stream_id, items in groups.items():
             items.sort(key=lambda item: item["payload"]["sequence_number"])

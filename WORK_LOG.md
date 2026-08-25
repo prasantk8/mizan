@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; contract blockers remain parked while T-007 receives its final coverage audit.
+Release completion audit; T-004 now receives a full contract/runtime reconciliation before the remaining human gates.
 
 ## Agent Queue
 
@@ -18,7 +18,7 @@ Release completion audit; contract blockers remain parked while T-007 receives i
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | PARKED(B-8) |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | DONE |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | PARKED(B-9) |
-| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | REVIEW |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | PARKED(B-7,B-8) |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | DONE |
@@ -46,12 +46,12 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-5 (resolved in v1.2):** Control domains come from a reviewed/versioned Mizan role-registry mapping populated from IdP data; epoch snapshots pin the mapping version. Ratification remains under B-4/T-001.
 - **B-6 (resolved by T-008):** Four sharded streams measured 2,725 transaction-level allocations/second over 2,000 operations with p99 2.0087 ms on the M3 Max development host. ADR-004 is ACCEPTED; deployment-class Linux sizing must rerun the benchmark.
 - **B-7:** `rejection_mode=review_required` requires opening an independently controlled review epoch, but `Policy.approval_requirements` defines no review roles, quorum, TTL, or rejection semantics. T-009 implements and verifies every defined branch but is PARKED before inventing review authority. Required HUMAN contract decision: add a typed `review` configuration or define a normative reuse rule.
-- **B-8:** SPEC §3.1 requires recomputing `parameters_hash` from caller-sent arguments, but EvaluationContext §2.4 has no arguments field and has `additionalProperties:false`. T-004 currently uses an implementation-only `tool.parameters` field and is PARKED as non-conforming. Required HUMAN contract decision: add a bounded `arguments` object/envelope or define an authenticated out-of-band binding input.
+- **B-8:** SPEC I-9/I-14 and §3.1 require redemption-time context comparison plus server recomputation of `parameters_hash` from caller-sent arguments, but EvaluationContext §2.4 has no arguments field and the execute request carries only a token/idempotency key. T-004 currently uses an implementation-only `tool.parameters` field; T-011 can only compare signed claims back to the same frozen ADR, not to fresh execution context. Required HUMAN contract decision: add a bounded authorization `arguments` envelope and a redemption-time context input/server-enrichment contract, or define authenticated out-of-band inputs for both.
 - **B-9:** Policy lifecycle transitions mutate `status`, but `content_hash` is normatively SHA-256 over the entire Policy JSON excluding only `content_hash` (therefore including `status`). Recomputing it breaks historical ADR `(policy_id,version,content_hash)` foreign keys; not recomputing it makes the document/hash false. Required HUMAN contract decision: exclude lifecycle/approval metadata from semantic `content_hash`, or make every transition a new policy version.
 
 ## Next Executable Action
 
-> **T-007 (CODEX audit):** Reconcile the I-1..I-26/V-1..V-21 coverage matrix against the audited implementation and close independently testable gaps.
+> **T-004 (CODEX audit):** Reconcile EvaluationContext and enrichment against the frozen schema, enumerate every B-8 delta, and fix all authorization behavior independent of that human contract decision.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-007 audit · Reconciled the coverage index after T-011/T-012/T-013 hardening, added durable hashed-jti replay signaling, and separated security notifications from evidence-publisher outbox selection to prevent publication starvation; 79 unit plus four live integration tests pass; PARKED only where B-7/B-8 make complete invariant tests impossible · next: T-004 audit
 - 2026-08-25 · CODEX · T-010 audit · Added exact tenant-RLS dashboard aggregates for all seven PRD metrics, responsive control-center cards, agent registry/detail view, active-view refresh, and retained evidence-backed action/audit/verification views; 79 unit plus four live integration tests and JavaScript syntax pass; task DONE · next: T-007 audit
 - 2026-08-25 · CODEX · T-013 audit · Normalized telemetry/persistence/parser faults as controlled tool errors, moved timeout enforcement before irreversible persistence, enforced RFC 6901 pointer rules, and deduplicated truncated drift paths; 79 unit tests pass; task DONE · next: T-010 audit
 - 2026-08-25 · CODEX · T-012 audit · Recomputed stored-payload hashes, verified manifest counts and concrete transforms, fixed numeric/depth ordering for array drops, and made payload-free redaction-failure outbox signaling a mandatory Redactor dependency; 75 unit plus four live integration tests pass; task DONE · next: T-013 audit

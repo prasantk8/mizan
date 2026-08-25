@@ -126,6 +126,14 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
             "spiffe://mizan/executor/wealth",
             "different-execution",
         )
+    with execution.pool.connection() as connection, connection.transaction():
+        execution._scope(connection, "tnt_bank-a")
+        replay_events = connection.execute(
+            "SELECT count(*) FROM mizan.outbox WHERE tenant_id=%s "
+            "AND event_type='mizan.security.execution_token_replay'",
+            ("tnt_bank-a",),
+        ).fetchone()[0]
+    assert replay_events == 1
     running = execution.heartbeat(
         "tnt_bank-a",
         response.decision_id,

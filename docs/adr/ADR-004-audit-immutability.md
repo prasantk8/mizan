@@ -162,3 +162,9 @@ a controlled redaction failure rather than allowing the write.
 This validates that declared transforms describe the bytes actually stored. It does not turn DLP
 classification into a cryptographic proof: a field the scanner never classified remains a coverage
 risk governed by the recorded profile and regression corpus, as stated in Amendment A.
+
+Security notifications share the transactional outbox but are not evidence records until separately
+materialized by the security-event consumer. The object evidence publisher therefore selects only
+`decision`, `decision_event`, and `audit` aggregate types; otherwise a payload-free SIEM event could
+crash or starve immutable segment publication. Execution-token replay emits a payload-free security
+notification containing only the decision id, authenticated workload, and a hash of `jti`.
