@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit completed all independent work; R-003 awaits HUMAN ratification for B-7/B-8/B-9.
+R-003 ratified; T-004 complete and T-011 redemption revalidation is next.
 
 ## Agent Queue
 
@@ -15,7 +15,7 @@ Release completion audit completed all independent work; R-003 awaits HUMAN rati
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
-| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | PARKED(B-8) |
+| T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | DONE |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | DONE |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | PARKED(B-9) |
 | T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | PARKED(B-7,B-8) |
@@ -45,14 +45,14 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 - **B-4 (resolved 2026-08-25):** T-001 ratification included Compliance/Business sign-off on ADR-007 `rejection_mode` and override-authority semantics.
 - **B-5 (resolved in v1.2):** Control domains come from a reviewed/versioned Mizan role-registry mapping populated from IdP data; epoch snapshots pin the mapping version. Ratification remains under B-4/T-001.
 - **B-6 (resolved by T-008):** Four sharded streams measured 2,725 transaction-level allocations/second over 2,000 operations with p99 2.0087 ms on the M3 Max development host. ADR-004 is ACCEPTED; deployment-class Linux sizing must rerun the benchmark.
-- **B-7:** `rejection_mode=review_required` requires opening an independently controlled review epoch, but `Policy.approval_requirements` defines no review roles, quorum, TTL, or rejection semantics. T-009 implements and verifies every defined branch but is PARKED before inventing review authority. Required HUMAN contract decision: add a typed `review` configuration or define a normative reuse rule.
-- **B-8:** SPEC I-9/I-14 and §3.1 require redemption-time context comparison plus server recomputation of `parameters_hash` from caller-sent arguments, but EvaluationContext §2.4 has no arguments field and the execute request carries only a token/idempotency key. T-004 currently uses an implementation-only `tool.parameters` field; T-011 can only compare signed claims back to the same frozen ADR, not to fresh execution context. Required HUMAN contract decision: add a bounded authorization `arguments` envelope and a redemption-time context input/server-enrichment contract, or define authenticated out-of-band inputs for both.
-- **B-9:** Policy lifecycle transitions mutate `status`, but `content_hash` is normatively SHA-256 over the entire Policy JSON excluding only `content_hash` (therefore including `status`). Recomputing it breaks historical ADR `(policy_id,version,content_hash)` foreign keys; not recomputing it makes the document/hash false. Required HUMAN contract decision: exclude lifecycle/approval metadata from semantic `content_hash`, or make every transition a new policy version.
-- **R-003 proposed:** `docs/reviews/R-003-completion-blocker-disposition.md` defines the recommended typed review authority (B-7), transient bounded arguments plus fresh redemption enrichment (B-8), and immutable semantic policy hash basis (B-9). One explicit HUMAN ratification unblocks all remaining tasks.
+- **B-7 (resolved 2026-08-25):** R-003 ratified a typed, independently controlled review epoch with no vote carry-forward and no recursive `review_required` rejection.
+- **B-8 (resolved 2026-08-25):** R-003 ratified bounded transient tool arguments at authorization/redemption plus fresh authoritative enrichment before execution.
+- **B-9 (resolved 2026-08-25):** R-003 ratified a normative semantic policy hash excluding only lifecycle governance fields.
+- **R-003 (ratified 2026-08-25):** User ratified B-7/B-8/B-9 in all Product/Architecture, Cybersecurity, and Compliance/Business roles.
 
 ## Next Executable Action
 
-> **HUMAN:** Ratify or amend R-003 for B-7/B-8/B-9. On ratification, CODEX applies SPEC v1.3 and completes T-004/T-006/T-007/T-009/T-011.
+> **T-011 (CODEX):** Require bounded arguments at redemption, recompute the pinned binding hash, rerun authoritative enrichment from the immutable normalized snapshot, and reject drift before CAS.
 
 ---
 
@@ -71,6 +71,8 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-004 v1.3 · Added the ratified bounded transient argument contract, server-side binding validation/hash, raw-argument exclusion from policy/evidence/context hashes, and immutable tenant-RLS normalized context snapshots; 82 unit plus four live integration tests pass; task DONE · next: T-011
+- 2026-08-25 · HUMAN · R-003 · Ratified B-7 typed review authority, B-8 bounded arguments/fresh execution revalidation, and B-9 semantic policy hash in all required roles · next: SPEC v1.3 + T-004 CODEX
 - 2026-08-25 · CODEX · T-004 audit · Replaced permissive implementation-only context bags with exact typed customer/business/security/mapped/environment/timestamp models, removed non-schema tool/action fields, generated server trace evidence, and proved the context validates after isolating only the B-8 arguments gap; 80 unit plus four live integration tests pass; PARKED on R-003/B-8 · next: HUMAN ratify R-003
 - 2026-08-25 · CODEX · T-007 audit · Reconciled the coverage index after T-011/T-012/T-013 hardening, added durable hashed-jti replay signaling, and separated security notifications from evidence-publisher outbox selection to prevent publication starvation; 79 unit plus four live integration tests pass; PARKED only where B-7/B-8 make complete invariant tests impossible · next: T-004 audit
 - 2026-08-25 · CODEX · T-010 audit · Added exact tenant-RLS dashboard aggregates for all seven PRD metrics, responsive control-center cards, agent registry/detail view, active-view refresh, and retained evidence-backed action/audit/verification views; 79 unit plus four live integration tests and JavaScript syntax pass; task DONE · next: T-007 audit

@@ -45,8 +45,8 @@ def test_i13_property_valid_enriched_context_is_always_recordable(amount: int, i
     subject, repository = service()
     request = context()
     request.intent = intent
-    request.tool.parameters["amount"] = amount
-    request.tool.parameters_hash = binding_hash(request.tool.parameters, ["/amount"])
+    request.tool.arguments["amount"] = amount
+    request.tool.parameters_hash = binding_hash(request.tool.arguments, ["/amount"])
     subject.authorize(identity(), request)
     ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
 

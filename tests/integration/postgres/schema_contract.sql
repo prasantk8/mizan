@@ -7,7 +7,7 @@ BEGIN
   FROM (VALUES
     ('tenants'),('agents'),('binding_profiles'),('tools'),('policies'),('agent_tools'),
     ('agent_policies'),('agent_delegations'),('policy_simulations'),('evidence_chain_heads'),('adr_records'),
-    ('adr_record_policies'),('approvals'),('role_authority_versions'),('approval_epochs'),('approval_votes'),
+    ('adr_record_policies'),('authorization_contexts'),('approvals'),('role_authority_versions'),('approval_epochs'),('approval_votes'),
     ('execution_tokens'),('execution_leases'),('decision_events'),('decision_event_heads'),('audit_trails'),('external_payload_envelopes'),
     ('degraded_mode_grants'),('outbox'),('evidence_receipts'),('evidence_anchors')
   ) expected(name)
@@ -31,7 +31,7 @@ DO $$
 DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
-    'adr_records','decision_events','audit_trails','approval_votes','evidence_receipts','evidence_anchors'
+    'adr_records','authorization_contexts','decision_events','audit_trails','approval_votes','evidence_receipts','evidence_anchors'
   ] LOOP
     IF has_table_privilege('mizan_app', 'mizan.' || table_name, 'UPDATE')
        OR has_table_privilege('mizan_app', 'mizan.' || table_name, 'DELETE') THEN

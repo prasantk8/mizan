@@ -25,7 +25,7 @@ def context(request_id: str = "018f47a6-7b42-7c00-8000-000000000001") -> Evaluat
     parameters = {"amount": 12500, "request_time": "volatile"}
     return EvaluationContext.model_validate(
         {
-            "schema_version": "1.1",
+            "schema_version": "1.2",
             "request_id": request_id,
             "tenant_id": TENANT,
             "principal": {
@@ -38,7 +38,7 @@ def context(request_id: str = "018f47a6-7b42-7c00-8000-000000000001") -> Evaluat
             "intent": "rebalance portfolio",
             "tool": {
                 "id": TOOL,
-                "parameters": parameters,
+                "arguments": parameters,
                 "parameters_hash": binding_hash(parameters, ["/amount"]),
                 "binding_profile": {"profile_id": "bp_transfer-v1", "profile_version": 1},
             },
@@ -109,10 +109,26 @@ def test_no_matching_policy_is_recorded_default_deny() -> None:
     assert repository.adr_documents[0]["risk"]["level"] == "HIGH"
 
 
-def test_evaluation_context_matches_frozen_contract_except_b8_arguments_gap() -> None:
+def test_evaluation_context_matches_ratified_argument_contract() -> None:
     document = context().model_dump(mode="json")
-    document["tool"].pop("parameters")
     ContractSchemas(Path("SPEC_v1.md")).validate("EvaluationContext", document)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "code"),
+    [
+        ({"amount": float("inf")}, "arguments_non_finite"),
+        ({"amount": "x" * 66_000}, "arguments_too_large"),
+    ],
+)
+def test_argument_budgets_fail_before_evaluation(arguments: dict, code: str) -> None:
+    subject, _ = service()
+    request = context()
+    request.tool.arguments = arguments
+    request.tool.parameters_hash = "0" * 64
+    with pytest.raises(Problem) as error:
+        subject.authorize(identity(), request)
+    assert error.value.code == code
 
 
 def test_tenant_is_derived_from_identity() -> None:
@@ -125,7 +141,7 @@ def test_tenant_is_derived_from_identity() -> None:
 def test_binding_hash_rejects_parameter_substitution() -> None:
     subject, _ = service()
     request = context()
-    request.tool.parameters["amount"] = 99999
+    request.tool.arguments["amount"] = 99999
     with pytest.raises(Problem, match="binding hash") as raised:
         subject.authorize(identity(), request)
     assert raised.value.status == 400
@@ -142,7 +158,7 @@ def test_i14_volatile_retry_fields_do_not_change_binding_hash() -> None:
 def test_unknown_argument_without_binding_class_is_rejected() -> None:
     subject, _ = service()
     request = context()
-    request.tool.parameters["attacker_added"] = True
+    request.tool.arguments["attacker_added"] = True
     with pytest.raises(Problem, match="binding class"):
         subject.authorize(identity(), request)
 

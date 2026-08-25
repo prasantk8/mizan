@@ -1,7 +1,7 @@
-# Mizan SPEC v1.2 — Strict Contract Baseline
+# Mizan SPEC v1.3 — Strict Contract Baseline
 
 **Status:** BASELINE CANDIDATE — content-frozen for T-001 human ratification; not authorized for product implementation until accepted
-**Supersedes:** SPEC v1.1 (2026-08-25). No product implementation exists; no data migration path is owed. v1.2 closes review R-002 findings around executor-bound capabilities, default-deny evidence, decision amendments, degraded grants/WALs, and the external-envelope boundary. Earlier findings remain recorded in [`docs/reviews/R-001-baseline-review-disposition.md`](docs/reviews/R-001-baseline-review-disposition.md).
+**Supersedes:** SPEC v1.2 (2026-08-25). v1.3 applies ratified review R-003: independently controlled rejection-review epochs, bounded transient tool arguments with genuine execution revalidation, and a stable semantic Policy hash across lifecycle transitions. Earlier findings remain recorded in [`docs/reviews/R-001-baseline-review-disposition.md`](docs/reviews/R-001-baseline-review-disposition.md), [`docs/reviews/R-002-baseline-review-disposition.md`](docs/reviews/R-002-baseline-review-disposition.md), and [`docs/reviews/R-003-completion-blocker-disposition.md`](docs/reviews/R-003-completion-blocker-disposition.md).
 **Source of truth:** `mizan-prd-v1.md` (Product), this file (Engineering Contracts)
 **Change control:** Any change to a schema, endpoint, event, state machine, invariant, or configuration key in this file requires (a) an ADR in `docs/adr/`, (b) a version bump of the affected object's `schema_version`, and (c) an entry in `WORK_LOG.md`. No agent (human or LLM) may drift from these contracts silently.
 
@@ -13,7 +13,7 @@ This spec covers the **Mizan v0.1 Control Plane** (PRD §37, §83–95): Agent R
 
 Zero-drift rules for all implementing agents:
 
-1. **Canonical schemas are closed.** All Mizan-owned JSON Schemas use `"additionalProperties": false`. New fields require a spec change, never an inline addition. **The sole exception is the external-payload boundary (§2.8):** third-party/MCP payloads are accepted into a size-limited open envelope and only ever reach policy evaluation through an allowlisted, versioned projection (ADR-006, Invariant I-17). A canonical schema is never fed a foreign payload directly.
+1. **Canonical schemas are closed.** All Mizan-owned JSON Schemas use `"additionalProperties": false`. New fields require a spec change, never an inline addition. Open JSON is confined to two named, size-limited boundaries: the inert external-payload envelope (§2.8), and transient `EvaluationContext.tool.arguments` used only to compute a binding hash. Tool arguments never become a policy namespace and are never persisted raw. A canonical schema is never fed a foreign payload directly.
 2. **Enums are exhaustive.** Decision values are exactly: `ALLOW | DENY | REQUIRE_APPROVAL | CONSTRAIN | REDACT | ESCALATE`. v0.1 implements the first three; the rest MUST be accepted by parsers and rejected by the evaluator with `NOT_IMPLEMENTED`, never dropped.
 3. **IDs are typed and opaque.** Every identifier field `$ref`s a named type in §2.0 (`common#/$defs/*`). Prefixes (`agt_`, `tool_`, `pol_`, `adr_`, `apr_`, `aud_`, `tnt_`, `prn_`, `lse_`, `epo_`) are **syntactic type tags, not authorization**: storage MUST additionally enforce typed foreign keys scoped by `(tenant_id, id)`. Never parse further meaning out of an ID.
 4. **Every consequential path emits an event** from §4 and an ADR_Record from §2.3. A code path that executes a tool without both is a spec violation, not a TODO.
@@ -235,7 +235,7 @@ Every identifier in every schema below references this file. A build that inline
 
 ```json
 {
-  "$id": "https://mizan.ai/schemas/policy/1.2.json",
+  "$id": "https://mizan.ai/schemas/policy/1.3.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Policy",
   "type": "object",
@@ -244,7 +244,7 @@ Every identifier in every schema below references this file. A build that inline
                "status", "author", "applies_to", "conditions", "decision",
                "priority", "content_hash", "created_at"],
   "properties": {
-    "schema_version": { "const": "1.2" },
+    "schema_version": { "const": "1.3" },
     "policy_id": { "$ref": "common#/$defs/PolicyId" },
     "tenant_id": { "$ref": "common#/$defs/TenantId" },
     "name":      { "type": "string", "maxLength": 120 },
@@ -310,6 +310,20 @@ Every identifier in every schema below references this file. A build that inline
                               "description": "veto: any single REJECT is terminal. rejection_quorum: terminal at rejection_quorum_count REJECTs. review_required: first REJECT moves to REVIEW_REQUIRED for an independently controlled review workflow (ADR-007)." },
         "rejection_quorum_count": { "type": ["integer", "null"], "minimum": 1, "maximum": 5,
                                     "description": "Required iff rejection_mode = rejection_quorum (V-4)." },
+        "review": {
+          "type": ["object", "null"], "additionalProperties": false,
+          "description": "Required iff rejection_mode=review_required. Opens a fresh independently controlled review epoch; prior votes never carry forward.",
+          "required": ["approver_roles", "quorum", "expiry_seconds", "distinct_control_domains_required", "rejection_mode", "carry_forward_votes"],
+          "properties": {
+            "approver_roles": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "common#/$defs/RoleRef" } },
+            "quorum": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "expiry_seconds": { "type": "integer", "minimum": 60, "maximum": 604800 },
+            "distinct_control_domains_required": { "const": true },
+            "rejection_mode": { "enum": ["veto", "rejection_quorum"], "description": "review_required is forbidden here to prevent recursive review epochs." },
+            "rejection_quorum_count": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
+            "carry_forward_votes": { "const": false }
+          }
+        },
         "override": {
           "type": ["object", "null"], "additionalProperties": false,
           "description": "Break-glass. Absent/null = no override is possible for this policy. Never silent, never unilateral by default.",
@@ -333,7 +347,7 @@ Every identifier in every schema below references this file. A build that inline
       "description": "Overrides the tool-level token TTL for contexts this policy governs. Governs time-to-START only; execution duration is governed by the lease (§2.11)." },
     "compiled_ref": { "type": ["string", "null"], "maxLength": 256, "description": "Content-addressed ref of compiled Cedar/Rego artifact" },
     "content_hash": { "$ref": "common#/$defs/Sha256Hex",
-      "description": "SHA-256 of RFC 8785 canonical policy JSON excluding content_hash; pinned into every ADR_Record that cites this policy" },
+      "description": "SHA-256 of RFC 8785 canonical policy semantics excluding exactly content_hash, status, approver, and effective_from. Lifecycle transitions preserve it; every other content change requires a new version." },
     "created_at":  { "$ref": "common#/$defs/Timestamp" }
   },
   "allOf": [
@@ -347,7 +361,9 @@ Every identifier in every schema below references this file. A build that inline
       "then": { "required": ["approver"],
                 "properties": { "approver": { "type": "string" } } } },
     { "if":   { "properties": { "fail_open_allowed": { "const": true } }, "required": ["fail_open_allowed"] },
-      "then": { "properties": { "decision": { "enum": ["ALLOW", "CONSTRAIN", "REDACT"] } } } }
+      "then": { "properties": { "decision": { "enum": ["ALLOW", "CONSTRAIN", "REDACT"] } } } },
+    { "if":   { "properties": { "approval_requirements": { "properties": { "rejection_mode": { "const": "review_required" } }, "required": ["rejection_mode"] } }, "required": ["approval_requirements"] },
+      "then": { "properties": { "approval_requirements": { "required": ["review"], "properties": { "review": { "type": "object" } } } } } }
   ]
 }
 ```
@@ -532,7 +548,7 @@ Fields that the evidence record requires are **required here or supplied by mand
 
 ```json
 {
-  "$id": "https://mizan.ai/schemas/evaluation_context/1.1.json",
+  "$id": "https://mizan.ai/schemas/evaluation_context/1.2.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "EvaluationContext",
   "type": "object",
@@ -540,7 +556,7 @@ Fields that the evidence record requires are **required here or supplied by mand
   "required": ["schema_version", "request_id", "principal", "agent",
                "intent", "tool", "action", "resource", "environment", "timestamp"],
   "properties": {
-    "schema_version": { "const": "1.1" },
+    "schema_version": { "const": "1.2" },
     "request_id": { "$ref": "common#/$defs/RequestId" },
     "tenant_id": { "oneOf": [{ "$ref": "common#/$defs/TenantId" }, { "type": "null" }],
       "description": "OPTIONAL AND ADVISORY. Tenancy is derived from the token (I-3). If present and mismatched, the request is rejected 403 — it is never used as the source." },
@@ -571,9 +587,11 @@ Fields that the evidence record requires are **required here or supplied by mand
     "intent": { "type": "string", "maxLength": 120, "examples": ["portfolio_rebalance", "get_account_balance"] },
     "tool": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "parameters_hash", "binding_profile"],
+      "required": ["id", "arguments", "parameters_hash", "binding_profile"],
       "properties": {
         "id": { "$ref": "common#/$defs/ToolId" },
+        "arguments": { "type": "object", "maxProperties": 256,
+          "description": "Transient tool arguments. Maximum canonical size 65536 bytes, depth 16, 256 total keys, finite JSON numbers only. Used solely for binding-profile validation/hash computation; never persisted raw or exposed as a policy field." },
         "parameters_hash": { "$ref": "common#/$defs/Sha256Hex",
           "description": "SHA-256 over the canonicalized binding subset defined by the tool's parameter_binding_profile (§2.6, ADR-008). Volatile paths (nonces, timestamps, trace ids, presigned URLs, retry counters) are excluded by the profile so legitimate retries do not drift." },
         "binding_profile": {
@@ -1149,7 +1167,7 @@ Before any policy is evaluated, `/v1/authorize` runs enrichment in this order. E
 2. **Agent lookup.** Must exist in tenant and be `ACTIVE|MONITORED`, else `403 agent_not_active`.
 3. **Tool lookup.** Must exist, must permit this agent, yields `risk_tier` floor, `binding_profile`, execution timings, and the allowlisted executor workloads. The server selects exactly one `authorized_executor`; the caller cannot supply it (V-21). Unknown tool, binding-profile version, or executor mapping → `422`.
 4. **Resource enrichment.** `resource_owner` and `data_classification` are reconciled against the tool/resource registry (V-7). Caller may raise classification, never lower it. Unresolvable ownership → `422`, never a null in evidence.
-5. **Binding check.** Caller-sent `parameters_hash` must be computable under the declared profile; unknown argument pointers follow `unknown_pointer_policy` (default reject → `400`).
+5. **Binding check.** The server applies the hard 64 KiB/depth-16/256-key/finite-number budget to transient `tool.arguments`, validates every pointer under the declared profile, computes `parameters_hash` over the bound subset, and rejects a caller-sent mismatch. Unknown pointers follow `unknown_pointer_policy` (default reject → `400`). Raw arguments are excluded from persisted context/evidence and policy evaluation.
 6. **Projection.** Any external data is already reduced to `mapped.fields` (§2.8). Raw envelopes are rejected at this endpoint.
 
 Only after all six does evaluation begin — which is what makes rule 7 (input acceptance implies evidence representability) mechanically true rather than aspirational.
@@ -1173,7 +1191,7 @@ paths:
       x-sla-p95-ms: 50
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "https://mizan.ai/schemas/evaluation_context/1.1.json" } } }
+        content: { application/json: { schema: { $ref: "https://mizan.ai/schemas/evaluation_context/1.2.json" } } }
       responses:
         "200":
           description: Decision rendered (including DENY — a deny is a successful evaluation)
@@ -1280,9 +1298,10 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [execution_token]
+              required: [execution_token, arguments]
               properties:
                 execution_token: { type: string }
+                arguments: { type: object, maxProperties: 256, description: "Same bounded transient arguments presented for authorization; server recomputes the binding hash using the pinned profile." }
                 idempotency_key: { type: [string, "null"], maxLength: 128 }
       responses:
         "200": { description: "Lease granted (or the SAME lease returned for a repeated idempotency_key — retry, not re-authorization)" }
@@ -1430,7 +1449,7 @@ Configured by `Policy.approval_requirements`. **Authority lives in epochs** (§2
 
 **Epoch transition semantics (the v1.0 ambiguity, now closed):**
 
-| Question | v1.2 answer |
+| Question | v1.3 answer |
 |---|---|
 | Does escalation replace or augment the approver pool? | `escalation.pool_mode` — explicit, no runtime default (V-3). |
 | Do earlier APPROVE votes still count? | Only if `carry_forward_votes = true`, and only while the voter is still in the **new** epoch's eligibility snapshot. Carried votes keep their original `epoch_id` in evidence. |

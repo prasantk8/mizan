@@ -1,11 +1,14 @@
 # R-003 — Completion Blocker Disposition
 
-**Status:** PROPOSED — HUMAN ratification required
+**Status:** RATIFIED
 **Date:** 2026-08-25
 **Scope:** WORK_LOG B-7, B-8, B-9
 
 This disposition contains the remaining contract choices that implementation cannot safely invent.
 Ratification authorizes a SPEC v1.3 amendment and the corresponding completion work.
+
+**Ratified:** 2026-08-25 by the user in all required Product/Architecture, Cybersecurity, and
+Compliance/Business roles.
 
 ## B-7 — Independent review authority
 
@@ -41,7 +44,7 @@ being compared with the ADR from which it was created.
 ## B-9 — Semantic policy hash
 
 Define `Policy.content_hash` over the immutable authored policy semantics, excluding
-`content_hash`, `status`, `approved_by`, and `approved_at`. Lifecycle transitions mutate only those
+`content_hash`, `status`, `approver`, and `effective_from`. Lifecycle transitions mutate only those
 excluded governance fields and preserve `(policy_id, version, content_hash)`, so historical ADR
 foreign keys remain valid. Any change to name, selectors, conditions, outcome, constraints, approval
 requirements, TTL, author, or other semantic content requires a new version and hash. The canonical

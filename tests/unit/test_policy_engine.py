@@ -16,7 +16,7 @@ from tests.unit.test_authorization import context
 
 def policy(conditions: dict, *, decision: str = "ALLOW", priority: int = 100) -> dict:
     return {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "policy_id": "pol_transfer",
         "tenant_id": "tnt_bank-a",
         "name": "Transfer policy",

@@ -100,15 +100,16 @@ class AuthorizationService:
         )
 
         validate_binding_arguments(
-            context.tool.parameters, tool.bound_pointers, tool.volatile_pointers
+            context.tool.arguments, tool.bound_pointers, tool.volatile_pointers
         )
-        computed_parameters_hash = binding_hash(context.tool.parameters, tool.bound_pointers)
+        computed_parameters_hash = binding_hash(context.tool.arguments, tool.bound_pointers)
         if computed_parameters_hash != context.tool.parameters_hash:
             raise Problem(
                 400, "parameters_hash_mismatch", "Parameters do not match their binding hash"
             )
 
         context_document = enriched.model_dump(mode="json", exclude={"tenant_id"})
+        context_document["tool"].pop("arguments")
         context_hash = canonical_hash(context_document)
         prior = self.repository.find_decision_by_request(
             identity.tenant_id, str(context.request_id)
@@ -155,7 +156,7 @@ class AuthorizationService:
             created_at=now,
         )
         try:
-            self.repository.persist_decision(persisted, adr)
+            self.repository.persist_decision(persisted, adr, context_document)
         except Exception as exc:
             raise Problem(
                 503, "evidence_write_failed", "Decision was not returned because evidence failed"
@@ -244,7 +245,7 @@ class AuthorizationService:
             "agent": context.agent.model_dump(mode="json"),
             "customer": context.customer,
             "intent": context.intent,
-            "tool": context.tool.model_dump(mode="json", exclude={"parameters"}),
+            "tool": context.tool.model_dump(mode="json", exclude={"arguments"}),
             "action": context.action.model_dump(mode="json"),
             "resource": context.resource.model_dump(mode="json")
             | {"classification_source": classification_source},

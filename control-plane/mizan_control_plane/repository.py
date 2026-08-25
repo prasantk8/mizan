@@ -126,7 +126,9 @@ class PostgresAuthorizationRepository:
                 created_at=row[3],
             )
 
-    def persist_decision(self, decision: PersistedDecision, adr_document: dict) -> None:
+    def persist_decision(
+        self, decision: PersistedDecision, adr_document: dict, normalized_context: dict
+    ) -> None:
         doc = copy.deepcopy(adr_document)
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, doc["tenant_id"])
@@ -178,6 +180,16 @@ class PostgresAuthorizationRepository:
                 "VALUES (%s,'decision',%s,'mizan.decision.created',%s)",
                 (doc["tenant_id"], doc["decision_id"], json.dumps(doc)),
             )
+            connection.execute(
+                "INSERT INTO mizan.authorization_contexts(tenant_id,decision_id,context_hash,document) "
+                "VALUES (%s,%s,%s,%s)",
+                (
+                    doc["tenant_id"],
+                    doc["decision_id"],
+                    doc["context_hash"],
+                    json.dumps(normalized_context),
+                ),
+            )
 
 
 class InMemoryAuthorizationRepository:
@@ -192,6 +204,7 @@ class InMemoryAuthorizationRepository:
         self.policies = list(policies)
         self.decisions: dict[tuple[str, str], PersistedDecision] = {}
         self.adr_documents: list[dict] = []
+        self.normalized_contexts: dict[tuple[str, str], dict] = {}
         self.fail_writes = False
 
     def get_agent(self, tenant_id: str, agent_id: str) -> RegistryAgent | None:
@@ -208,8 +221,13 @@ class InMemoryAuthorizationRepository:
     def find_decision_by_request(self, tenant_id: str, request_id: str) -> PersistedDecision | None:
         return self.decisions.get((tenant_id, request_id))
 
-    def persist_decision(self, decision: PersistedDecision, adr_document: dict) -> None:
+    def persist_decision(
+        self, decision: PersistedDecision, adr_document: dict, normalized_context: dict
+    ) -> None:
         if self.fail_writes:
             raise RuntimeError("injected evidence failure")
         self.decisions[(adr_document["tenant_id"], str(decision.request_id))] = decision
         self.adr_documents.append(adr_document)
+        self.normalized_contexts[(adr_document["tenant_id"], decision.decision_id)] = copy.deepcopy(
+            normalized_context
+        )

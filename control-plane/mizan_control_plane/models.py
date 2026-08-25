@@ -34,7 +34,7 @@ class ToolInput(StrictModel):
     id: str = Field(pattern=r"^tool_[a-z0-9_.-]{3,64}$")
     parameters_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     binding_profile: BindingProfileRef
-    parameters: dict[str, Any] = Field(default_factory=dict)
+    arguments: dict[str, Any] = Field(max_length=256)
 
 
 class ActionInput(StrictModel):
@@ -93,7 +93,7 @@ class ResourceInput(StrictModel):
 
 
 class EvaluationContext(StrictModel):
-    schema_version: Literal["1.1"]
+    schema_version: Literal["1.2"]
     request_id: UUID
     tenant_id: str | None = Field(default=None, pattern=r"^tnt_[a-z0-9-]{4,64}$")
     principal: PrincipalInput

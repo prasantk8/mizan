@@ -87,3 +87,19 @@ alongside every other context binding.
 Detecting an expired lease is a state transition, not merely an error response. The service commits
 `LEASE_EXPIRED` and its DecisionEvent first, then returns the controlled conflict to the caller, so
 the operational state and immutable evidence cannot be rolled back by exception handling.
+
+## Amendment C — Ratified transient arguments and revalidation snapshot
+
+**Date:** 2026-08-25 · **Trigger:** ratified R-003/B-8 · **Spec anchors:** SPEC v1.3 §2.4,
+§3.1, I-9, I-14
+
+Authorization accepts bounded transient `tool.arguments` (64 KiB canonical bytes, depth 16, 256
+total keys, finite JSON numbers). The server validates pointer classification and computes the bound
+subset hash. Raw arguments are removed before context hashing and never enter policy evaluation,
+ADR evidence, logs, or operational storage.
+
+The exact normalized context used for authorization—without raw arguments—is persisted atomically in
+the immutable, tenant-RLS `authorization_contexts` relation and bound by the same `context_hash` as
+the ADR_Record. Redemption requires the arguments again, recomputes the hash using the pinned profile,
+and reruns current authoritative agent/tool/resource/risk enrichment against this snapshot. This is
+the replayable basis for detecting execution-time drift without retaining raw tool payloads.

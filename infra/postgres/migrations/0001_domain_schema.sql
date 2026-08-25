@@ -168,6 +168,7 @@ CREATE TABLE mizan.adr_records (
   document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
   created_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, decision_id),
+  UNIQUE (tenant_id, decision_id, context_hash),
   UNIQUE (tenant_id, request_id),
   UNIQUE (tenant_id, stream_id, sequence_number),
   UNIQUE (tenant_id, decision_id, record_hash),
@@ -188,6 +189,18 @@ CREATE TABLE mizan.adr_record_policies (
   FOREIGN KEY (tenant_id, decision_id) REFERENCES mizan.adr_records(tenant_id, decision_id),
   FOREIGN KEY (tenant_id, policy_id, policy_version, content_hash)
     REFERENCES mizan.policies(tenant_id, policy_id, version, content_hash)
+);
+
+CREATE TABLE mizan.authorization_contexts (
+  tenant_id mizan.tenant_id NOT NULL,
+  decision_id mizan.decision_id NOT NULL,
+  context_hash mizan.sha256_hex NOT NULL,
+  document jsonb NOT NULL CHECK (jsonb_typeof(document) = 'object'),
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (tenant_id, decision_id),
+  FOREIGN KEY (tenant_id, decision_id, context_hash)
+    REFERENCES mizan.adr_records(tenant_id, decision_id, context_hash),
+  CHECK (NOT (document->'tool' ? 'arguments'))
 );
 
 CREATE TABLE mizan.approvals (
@@ -503,7 +516,7 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'tenants','agents','binding_profiles','tools','policies','policy_simulations','agent_tools','agent_policies',
-    'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','approvals','role_authority_versions',
+    'agent_delegations','evidence_chain_heads','adr_records','adr_record_policies','authorization_contexts','approvals','role_authority_versions',
     'approval_epochs','approval_votes','execution_tokens','execution_leases','decision_events','decision_event_heads','audit_trails',
     'external_payload_envelopes','degraded_mode_grants','outbox','evidence_receipts','evidence_anchors'
   ] LOOP
@@ -518,7 +531,7 @@ END $$;
 
 GRANT USAGE ON SCHEMA mizan TO mizan_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA mizan TO mizan_app;
-REVOKE UPDATE, DELETE ON mizan.adr_records, mizan.decision_events, mizan.audit_trails,
+REVOKE UPDATE, DELETE ON mizan.adr_records, mizan.authorization_contexts, mizan.decision_events, mizan.audit_trails,
   mizan.approval_votes, mizan.evidence_receipts, mizan.evidence_anchors FROM mizan_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA mizan TO mizan_app;
 GRANT EXECUTE ON FUNCTION mizan.current_tenant_id() TO mizan_app;
