@@ -1,2 +1,1 @@
 """Mizan test package."""
-

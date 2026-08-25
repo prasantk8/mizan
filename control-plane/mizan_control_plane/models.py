@@ -40,8 +40,14 @@ class ToolInput(StrictModel):
 
 class ActionInput(StrictModel):
     type: Literal[
-        "read", "write", "financial_read", "financial_write",
-        "communicate", "export", "delete", "delegate",
+        "read",
+        "write",
+        "financial_read",
+        "financial_write",
+        "communicate",
+        "export",
+        "delete",
+        "delegate",
     ]
     estimated_value: dict[str, Any] | None = None
 
@@ -50,9 +56,9 @@ class ResourceInput(StrictModel):
     id: str
     type: str = Field(max_length=64)
     resource_owner: str | None = None
-    data_classification: Literal[
-        "public", "internal", "confidential", "pii", "financial", "secret"
-    ] | None = None
+    data_classification: (
+        Literal["public", "internal", "confidential", "pii", "financial", "secret"] | None
+    ) = None
     classification_source: Literal["registry", "caller_asserted_upgrade"] = "registry"
 
 
@@ -106,6 +112,9 @@ class RegistryAgent(StrictModel):
     version: str
     lifecycle_state: str
     permitted_tools: set[str]
+    parent_agent_id: str | None = None
+    allowed_agent_ids: set[str] = Field(default_factory=set)
+    max_delegation_depth: int = Field(default=0, ge=0, le=5)
 
 
 class RegistryTool(StrictModel):
@@ -113,9 +122,7 @@ class RegistryTool(StrictModel):
     tool_id: str
     risk_tier: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
     resource_owner: str
-    data_classification: Literal[
-        "public", "internal", "confidential", "pii", "financial", "secret"
-    ]
+    data_classification: Literal["public", "internal", "confidential", "pii", "financial", "secret"]
     profile_id: str
     profile_version: int
     bound_pointers: list[str]

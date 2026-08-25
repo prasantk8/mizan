@@ -4,6 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -63,6 +64,14 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
     )
     assert event["decision_sequence"] == 1
     assert event["sequence_number"] == 1
+    retried = evidence_repository.append_decision_event(
+        "tnt_bank-a",
+        response.decision_id,
+        "CAPABILITY_ISSUED",
+        {"kind": "system", "id": "mizan-control-plane", "authenticated_workload": None},
+        {"token_jti_hash": "d" * 64},
+    )
+    assert retried["event_id"] == event["event_id"]
     detail = evidence_repository.decision("tnt_bank-a", response.decision_id)
     assert detail["decision"]["decision_id"] == response.decision_id
     assert detail["events"][0]["event_type"] == "CAPABILITY_ISSUED"
@@ -90,7 +99,7 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
     assert verifier.verify("tnt_bank-a", "tnt_bank-a:adr:0").valid
 
     codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
-    execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec)
+    execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, verifier)
     token = execution.issue("tnt_bank-a", response.decision_id)
     with pytest.raises(Problem) as wrong_executor:
         execution.redeem(token, response.decision_id, "spiffe://mizan/executor/attacker", "attack")
@@ -228,3 +237,11 @@ def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
     assert audit["redaction"]["dlp"]["status"] == "findings_redacted"
     page = repository.search_audit("tnt_bank-a", 10, event_type="mizan.security.redacted")
     assert any(item["audit_id"] == audit["audit_id"] for item in page["items"])
+    with pytest.raises(Problem, match="attestation"):
+        repository.append_audit(
+            "tnt_bank-a",
+            "mizan.security.redacted",
+            {"id": "bad-writer", "kind": "service"},
+            {"id": "agt_wealth-01", "kind": "agent"},
+            SimpleNamespace(payload={"email": "raw@example.test"}, redaction={}),
+        )

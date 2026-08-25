@@ -3,11 +3,12 @@ from __future__ import annotations
 import copy
 import hashlib
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import rfc8785
 
-from .canonical import binding_hash, canonical_hash
+from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .models import (
     AuthenticatedIdentity,
     AuthorizationResponse,
@@ -20,12 +21,20 @@ from .problems import Problem
 
 RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 CLASSIFICATION_ORDER = {
-    "public": 0, "internal": 1, "confidential": 2,
-    "pii": 3, "financial": 4, "secret": 5,
+    "public": 0,
+    "internal": 1,
+    "confidential": 2,
+    "pii": 3,
+    "financial": 4,
+    "secret": 5,
 }
 DECISION_ORDER = {
-    "ALLOW": 0, "REDACT": 1, "CONSTRAIN": 1,
-    "REQUIRE_APPROVAL": 2, "ESCALATE": 3, "DENY": 4,
+    "ALLOW": 0,
+    "REDACT": 1,
+    "CONSTRAIN": 1,
+    "REQUIRE_APPROVAL": 2,
+    "ESCALATE": 3,
+    "DENY": 4,
 }
 
 
@@ -52,15 +61,20 @@ class AuthorizationService:
             raise Problem(403, "agent_not_active", "Agent is absent or not active")
         if agent.version != context.agent.version:
             raise Problem(422, "agent_version_unknown", "Agent version is not registered")
+        self._validate_delegation(identity.tenant_id, context, agent)
 
         tool = self.repository.get_tool(identity.tenant_id, context.tool.id)
         if not tool or context.tool.id not in agent.permitted_tools:
-            raise Problem(422, "tool_not_permitted", "Tool is unknown or not permitted for this agent")
+            raise Problem(
+                422, "tool_not_permitted", "Tool is unknown or not permitted for this agent"
+            )
         if (
             context.tool.binding_profile.profile_id != tool.profile_id
             or context.tool.binding_profile.profile_version != tool.profile_version
         ):
-            raise Problem(422, "binding_profile_unknown", "Binding profile is not the active tool profile")
+            raise Problem(
+                422, "binding_profile_unknown", "Binding profile is not the active tool profile"
+            )
         if not tool.executor_spiffe_ids:
             raise Problem(422, "executor_mapping_missing", "Tool has no authorized executor")
 
@@ -69,7 +83,9 @@ class AuthorizationService:
             CLASSIFICATION_ORDER[caller_classification]
             < CLASSIFICATION_ORDER[tool.data_classification]
         ):
-            raise Problem(422, "classification_downgrade", "Caller cannot lower resource classification")
+            raise Problem(
+                422, "classification_downgrade", "Caller cannot lower resource classification"
+            )
         enriched.resource.resource_owner = tool.resource_owner
         enriched.resource.data_classification = max(
             (caller_classification or tool.data_classification, tool.data_classification),
@@ -83,16 +99,25 @@ class AuthorizationService:
             else "registry"
         )
 
+        validate_binding_arguments(
+            context.tool.parameters, tool.bound_pointers, tool.volatile_pointers
+        )
         computed_parameters_hash = binding_hash(context.tool.parameters, tool.bound_pointers)
         if computed_parameters_hash != context.tool.parameters_hash:
-            raise Problem(400, "parameters_hash_mismatch", "Parameters do not match their binding hash")
+            raise Problem(
+                400, "parameters_hash_mismatch", "Parameters do not match their binding hash"
+            )
 
         context_document = enriched.model_dump(mode="json", exclude={"tenant_id"})
         context_hash = canonical_hash(context_document)
-        prior = self.repository.find_decision_by_request(identity.tenant_id, str(context.request_id))
+        prior = self.repository.find_decision_by_request(
+            identity.tenant_id, str(context.request_id)
+        )
         if prior:
             if prior.context_hash != context_hash:
-                raise Problem(409, "idempotency_conflict", "request_id was used for another context")
+                raise Problem(
+                    409, "idempotency_conflict", "request_id was used for another context"
+                )
             return prior.response
 
         try:
@@ -130,7 +155,9 @@ class AuthorizationService:
         try:
             self.repository.persist_decision(persisted, adr)
         except Exception as exc:
-            raise Problem(503, "evidence_write_failed", "Decision was not returned because evidence failed") from exc
+            raise Problem(
+                503, "evidence_write_failed", "Decision was not returned because evidence failed"
+            ) from exc
         return response
 
     @staticmethod
@@ -140,11 +167,41 @@ class AuthorizationService:
         if context.tenant_id is not None and context.tenant_id != identity.tenant_id:
             raise Problem(403, "tenant_mismatch", "Body tenant differs from authenticated tenant")
         if context.agent.id != identity.agent_id:
-            raise Problem(403, "agent_identity_mismatch", "Body agent differs from authenticated agent")
+            raise Problem(
+                403, "agent_identity_mismatch", "Body agent differs from authenticated agent"
+            )
         if context.agent.delegation_chain != identity.delegation_chain:
             raise Problem(403, "delegation_mismatch", "Delegation chain differs from token")
         if context.agent.delegation_chain[-1] != context.agent.id:
             raise Problem(403, "invalid_delegation", "Acting agent must terminate delegation chain")
+
+    def _validate_delegation(
+        self, tenant_id: str, context: EvaluationContext, acting_agent: Any
+    ) -> None:
+        chain = context.agent.delegation_chain
+        root = self.repository.get_agent(tenant_id, chain[0])
+        if not root or root.parent_agent_id is not None:
+            raise Problem(
+                403, "invalid_delegation_root", "Delegation chain must begin at a root agent"
+            )
+        if len(chain) > root.max_delegation_depth + 1:
+            raise Problem(
+                403, "delegation_depth_exceeded", "Delegation chain exceeds root allowance"
+            )
+        previous = root
+        for child_id in chain[1:]:
+            child = self.repository.get_agent(tenant_id, child_id)
+            if not child or child.parent_agent_id != previous.agent_id:
+                raise Problem(
+                    403, "invalid_delegation_edge", "Delegation parent edge is not registered"
+                )
+            if child_id not in previous.allowed_agent_ids:
+                raise Problem(403, "delegation_edge_forbidden", "Delegation edge is not allowed")
+            if context.tool.id not in previous.permitted_tools:
+                raise Problem(403, "delegated_tool_forbidden", "Parent cannot delegate this tool")
+            previous = child
+        if previous.agent_id != acting_agent.agent_id:
+            raise Problem(403, "invalid_delegation", "Registered acting agent differs from chain")
 
     @staticmethod
     def _combine(matches: list[PolicyMatch]) -> tuple[str, list[str], dict | None]:
@@ -153,7 +210,11 @@ class AuthorizationService:
         winner = max(matches, key=lambda p: (p.priority, DECISION_ORDER[p.decision]))
         same_priority = [p for p in matches if p.priority == winner.priority]
         winner = max(same_priority, key=lambda p: DECISION_ORDER[p.decision])
-        return winner.decision, [f"Matched {p.policy_id} v{p.version}" for p in matches], winner.constraints
+        return (
+            winner.decision,
+            [f"Matched {p.policy_id} v{p.version}" for p in matches],
+            winner.constraints,
+        )
 
     @staticmethod
     def _decision_id(tenant_id: str, request_id: UUID) -> str:
@@ -194,7 +255,10 @@ class AuthorizationService:
                 "configuration_hash": self.configuration_hash,
             },
             "reasons": response.reasons,
-            "approval": {"required": response.decision == "REQUIRE_APPROVAL", "status": "NOT_REQUIRED"},
+            "approval": {
+                "required": response.decision == "REQUIRE_APPROVAL",
+                "status": "NOT_REQUIRED",
+            },
             "execution": {"status": "NOT_STARTED"},
             "degraded": response.degraded,
             "security_signals": [],

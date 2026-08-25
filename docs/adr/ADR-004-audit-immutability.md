@@ -135,3 +135,7 @@ An ADR or DecisionEvent cannot be mutated after object publication merely to bac
 The outbox writer groups ordered records from one stream into RFC 8785 canonical segments. Each record receives a signed receipt binding its exact sequence/hash to the segment's create-only object key and content version. Signed anchors bind a stream range and head hash. The development filesystem adapter uses exclusive creation plus `fsync`; production adapters must provide genuine WORM retention.
 
 The four-shard PostgreSQL sequencer benchmark completed 2,725 operations/second over 2,000 transaction-level allocations with p99 2.0087 ms on the M3 Max development host. This resolves WORK_LOG B-6 for the development baseline; deployment-class Linux sizing must rerun `make benchmark-sequencer`.
+
+DecisionEvent retry identity is the RFC 8785 hash of `(decision_id, event_type, actor, payload)`.
+The value is tenant/decision unique and checked before either chain head is locked. An identical retry
+returns the existing immutable event; a genuinely different transition receives a new dense sequence.

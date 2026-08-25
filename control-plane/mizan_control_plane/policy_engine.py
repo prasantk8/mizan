@@ -60,7 +60,12 @@ def compile_condition(node: dict[str, Any]) -> str:
             raise PolicyCompileError(f"operator {operator} requires value")
         value = node["value"]
         comparisons = {
-            "eq": "==", "neq": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<=",
+            "eq": "==",
+            "neq": "!=",
+            "gt": ">",
+            "gte": ">=",
+            "lt": "<",
+            "lte": "<=",
         }
         if operator in comparisons:
             return f"(({presence}) && {target} {comparisons[operator]} {_literal(value)})"
@@ -124,19 +129,18 @@ def compile_policy(document_json: str) -> CompiledPolicy:
         raise PolicyCompileError("only ACTIVE policies may enter the evaluator cache")
     condition = compile_condition(document["conditions"])
     policy_name = f"{document['policy_id']}_v{document['version']}"
-    artifact = (
-        f'@id("{policy_name}")\n'
-        "permit(principal, action, resource)\n"
-        f"when {{ {condition} }};"
-    )
+    artifact = f'@id("{policy_name}")\npermit(principal, action, resource)\nwhen {{ {condition} }};'
     try:
         policy_set = cedarpy.PolicySet.from_str(artifact)
     except ValueError as exc:
         raise PolicyCompileError(f"Cedar rejected compiled policy: {exc}") from exc
     match = PolicyMatch(
-        policy_id=document["policy_id"], version=document["version"],
-        content_hash=document["content_hash"], decision=document["decision"],
-        priority=document["priority"], constraints=document.get("constraints"),
+        policy_id=document["policy_id"],
+        version=document["version"],
+        content_hash=document["content_hash"],
+        decision=document["decision"],
+        priority=document["priority"],
+        constraints=document.get("constraints"),
     )
     return CompiledPolicy(match=match, artifact=artifact, policy_set=policy_set)
 
@@ -155,7 +159,9 @@ class CedarPolicyEvaluator:
         }
         return all(values[key] in allowed for key, allowed in selectors.items())
 
-    def evaluate(self, documents: list[dict[str, Any]], context: EvaluationContext) -> list[PolicyMatch]:
+    def evaluate(
+        self, documents: list[dict[str, Any]], context: EvaluationContext
+    ) -> list[PolicyMatch]:
         matches: list[PolicyMatch] = []
         for document in documents:
             if not self._applies(document, context):

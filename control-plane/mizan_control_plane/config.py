@@ -31,4 +31,3 @@ class Settings:
             ),
             chain_shards_per_tenant=int(environ.get("MIZAN_CHAIN_SHARDS_PER_TENANT", "16")),
         )
-

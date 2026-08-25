@@ -6,7 +6,7 @@
 
 ## Active Task
 
-`T-007` — Invariant, validation-rule, and approval-state-machine test suite.
+Contract decision gates B-7 and B-8; all independently implementable tasks are implemented.
 
 ## Agent Queue
 
@@ -18,7 +18,7 @@
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | PARKED(B-8) |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | REVIEW |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | REVIEW |
-| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | READY |
+| T-007 | Invariant suite I-1..I-26 (property-based) + V-1..V-21 tests + approval-SM/epoch fuzzer (§5.2 G1–G9) | CODEX | T-004 | REVIEW |
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | REVIEW |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | REVIEW |
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-007 (CODEX):** Claim and build the I-1..I-26/V-1..V-21 traceability suite plus randomized approval epoch state-machine tests; identify every unimplemented or untestable contract explicitly.
+> **HUMAN decision required:** Resolve B-7 by defining the authority source for a `review_required` epoch, and B-8 by selecting a bounded caller-argument contract. CODEX then completes T-009/T-004 and runs the final all-task release audit.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-007 · Added Hypothesis chain/representability/approval fuzzing and I-1..I-26/V-1..V-21 coverage index; closed delegation, quorum, policy dual-control, binding unknown-field, DecisionEvent retry, external receipt validation, audit-attestation and encrypted degraded-WAL gaps; 60 unit + four live integration tests pass; B-7/B-8 remain contract decisions · next: HUMAN B-7/B-8
 - 2026-08-25 · CODEX · T-010 · Added responsive same-origin operator console for decision filters/details, audit browsing and signed-chain verification; implemented missing tenant-RLS decision/audit query endpoints with cursor pagination and live integration assertions; 43 unit + four live integration tests pass · next: T-007 CODEX
 - 2026-08-25 · CODEX · T-015 · Added independently anchored checkpoint-range verification with parallel workers and boundary-continuity checks, deterministic 100k fixture, corruption tests and Make target; M3 Max verified 100k in 0.917s vs <10s gate; 43 unit tests pass · next: T-010 CODEX
 - 2026-08-25 · CODEX · T-013 · Added bounded streaming identity/gzip decoding, duplicate/non-finite JSON rejection, depth/key/time budgets, SPEC-valid transient envelopes, scalar-only versioned projections, drift telemetry, explicit raw-persistence sinks and operational payload stripping; 42 unit tests pass · next: T-015 CODEX

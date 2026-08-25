@@ -34,17 +34,25 @@ class PostgresAuthorizationRepository:
             row = connection.execute(
                 """SELECT a.tenant_id, a.agent_id, a.version, a.lifecycle_state,
                           coalesce(array_agg(at.tool_id::text) FILTER (WHERE at.tool_id IS NOT NULL), '{}')
+                          ,a.parent_agent_id,a.document
                      FROM mizan.agents a LEFT JOIN mizan.agent_tools at
                        ON at.tenant_id=a.tenant_id AND at.agent_id=a.agent_id
                     WHERE a.tenant_id=%s AND a.agent_id=%s
-                    GROUP BY a.tenant_id,a.agent_id,a.version,a.lifecycle_state""",
+                    GROUP BY a.tenant_id,a.agent_id,a.version,a.lifecycle_state,a.parent_agent_id,a.document""",
                 (tenant_id, agent_id),
             ).fetchone()
             if not row:
                 return None
+            delegation = row[6].get("delegation", {})
             return RegistryAgent(
-                tenant_id=row[0], agent_id=row[1], version=row[2],
-                lifecycle_state=row[3], permitted_tools=set(row[4]),
+                tenant_id=row[0],
+                agent_id=row[1],
+                version=row[2],
+                lifecycle_state=row[3],
+                permitted_tools=set(row[4]),
+                parent_agent_id=row[5],
+                allowed_agent_ids=set(delegation.get("allowed_agent_ids", [])),
+                max_delegation_depth=delegation.get("max_delegation_depth", 0),
             )
 
     def get_tool(self, tenant_id: str, tool_id: str) -> RegistryTool | None:
@@ -63,9 +71,15 @@ class PostgresAuthorizationRepository:
                 return None
             doc = row[6]
             return RegistryTool(
-                tenant_id=row[0], tool_id=row[1], profile_id=row[2], profile_version=row[3],
-                bound_pointers=row[4], volatile_pointers=row[5], risk_tier=doc["risk_tier"],
-                resource_owner=doc["resource_owner"], data_classification=doc["data_classification"],
+                tenant_id=row[0],
+                tool_id=row[1],
+                profile_id=row[2],
+                profile_version=row[3],
+                bound_pointers=row[4],
+                volatile_pointers=row[5],
+                risk_tier=doc["risk_tier"],
+                resource_owner=doc["resource_owner"],
+                data_classification=doc["data_classification"],
                 executor_spiffe_ids=doc["execution"]["executor_spiffe_ids"],
             )
 
@@ -94,13 +108,20 @@ class PostgresAuthorizationRepository:
                 return None
             doc = row[2]
             response = AuthorizationResponse(
-                decision_id=row[0], decision=doc["decision"], risk=doc["risk"],
-                policies=doc["policies"], reasons=doc["reasons"],
-                constraints=doc.get("constraints"), degraded=doc["degraded"],
+                decision_id=row[0],
+                decision=doc["decision"],
+                risk=doc["risk"],
+                policies=doc["policies"],
+                reasons=doc["reasons"],
+                constraints=doc.get("constraints"),
+                degraded=doc["degraded"],
             )
             return PersistedDecision(
-                decision_id=row[0], request_id=request_id, response=response,
-                context_hash=row[1], created_at=row[3],
+                decision_id=row[0],
+                request_id=request_id,
+                response=response,
+                context_hash=row[1],
+                created_at=row[3],
             )
 
     def persist_decision(self, decision: PersistedDecision, adr_document: dict) -> None:
@@ -109,7 +130,8 @@ class PostgresAuthorizationRepository:
             self._scope(connection, doc["tenant_id"])
             connection.execute(
                 "INSERT INTO mizan.evidence_chain_heads(tenant_id,stream_id) VALUES (%s,%s) "
-                "ON CONFLICT DO NOTHING", (doc["tenant_id"], doc["stream_id"]),
+                "ON CONFLICT DO NOTHING",
+                (doc["tenant_id"], doc["stream_id"]),
             )
             head = connection.execute(
                 "SELECT next_sequence,last_hash FROM mizan.evidence_chain_heads "
@@ -131,10 +153,23 @@ class PostgresAuthorizationRepository:
                      tenant_id,decision_id,request_id,trace_id,context_hash,agent_id,tool_id,stream_id,
                      sequence_number,prev_hash,record_hash,decision,immutable_receipt_ref,document,created_at
                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (doc["tenant_id"],doc["decision_id"],decision.request_id,doc["trace_id"],
-                 doc["context_hash"],doc["agent"]["id"],doc["tool"]["id"],doc["stream_id"],doc["sequence_number"],
-                 doc["prev_hash"],doc["record_hash"],doc["decision"],doc["immutable_receipt_ref"],
-                 json.dumps(doc),decision.created_at),
+                (
+                    doc["tenant_id"],
+                    doc["decision_id"],
+                    decision.request_id,
+                    doc["trace_id"],
+                    doc["context_hash"],
+                    doc["agent"]["id"],
+                    doc["tool"]["id"],
+                    doc["stream_id"],
+                    doc["sequence_number"],
+                    doc["prev_hash"],
+                    doc["record_hash"],
+                    doc["decision"],
+                    doc["immutable_receipt_ref"],
+                    json.dumps(doc),
+                    decision.created_at,
+                ),
             )
             connection.execute(
                 "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
@@ -144,8 +179,12 @@ class PostgresAuthorizationRepository:
 
 
 class InMemoryAuthorizationRepository:
-    def __init__(self, agents: Iterable[RegistryAgent] = (), tools: Iterable[RegistryTool] = (),
-                 policies: Iterable[PolicyMatch] = ()) -> None:
+    def __init__(
+        self,
+        agents: Iterable[RegistryAgent] = (),
+        tools: Iterable[RegistryTool] = (),
+        policies: Iterable[PolicyMatch] = (),
+    ) -> None:
         self.agents = {(x.tenant_id, x.agent_id): x for x in agents}
         self.tools = {(x.tenant_id, x.tool_id): x for x in tools}
         self.policies = list(policies)

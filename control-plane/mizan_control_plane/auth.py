@@ -38,18 +38,24 @@ class TokenVerifier:
                 delegation_chain=claims.get("delegation_chain", [claims["agent_id"]]),
             )
         except (ValueError, KeyError) as exc:
-            raise Problem(401, "invalid_agent_token", "Agent identity claims are incomplete") from exc
+            raise Problem(
+                401, "invalid_agent_token", "Agent identity claims are incomplete"
+            ) from exc
 
     def verify_principal(self, token: str) -> AuthenticatedPrincipal:
         try:
             claims = self._claims(token)
             return AuthenticatedPrincipal(
-                tenant_id=claims["tenant_id"], principal_id=claims["sub"],
-                identity_kind=claims["identity_kind"], auth_strength=claims["auth_strength"],
+                tenant_id=claims["tenant_id"],
+                principal_id=claims["sub"],
+                identity_kind=claims["identity_kind"],
+                auth_strength=claims["auth_strength"],
                 roles=claims.get("roles", []),
             )
         except (ValueError, KeyError) as exc:
-            raise Problem(401, "invalid_principal_token", "Principal claims are incomplete") from exc
+            raise Problem(
+                401, "invalid_principal_token", "Principal claims are incomplete"
+            ) from exc
 
     def verify_tenant(self, token: str) -> str:
         return self._claims(token)["tenant_id"]

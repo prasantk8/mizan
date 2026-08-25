@@ -16,20 +16,32 @@ from tests.unit.test_authorization import context
 
 def policy(conditions: dict, *, decision: str = "ALLOW", priority: int = 100) -> dict:
     return {
-        "schema_version": "1.2", "policy_id": "pol_transfer", "tenant_id": "tnt_bank-a",
-        "name": "Transfer policy", "version": 1, "status": "ACTIVE", "author": "risk-team",
-        "applies_to": {"tool_ids": ["tool_transfer"]}, "conditions": conditions,
-        "decision": decision, "priority": priority, "content_hash": "1" * 64,
+        "schema_version": "1.2",
+        "policy_id": "pol_transfer",
+        "tenant_id": "tnt_bank-a",
+        "name": "Transfer policy",
+        "version": 1,
+        "status": "ACTIVE",
+        "author": "risk-team",
+        "applies_to": {"tool_ids": ["tool_transfer"]},
+        "conditions": conditions,
+        "decision": decision,
+        "priority": priority,
+        "content_hash": "1" * 64,
         "created_at": "2026-08-25T00:00:00Z",
     }
 
 
 def test_nested_dsl_compiles_and_matches_with_explanation_identity() -> None:
-    document = policy({"all": [
-        {"field": "action.type", "op": "eq", "value": "financial_write"},
-            {"field": "action.estimated_value.amount", "op": "gte", "value": 10000},
-        {"not": {"field": "security.blocked", "op": "present"}},
-    ]})
+    document = policy(
+        {
+            "all": [
+                {"field": "action.type", "op": "eq", "value": "financial_write"},
+                {"field": "action.estimated_value.amount", "op": "gte", "value": 10000},
+                {"not": {"field": "security.blocked", "op": "present"}},
+            ]
+        }
+    )
     matches = CedarPolicyEvaluator().evaluate([document], context())
     assert [(item.policy_id, item.version, item.content_hash) for item in matches] == [
         ("pol_transfer", 1, "1" * 64)

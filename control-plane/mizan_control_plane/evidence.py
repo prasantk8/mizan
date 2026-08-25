@@ -102,6 +102,16 @@ def append_decision_event_tx(
     if not adr:
         raise Problem(404, "decision_not_found", "Decision does not exist")
     stream_id = adr[0]
+    idempotency_key = canonical_hash(
+        {"decision_id": decision_id, "event_type": event_type, "actor": actor, "payload": payload}
+    )
+    existing = connection.execute(
+        "SELECT document FROM mizan.decision_events "
+        "WHERE tenant_id=%s AND decision_id=%s AND idempotency_key=%s",
+        (tenant_id, decision_id, idempotency_key),
+    ).fetchone()
+    if existing:
+        return existing[0]
     connection.execute(
         "INSERT INTO mizan.decision_event_heads(tenant_id,decision_id) VALUES (%s,%s) "
         "ON CONFLICT DO NOTHING",
@@ -117,6 +127,13 @@ def append_decision_event_tx(
         "WHERE tenant_id=%s AND stream_id=%s FOR UPDATE",
         (tenant_id, stream_id),
     ).fetchone()
+    existing = connection.execute(
+        "SELECT document FROM mizan.decision_events "
+        "WHERE tenant_id=%s AND decision_id=%s AND idempotency_key=%s",
+        (tenant_id, decision_id, idempotency_key),
+    ).fetchone()
+    if existing:
+        return existing[0]
     event_id = "dev_" + uuid4().hex
     document = {
         "schema_version": "1.2",
@@ -155,15 +172,16 @@ def append_decision_event_tx(
         raise RuntimeError("DecisionEvent sequence allocation mismatch")
     connection.execute(
         """INSERT INTO mizan.decision_events(
-             tenant_id,event_id,decision_id,decision_sequence,event_type,previous_event_hash,
+             tenant_id,event_id,decision_id,decision_sequence,event_type,idempotency_key,previous_event_hash,
              event_hash,stream_id,sequence_number,prev_hash,record_hash,document,occurred_at
-           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (
             tenant_id,
             event_id,
             decision_id,
             event_sequence,
             event_type,
+            idempotency_key,
             event_head[1],
             document["record_hash"],
             stream_id,
@@ -214,6 +232,30 @@ class EvidenceRepository:
         trace_id: str | None = None,
         shard: int = 0,
     ) -> dict[str, Any]:
+        attestation = getattr(redacted, "redaction", None)
+        required = {
+            "policy_id",
+            "policy_version",
+            "policy_hash",
+            "redactor_build",
+            "dlp",
+            "manifest",
+        }
+        if not isinstance(attestation, dict) or not required <= attestation.keys():
+            raise Problem(503, "redaction_attestation_missing", "Audit write lacks DLP attestation")
+        dlp = attestation.get("dlp", {})
+        if (
+            dlp.get("status") == "scan_failed"
+            or not dlp.get("scanner_version")
+            or not dlp.get("coverage_profile")
+        ):
+            raise Problem(
+                503, "redaction_attestation_invalid", "Audit DLP attestation failed closed"
+            )
+        if not getattr(redacted, "stored_payload_hash", None) or not getattr(
+            redacted, "source_commitment", None
+        ):
+            raise Problem(503, "redaction_commitment_missing", "Audit commitments are incomplete")
         now = datetime.now(UTC)
         stream_id = f"{tenant_id}:audit:{shard}"
         with self.pool.connection() as connection, connection.transaction():
@@ -806,3 +848,16 @@ class ObjectEvidenceVerifier:
                     anchored[0]["record_hash"],
                 )
         return result
+
+    def verify_record_receipt(
+        self, tenant_id: str, stream_id: str, sequence_number: int, record_hash: str
+    ) -> bool:
+        result = self.verify(
+            tenant_id, stream_id, sequence_number, sequence_number, verify_anchors=False
+        )
+        if not result.valid:
+            return False
+        receipts = self.repository.receipt_rows(
+            tenant_id, stream_id, sequence_number, sequence_number
+        )
+        return len(receipts) == 1 and receipts[0]["payload"]["record_hash"] == record_hash

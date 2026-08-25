@@ -24,4 +24,3 @@ def problem_response(request: Request, exc: Problem) -> JSONResponse:
             "instance": str(request.url.path),
         },
     )
-

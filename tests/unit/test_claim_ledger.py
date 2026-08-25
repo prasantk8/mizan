@@ -30,7 +30,9 @@ def test_parked_handoff_authorizes_blocked_release() -> None:
 | T-009 | approval | CODEX | T-004 | PARKED(B-7) |
 - 2026-08-25 · CODEX · T-009 · parked · next: T-011
 """
-    assert validate_snapshot(["control-plane/approvals/service.py", "WORK_LOG.md"], True, parked) == []
+    assert (
+        validate_snapshot(["control-plane/approvals/service.py", "WORK_LOG.md"], True, parked) == []
+    )
 
 
 def test_docs_only_change_needs_no_claim() -> None:

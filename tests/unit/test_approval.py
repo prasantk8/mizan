@@ -11,36 +11,50 @@ NOW = datetime(2026, 8, 25, tzinfo=UTC)
 
 def eligibility() -> dict:
     return {
-        "snapshot_at": "2026-08-25T00:00:00Z", "authority_source": "mizan_role_registry",
-        "authority_mapping_version": 3, "roles": ["manager", "supervisor", "compliance"],
+        "snapshot_at": "2026-08-25T00:00:00Z",
+        "authority_source": "mizan_role_registry",
+        "authority_mapping_version": 3,
+        "roles": ["manager", "supervisor", "compliance"],
         "members": [
-            {"principal_id": "prn_alice", "roles": ["manager", "supervisor"],
-             "control_domain": "business.ops"},
-            {"principal_id": "prn_bob", "roles": ["supervisor"],
-             "control_domain": "risk.control"},
-            {"principal_id": "prn_eve", "roles": ["compliance"],
-             "control_domain": "compliance.control"},
+            {
+                "principal_id": "prn_alice",
+                "roles": ["manager", "supervisor"],
+                "control_domain": "business.ops",
+            },
+            {"principal_id": "prn_bob", "roles": ["supervisor"], "control_domain": "risk.control"},
+            {
+                "principal_id": "prn_eve",
+                "roles": ["compliance"],
+                "control_domain": "compliance.control",
+            },
         ],
     }
 
 
 def requirements(**updates: object) -> dict:
     base = {
-        "quorum": 2, "expiry_seconds": 900, "rejection_mode": "veto",
+        "quorum": 2,
+        "expiry_seconds": 900,
+        "rejection_mode": "veto",
         "distinct_control_domains_required": True,
     }
     return base | updates
 
 
 def approval(**updates: object) -> dict:
-    return create_approval("tnt_bank-a", "adr_decision-0001", "a" * 64,
-                           requirements(**updates), eligibility(), NOW)
+    return create_approval(
+        "tnt_bank-a", "adr_decision-0001", "a" * 64, requirements(**updates), eligibility(), NOW
+    )
 
 
 def vote(subject: dict, approver: str, **updates: object) -> tuple[dict, dict]:
     arguments = {
-        "epoch_number": 1, "approver_id": approver, "identity_kind": "human",
-        "auth_strength": "mfa", "vote": "APPROVE", "forbidden_approvers": set(),
+        "epoch_number": 1,
+        "approver_id": approver,
+        "identity_kind": "human",
+        "auth_strength": "mfa",
+        "vote": "APPROVE",
+        "forbidden_approvers": set(),
         "now": NOW,
     } | updates
     return cast_vote(subject, **arguments)
@@ -72,7 +86,10 @@ def test_requester_and_accountable_owner_cannot_vote() -> None:
 
 def test_stale_epoch_vote_loses_escalation_race() -> None:
     escalated = open_next_epoch(
-        approval(), kind="escalation", requirements=requirements(), eligibility=eligibility(),
+        approval(),
+        kind="escalation",
+        requirements=requirements(),
+        eligibility=eligibility(),
         now=NOW,
     )
     with pytest.raises(Problem) as raised:
@@ -93,12 +110,21 @@ def test_veto_and_rejection_quorum_are_distinct() -> None:
 def test_override_requires_fresh_votes_and_justification() -> None:
     pending, _ = vote(approval(), "prn_alice")
     override = open_next_epoch(
-        pending, kind="override", requirements=requirements(), eligibility=eligibility(), now=NOW,
+        pending,
+        kind="override",
+        requirements=requirements(),
+        eligibility=eligibility(),
+        now=NOW,
     )
     assert override["epochs"][-1]["carried_votes"] == []
     with pytest.raises(Problem, match="justification"):
         cast_vote(
-            override, epoch_number=2, approver_id="prn_bob", identity_kind="human",
-            auth_strength="hardware", vote="APPROVE", forbidden_approvers=set(), now=NOW,
+            override,
+            epoch_number=2,
+            approver_id="prn_bob",
+            identity_kind="human",
+            auth_strength="hardware",
+            vote="APPROVE",
+            forbidden_approvers=set(),
+            now=NOW,
         )
-

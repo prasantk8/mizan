@@ -38,12 +38,20 @@ class DlpScanner(Protocol):
 class RuleBasedDlpScanner:
     EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     SENSITIVE_KEYS = {
-        "email": "pii", "phone": "pii", "national_id": "pii", "passport": "pii",
-        "account_number": "financial", "iban": "financial", "secret": "secret",
-        "password": "secret", "token": "secret",
+        "email": "pii",
+        "phone": "pii",
+        "national_id": "pii",
+        "passport": "pii",
+        "account_number": "financial",
+        "iban": "financial",
+        "secret": "secret",
+        "password": "secret",
+        "token": "secret",
     }
 
-    def __init__(self, version: str = "rules-1.0", coverage_profile: str = "banking-core-v1") -> None:
+    def __init__(
+        self, version: str = "rules-1.0", coverage_profile: str = "banking-core-v1"
+    ) -> None:
         self.version = version
         self.coverage_profile = coverage_profile
 
@@ -68,8 +76,10 @@ class RuleBasedDlpScanner:
 
         visit(payload, "")
         return ScanResult(
-            status="findings_redacted" if findings else "clean", findings=findings,
-            scanner_version=self.version, coverage_profile=self.coverage_profile,
+            status="findings_redacted" if findings else "clean",
+            findings=findings,
+            scanner_version=self.version,
+            coverage_profile=self.coverage_profile,
         )
 
 
@@ -102,15 +112,18 @@ def _resolve_parent(document: Any, pointer: str) -> tuple[Any, str]:
     return current, parts[-1].replace("~1", "/").replace("~0", "~")
 
 
-def _transform(document: dict[str, Any], pointer: str, operation: Transformation,
-               commitment: str) -> None:
+def _transform(
+    document: dict[str, Any], pointer: str, operation: Transformation, commitment: str
+) -> None:
     parent, key = _resolve_parent(document, pointer)
     if operation == "drop":
         parent.pop(int(key)) if isinstance(parent, list) else parent.pop(key)
         return
     replacements = {
-        "mask":"***REDACTED***", "tokenize":"tok_" + commitment[:24],
-        "hash":"hmac_" + commitment, "generalize":"[generalized]",
+        "mask": "***REDACTED***",
+        "tokenize": "tok_" + commitment[:24],
+        "hash": "hmac_" + commitment,
+        "generalize": "[generalized]",
     }
     replacement = replacements[operation]
     if isinstance(parent, list):
@@ -120,8 +133,13 @@ def _transform(document: dict[str, Any], pointer: str, operation: Transformation
 
 
 class Redactor:
-    def __init__(self, scanner: DlpScanner, commitment_key: bytes, key_ref: str,
-                 build: str = "mizan-redactor-1") -> None:
+    def __init__(
+        self,
+        scanner: DlpScanner,
+        commitment_key: bytes,
+        key_ref: str,
+        build: str = "mizan-redactor-1",
+    ) -> None:
         if len(commitment_key) < 32:
             raise ValueError("audit commitment key must be at least 256 bits")
         self.scanner = scanner
@@ -142,28 +160,48 @@ class Redactor:
         for finding in sorted(scan.findings, key=lambda item: item.pointer, reverse=True):
             operation = policy.transformations.get(finding.classification)
             if finding.classification in {"pii", "secret"} and operation is None:
-                raise RedactionError(f"no transformation for {finding.classification} at {finding.pointer}")
+                raise RedactionError(
+                    f"no transformation for {finding.classification} at {finding.pointer}"
+                )
             if operation is None:
                 continue
             parent, key = _resolve_parent(source, finding.pointer)
             original = parent[int(key)] if isinstance(parent, list) else parent[key]
             commitment = _hmac(self.commitment_key, original)
             _transform(stored, finding.pointer, operation, commitment)
-            manifest.append({
-                "pointer":finding.pointer,"classification":finding.classification,
-                "transformation":operation,"commitment":commitment,
-            })
+            manifest.append(
+                {
+                    "pointer": finding.pointer,
+                    "classification": finding.classification,
+                    "transformation": operation,
+                    "commitment": commitment,
+                }
+            )
         stored_hash = hashlib.sha256(rfc8785.dumps(stored)).hexdigest()
         source_value = _hmac(self.commitment_key, source)
         return RedactionResult(
-            payload=stored, stored_payload_hash=stored_hash,
-            source_commitment={"alg":"HMAC-SHA256","key_ref":self.key_ref,"value":source_value},
+            payload=stored,
+            stored_payload_hash=stored_hash,
+            source_commitment={
+                "alg": "HMAC-SHA256",
+                "key_ref": self.key_ref,
+                "value": source_value,
+            },
             redaction={
-                "applied":bool(manifest),"policy_id":policy.policy_id,"policy_version":policy.version,
-                "policy_hash":policy.content_hash,"input_schema_hash":None,"output_schema_hash":None,
-                "redactor_build":self.build,
-                "dlp":{"status":scan.status,"findings_count":len(scan.findings),
-                       "scanner_version":scan.scanner_version,"coverage_profile":scan.coverage_profile},
-                "manifest":manifest,"evidence_ref":None,
+                "applied": bool(manifest),
+                "policy_id": policy.policy_id,
+                "policy_version": policy.version,
+                "policy_hash": policy.content_hash,
+                "input_schema_hash": None,
+                "output_schema_hash": None,
+                "redactor_build": self.build,
+                "dlp": {
+                    "status": scan.status,
+                    "findings_count": len(scan.findings),
+                    "scanner_version": scan.scanner_version,
+                    "coverage_profile": scan.coverage_profile,
+                },
+                "manifest": manifest,
+                "evidence_ref": None,
             },
         )
