@@ -57,8 +57,11 @@ class FixtureRepository:
         return self.anchor_rows
 
 
-def fixture() -> tuple[FixtureRepository, MemoryStore, Ed25519EvidenceSigner]:
-    signer = Ed25519EvidenceSigner.generate("local://benchmark/evidence-1")
+def fixture() -> tuple[
+    FixtureRepository, MemoryStore, Ed25519EvidenceSigner, Ed25519EvidenceSigner
+]:
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
     store = MemoryStore()
     receipts: list[dict[str, Any]] = []
     previous = "0" * 64
@@ -86,9 +89,9 @@ def fixture() -> tuple[FixtureRepository, MemoryStore, Ed25519EvidenceSigner]:
                 "record_hash": document["record_hash"],
                 "object_key": key,
                 "object_version": version,
-                "key_id": signer.key_id,
+                "key_id": receipt_signer.key_id,
             }
-            receipts.append({"payload": payload, "signature": signer.sign(payload)})
+            receipts.append({"payload": payload, "signature": receipt_signer.sign(payload)})
     unsigned_anchor = {
         "anchor_id": "benchmark-anchor",
         "tenant_id": TENANT,
@@ -99,24 +102,27 @@ def fixture() -> tuple[FixtureRepository, MemoryStore, Ed25519EvidenceSigner]:
         "to_sequence": RECORDS - 1,
         "covered_record_count": RECORDS,
         "head_hash": previous,
-        "key_id": signer.key_id,
+        "key_id": anchor_signer.key_id,
         "anchored_at": "2026-08-25T00:00:00Z",
     }
     anchor_key = f"anchors/{TENANT}/perf/{RECORDS - 1:020d}.json"
     anchor_version = store.put(anchor_key, rfc8785.dumps(unsigned_anchor))
     anchor = unsigned_anchor | {"object_key": anchor_key, "object_version": anchor_version}
     repository = FixtureRepository(
-        receipts, [{"payload": anchor, "signature": signer.sign(anchor)}]
+        receipts, [{"payload": anchor, "signature": anchor_signer.sign(anchor)}]
     )
-    return repository, store, signer
+    return repository, store, receipt_signer, anchor_signer
 
 
 def main() -> int:
-    repository, store, signer = fixture()
+    repository, store, receipt_signer, anchor_signer = fixture()
     verifier = ObjectEvidenceVerifier(
         repository,
         store,
-        {signer.key_id: signer.public_key},
+        {
+            receipt_signer.key_id: receipt_signer.public_key,
+            anchor_signer.key_id: anchor_signer.public_key,
+        },
         checkpoint_interval=CHECKPOINT_INTERVAL,
         workers=WORKERS,
     )

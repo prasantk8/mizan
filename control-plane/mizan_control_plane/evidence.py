@@ -11,10 +11,11 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import rfc8785
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from psycopg_pool import ConnectionPool
 
 from .canonical import canonical_hash
+from .keys import KeyRole, SigningKey, development_key_provider
 from .problems import Problem
 
 
@@ -91,19 +92,22 @@ def canonical_hash_bytes(value: bytes) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Ed25519EvidenceSigner:
-    key_id: str
-    private_key: Ed25519PrivateKey
+    signing_key: SigningKey
 
     @classmethod
-    def generate(cls, key_id: str = "local://evidence/dev-1") -> Ed25519EvidenceSigner:
-        return cls(key_id=key_id, private_key=Ed25519PrivateKey.generate())
+    def development(cls, role: KeyRole = "evidence-receipt") -> Ed25519EvidenceSigner:
+        return cls(development_key_provider().active_key(role))
+
+    @property
+    def key_id(self) -> str:
+        return self.signing_key.key_id
 
     def sign(self, payload: dict[str, Any]) -> str:
-        return base64.urlsafe_b64encode(self.private_key.sign(rfc8785.dumps(payload))).decode()
+        return base64.urlsafe_b64encode(self.signing_key.sign(rfc8785.dumps(payload))).decode()
 
     @property
     def public_key(self) -> Ed25519PublicKey:
-        return self.private_key.public_key()
+        return self.signing_key.public_key()
 
 
 def verify_signature(payload: dict[str, Any], signature: str, key: Ed25519PublicKey) -> None:
@@ -726,13 +730,17 @@ class OutboxPublisher:
         self,
         repository: EvidenceRepository,
         store: LocalImmutableObjectStore,
-        signer: Ed25519EvidenceSigner,
+        receipt_signer: Ed25519EvidenceSigner,
+        anchor_signer: Ed25519EvidenceSigner,
         delivery: DeliverySink | None = None,
         anchor_provider: AnchorProvider | None = None,
     ) -> None:
         self.repository = repository
         self.store = store
-        self.signer = signer
+        if receipt_signer.key_id == anchor_signer.key_id:
+            raise ValueError("evidence receipt and anchor keys must be separately held")
+        self.receipt_signer = receipt_signer
+        self.anchor_signer = anchor_signer
         self.delivery = delivery or NullDeliverySink()
         self.anchor_provider = anchor_provider or anchor_provider_from_config()
 
@@ -760,10 +768,10 @@ class OutboxPublisher:
                     "record_hash": payload["record_hash"],
                     "object_version": object_version,
                     "object_key": key,
-                    "key_id": self.signer.key_id,
+                    "key_id": self.receipt_signer.key_id,
                     "issued_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 }
-                signature = self.signer.sign(receipt)
+                signature = self.receipt_signer.sign(receipt)
                 self.repository.record_publication(tenant_id, item["outbox_id"], receipt, signature)
                 self.delivery.publish(item["event_type"], stream_id, payload)
                 published += 1
@@ -799,13 +807,13 @@ class OutboxPublisher:
             "to_sequence": last["sequence_number"],
             "covered_record_count": len(receipts),
             "head_hash": last["record_hash"],
-            "key_id": self.signer.key_id,
+            "key_id": self.anchor_signer.key_id,
             "anchored_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
         unsigned = anchor_core | {"attestations": [self.anchor_provider.attest(anchor_core)]}
         object_version = self.store.put_once(key, rfc8785.dumps(unsigned))
         anchor = unsigned | {"object_key": key, "object_version": object_version}
-        signature = self.signer.sign(anchor)
+        signature = self.anchor_signer.sign(anchor)
         self.repository.record_anchor(tenant_id, anchor, signature)
         return anchor | {"signature": signature}
 

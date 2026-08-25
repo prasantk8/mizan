@@ -9,7 +9,6 @@ from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mizan_control_plane.approval_repository import ApprovalRepository
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
@@ -19,6 +18,7 @@ from mizan_control_plane.evidence import (
     OutboxPublisher,
 )
 from mizan_control_plane.execution import ExecutionService, ExecutionTokenCodec
+from mizan_control_plane.keys import local_private_key_for_testing
 from mizan_control_plane.models import AuthenticatedIdentity, AuthenticatedPrincipal
 from mizan_control_plane.problems import Problem
 from mizan_control_plane.registry import RegistryRepository, policy_semantic_hash
@@ -81,9 +81,10 @@ def test_live_control_plane_end_to_end(tmp_path: Path) -> None:
     detail = evidence_repository.decision("tnt_bank-a", response.decision_id)
     assert detail["decision"]["decision_id"] == response.decision_id
     assert detail["events"][0]["event_type"] == "CAPABILITY_ISSUED"
-    signer = Ed25519EvidenceSigner.generate()
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
     store = LocalImmutableObjectStore(tmp_path)
-    publisher = OutboxPublisher(evidence_repository, store, signer)
+    publisher = OutboxPublisher(evidence_repository, store, receipt_signer, anchor_signer)
     assert publisher.drain("tnt_bank-a") == 2
     assert evidence_repository.has_receipt(
         "tnt_bank-a",
@@ -103,11 +104,14 @@ def test_live_control_plane_end_to_end(tmp_path: Path) -> None:
     verifier = ObjectEvidenceVerifier(
         evidence_repository,
         store,
-        {signer.key_id: signer.public_key},
+        {
+            receipt_signer.key_id: receipt_signer.public_key,
+            anchor_signer.key_id: anchor_signer.public_key,
+        },
     )
     assert verifier.verify("tnt_bank-a", "tnt_bank-a:adr:0").valid
 
-    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("integration-execution-1"))
     execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, verifier)
     execution_arguments = {"amount": 12500, "request_time": "execution-attempt-1"}
     with pytest.raises(Problem) as invalid_issue_executor:
@@ -573,12 +577,20 @@ def _focused_authorization(request_id: str):
 
 def _publish_focused_evidence(repository, tmp_path: Path):
     evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
-    signer = Ed25519EvidenceSigner.generate()
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
     store = LocalImmutableObjectStore(tmp_path)
-    publisher = OutboxPublisher(evidence, store, signer)
+    publisher = OutboxPublisher(evidence, store, receipt_signer, anchor_signer)
     publisher.drain("tnt_bank-a")
     publisher.anchor("tnt_bank-a", "tnt_bank-a:adr:0")
-    return ObjectEvidenceVerifier(evidence, store, {signer.key_id: signer.public_key})
+    return ObjectEvidenceVerifier(
+        evidence,
+        store,
+        {
+            receipt_signer.key_id: receipt_signer.public_key,
+            anchor_signer.key_id: anchor_signer.public_key,
+        },
+    )
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
@@ -618,7 +630,7 @@ def test_i9_bound_argument_change_is_rejected_at_redemption(tmp_path: Path) -> N
     verifier = _publish_focused_evidence(repository, tmp_path)
     execution = ExecutionService(
         os.environ["MIZAN_TEST_DATABASE_URL"],
-        ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate()),
+        ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("integration-execution-2")),
         verifier,
     )
     token = execution.issue(
@@ -640,7 +652,7 @@ def test_i10_redeemed_capability_cannot_create_a_second_lease(tmp_path: Path) ->
     verifier = _publish_focused_evidence(repository, tmp_path)
     execution = ExecutionService(
         os.environ["MIZAN_TEST_DATABASE_URL"],
-        ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate()),
+        ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("integration-execution-3")),
         verifier,
     )
     arguments = {"amount": 12500, "request_time": "first"}
@@ -663,7 +675,7 @@ def test_i23_second_registered_executor_redeems_its_own_token(tmp_path: Path) ->
     verifier = _publish_focused_evidence(repository, tmp_path)
     execution = ExecutionService(
         os.environ["MIZAN_TEST_DATABASE_URL"],
-        ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate()),
+        ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("integration-execution-4")),
         verifier,
     )
     token = execution.issue(
@@ -681,7 +693,7 @@ def test_i23_second_registered_executor_redeems_its_own_token(tmp_path: Path) ->
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
 def test_i25_financial_execution_waits_for_immutable_receipt(tmp_path: Path) -> None:
     repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000206")
-    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("integration-execution-5"))
     execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, SimpleNamespace())
     token = execution.issue(
         "tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth"

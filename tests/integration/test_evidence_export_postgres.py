@@ -112,9 +112,12 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
         ).authorize(principal, EvaluationContext.model_validate(document))
 
     evidence = EvidenceRepository(database_url)
-    signer = Ed25519EvidenceSigner.generate("local://evidence/export-live")
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
     object_root = tmp_path / "objects"
-    publisher = OutboxPublisher(evidence, LocalImmutableObjectStore(object_root), signer)
+    publisher = OutboxPublisher(
+        evidence, LocalImmutableObjectStore(object_root), receipt_signer, anchor_signer
+    )
     assert publisher.drain(TENANT) == 2
     anchor = publisher.anchor(TENANT, STREAM)
     assert anchor["covered_record_count"] == 2
@@ -124,14 +127,22 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
         json.dumps(
             [
                 {
-                    "key_id": signer.key_id,
+                    "key_id": item.key_id,
                     "algorithm": "Ed25519",
+                    "role": role,
                     "public_key": base64.urlsafe_b64encode(
-                        signer.public_key.public_bytes(
+                        item.public_key.public_bytes(
                             serialization.Encoding.Raw, serialization.PublicFormat.Raw
                         )
                     ).decode(),
+                    "not_before": "2026-08-25T00:00:00Z",
+                    "not_after": None,
+                    "revoked_at": None,
                 }
+                for role, item in (
+                    ("evidence-receipt", receipt_signer),
+                    ("evidence-anchor", anchor_signer),
+                )
             ]
         ),
         encoding="utf-8",

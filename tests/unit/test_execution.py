@@ -7,9 +7,9 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.execution import ExecutionService, ExecutionTokenCodec
+from mizan_control_plane.keys import local_private_key_for_testing
 from mizan_control_plane.problems import Problem
 from psycopg_pool import PoolTimeout
 
@@ -41,7 +41,7 @@ def claims() -> dict:
 
 
 def test_execution_codec_rejects_tampering_and_wrong_issuer() -> None:
-    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("execution-1"))
     token = codec.encode(claims())
     assert codec.decode(token)["authorized_executor"] == "spiffe://mizan/executor/wealth"
     header, payload, signature = token.split(".")
@@ -63,7 +63,7 @@ def test_execution_codec_rejects_tampering_and_wrong_issuer() -> None:
 def test_execution_codec_rejects_signed_but_nonconforming_claims(
     mutation, expected_message
 ) -> None:
-    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("execution-2"))
     payload = claims()
     mutation(payload)
     # Bypass encode's issuer-side contract gate to model a compromised or older issuer.
@@ -88,7 +88,7 @@ def test_second_registered_executor_is_selected_and_outsider_fails_both_boundari
         ExecutionService._authorized_executor(tool, "spiffe://mizan/executor/attacker")
     assert issue_error.value.status == 403
 
-    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", local_private_key_for_testing("execution-3"))
     service = object.__new__(ExecutionService)
     service.codec = codec
     token = codec.encode(claims())

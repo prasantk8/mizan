@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**Stage 3 corrections plus T-033 are in REVIEW; T-025 is next.** Anchors now traverse a configured provider seam, but the only implementation is explicitly development/unattested and I-11 truthfully carries a dated waiver until T-036. Continue with ratified custody, without lifting that waiver.
+**Stage 3 through T-025 is in REVIEW; T-036 is next and is the CP-B boundary.** Four separately-held signing roles, production custody refusal, additive key history, key publication/export, and revoked-key reporting are implemented. I-11's waiver remains until independently verified RFC 3161 attestation lands in T-036.
 
 ## Agent Queue
 
@@ -36,7 +36,7 @@
 | T-022 | R-004 F-8/F-9: decompose the over-cited integration test, raise `test_execution.py` coverage, re-chain the in-memory repo, reconcile doc drift | CODEX | T-017, T-018 | DONE |
 | T-023 | Load & latency harness: SPEC §7 p95/throughput/outbox-lag on deployment-class Linux; JSON artifacts (closes B-2/B-6 rerun obligation) | CODEX | T-022 | READY |
 | T-024 | Adversarial suite: token replay, cross-tenant fuzz, chain tamper, prompt-injection corpus; nightly CI (PRD §39/§62) | CODEX | T-022 | READY |
-| T-025 | ADR-004 Amd. G.1: four key roles, KMS/HSM `KeyProvider`, published `/v1/audit/keys` keyset, additive never-retroactive rotation, production refuses `local://` at startup | CODEX | T-033 | READY |
+| T-025 | ADR-004 Amd. G.1: four key roles, KMS/HSM `KeyProvider`, published `/v1/audit/keys` keyset, additive never-retroactive rotation, production refuses `local://` at startup | CODEX | T-033 | REVIEW |
 | T-026 | Outbox drain operations: runner, backpressure, poison handling, lag SLO, SIEM delivery | CODEX | T-022 | READY |
 | T-027 | Threat model v1 (`threat-models/` holds only a README) | HUMAN | — | READY |
 | T-028 | Constrained-execution specification incl. executor-side enforcement contract (B-10 Option B) | HUMAN | — | PARKED(v1.4) |
@@ -87,7 +87,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-033 complete; claim T-025 next.** Implement ratified ADR-004 G.1 exactly; do not alter custody policy. Continue:
+> **T-025 complete; claim T-036 next.** Implement ratified ADR-004 G.2 and R-006 V-3 exactly, then stop at CP-B:
 >
 > `T-043 → T-042 → T-041 → T-033 → T-025 → T-036` **(stop at CP-B)** `→ T-038 → T-039` **(CP-C)** `→ T-031 → T-034 → T-035 → T-024 → T-040 → T-037` **(CP-D)** `→ T-026 → T-023`
 >
@@ -115,6 +115,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CLAUDE-rigor/CODEX · T-025 · Implemented ratified ADR-004 G.1 with four distinct roles, development-local and vendor-neutral KMS/HSM sign-in-place `KeyProvider` adapters, additive lifecycle keyset, production startup refusal for development/local custody, separate receipt/anchor signers, authenticated `GET /v1/audit/keys`, and metadata-preserving exports; verifier reports a cryptographically valid revoked signature as `valid signature, key … revoked at T`; providers expose active-sign/keyset only and no re-sign capability; registered seven custody keys plus endpoint in SPEC and ADR-004 G.10; exhaustive generation audit found the sole production `.generate()` at old `evidence.py:99`, while execution/degraded accepted injected keys and contained none—removed it and all test call sites, with repository grep now empty; the new lifecycle-metadata gate rejected the actual pre-fix `75fdefc0787ee088002749a229a48c84f4fbbefa` golden keyset, and production-local/rotation/revocation tests pass; 149 unit/property, 12 live PostgreSQL, Ruff, and five drift gates pass; limitation: cloud KMS vendor/backend configuration is intentionally deployment-supplied and external attestation is still absent; hostile DB+signing-key answer remains **no** · next: T-036 CODEX, then stop CP-B
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-033 · Added config-selected `AnchorProvider.attest(anchor_payload)` seam with exactly one `development-unattested` implementation; anchors carry a signed `attestations[]` entry labelled `none_development`/`unattested`, unknown provider names fail construction, and the standalone verifier rejects absent/mislabelled state while printing `ATTESTATION: UNATTESTED`; registered `MIZAN_ANCHOR_PROVIDER`, amended ADR-004 G.2/G.9, and replaced I-11's false external-integrity assertion with a dated T-036 waiver; the new verifier rejected the real pre-provider golden bundle emitted at pre-fix `807e23df95be03b545d3b593241724ae0a6e3d67` with `anchor 0 attestation status is missing`, and the committed golden bundle was regenerated; 145 unit/property, 12 live PostgreSQL, Ruff, and all five reachability/drift gates pass; limitation: no external provider or custody change was made, by scope; hostile DB+signing-key answer remains **no** · next: T-025 CODEX
 - 2026-08-25 · TEST-rigor/CODEX · T-041 · Benchmark writer now derives HEAD itself, permits `MIZAN_BENCHMARK_COMMIT_SHA` only as an exact HEAD assertion, records pre-write `worktree_clean`, and provenance validation rejects dirty artifacts plus SHAs that do not resolve to repository commits; registered both `MIZAN_BENCHMARK_*` keys in SPEC §8 under the post-hoc H-3 config rule and upgraded the accepted chain artifact with its previously logged clean state; the new validator rejected the actual pre-fix artifact from `153f676af3af54e09539ddc37c427ba6146f9281` with missing `worktree_clean` (exit 1), while forged-SHA and dirty-worktree regression cases now reject; 144 unit/property, Ruff, five baseline drift gates, and the committed artifact validator pass; limitation: Git-object provenance proves what checkout was measured, not that the committer or host is independently trustworthy; hostile DB+signing-key answer remains **no** · next: T-033 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-042 · Offline verifier now binds every anchor terminating inside the export to that record hash and requires the signed anchor immediately before a non-genesis range to pin the first record's `prev_hash`; PASS output explicitly labels unsigned checkpoints as a performance aid rather than evidence; SPEC §10 and ADR-004 G.8 amended; two validly signed hostile bundles (wrong intermediate head and self-asserted left edge) were accepted by the verifier on pre-fix `de5c1e599611fc9bf25dbc55974dd1aabae08c2b`, causing both new gates to fail `assert 0 == 1`, and now reject distinctly; 142 unit/property, Ruff, and five baseline drift gates pass; limitation: a complete final anchor can still be withheld and self-signing remains inside Mizan until T-036; hostile DB+signing-key answer remains **no** · next: T-041 CODEX

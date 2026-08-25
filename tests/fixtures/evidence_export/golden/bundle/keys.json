@@ -1,1 +1,1 @@
-[{"algorithm":"Ed25519","key_id":"local://evidence/export-test","public_key":"p_n1IX-AG45i9u2uucKrqHSn9kylNkV97usr0AMJ5h8="}]
+[{"algorithm":"Ed25519","key_id":"local://evidence-receipt/dev-1","not_after":null,"not_before":"2026-08-24T00:00:00Z","public_key":"BrKmMCcT6vWsNiXdZy6eqnvE8YBlAcwWD53nwfVSzTc=","revoked_at":null,"role":"evidence-receipt"},{"algorithm":"Ed25519","key_id":"local://evidence-anchor/dev-1","not_after":null,"not_before":"2026-08-24T00:00:00Z","public_key":"wqVmQsHuEPNXIvp8xF5ExBEthmxREEMmCkpQLqFUGWU=","revoked_at":null,"role":"evidence-anchor"}]

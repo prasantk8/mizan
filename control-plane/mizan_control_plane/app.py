@@ -12,6 +12,7 @@ from .auth import TokenVerifier, bearer_token
 from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
 from .execution import ExecutionService
+from .keys import KeyProvider
 from .models import (
     AgentPatchRequest,
     ApprovalVoteRequest,
@@ -38,6 +39,7 @@ def create_app(
     settings: Settings | None = None,
     evidence_verifier: ObjectEvidenceVerifier | None = None,
     execution_service: ExecutionService | None = None,
+    key_provider: KeyProvider | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     verifier = TokenVerifier(settings.jwt_issuer, settings.jwt_audience, settings.jwt_public_key)
@@ -286,6 +288,12 @@ def create_app(
         tenant_id: str = Depends(tenant_from_token),
     ) -> dict[str, Any]:
         return evidence_repository.search_audit(tenant_id, limit, cursor, event_type)
+
+    @app.get("/v1/audit/keys")
+    def audit_keys(tenant_id: str = Depends(tenant_from_token)) -> dict[str, Any]:
+        if key_provider is None:
+            raise Problem(503, "key_provider_unavailable", "Signing key provider is not configured")
+        return {"items": key_provider.verification_keyset()}
 
     @app.get("/v1/approvals/{approval_id}")
     def get_approval(

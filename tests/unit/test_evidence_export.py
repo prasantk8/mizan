@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import sys
 from pathlib import Path
 
 import rfc8785
+from cryptography.hazmat.primitives import serialization
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.evidence import Ed25519EvidenceSigner, LocalImmutableObjectStore
 from mizan_control_plane.evidence_export import export_evidence_bundle
@@ -39,8 +41,10 @@ def build_bundle(
     anchor_head_overrides: dict[int, str] | None = None,
     export_start: int | None = None,
     include_attestations: bool = True,
+    revoked_receipt_at: str | None = None,
 ) -> Path:
-    signer = Ed25519EvidenceSigner.generate("local://evidence/export-test")
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
     store = LocalImmutableObjectStore(root / "objects")
     records: list[dict] = []
     previous = "0" * 64
@@ -66,9 +70,9 @@ def build_bundle(
             "record_hash": record["record_hash"],
             "object_key": object_key,
             "object_version": object_version,
-            "key_id": signer.key_id,
+            "key_id": receipt_signer.key_id,
         }
-        receipts.append({"payload": payload, "signature": signer.sign(payload)})
+        receipts.append({"payload": payload, "signature": receipt_signer.sign(payload)})
     anchor_interval = anchor_interval or count
     anchor_head_overrides = anchor_head_overrides or {}
     anchor_rows = []
@@ -87,7 +91,7 @@ def build_bundle(
             "head_hash": anchor_head_overrides.get(
                 anchor_number, records[to_sequence]["record_hash"]
             ),
-            "key_id": signer.key_id,
+            "key_id": anchor_signer.key_id,
             "anchored_at": "2026-08-25T00:00:00Z",
             "object_key": f"anchors/tnt_bank-a/export/{to_sequence}.json",
             "object_version": "fixture-version",
@@ -100,18 +104,39 @@ def build_bundle(
                 "obtained_at": None,
                 "evidence": None,
             }]
-        anchor_rows.append({"payload": anchor_payload, "signature": signer.sign(anchor_payload)})
+        anchor_rows.append({"payload": anchor_payload, "signature": anchor_signer.sign(anchor_payload)})
         previous_anchor_hash = canonical_hash(anchor_payload)
     repository = ExportRepository(receipts, anchor_rows)
+    key_documents = [
+        {
+            "key_id": item.key_id,
+            "role": role,
+            "algorithm": "Ed25519",
+            "public_key": base64.urlsafe_b64encode(item.public_key.public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw
+            )).decode(),
+            "not_before": "2026-08-24T00:00:00Z",
+            "not_after": "2026-08-25T00:00:00Z" if role == "evidence-receipt" and revoked_receipt_at else None,
+            "revoked_at": revoked_receipt_at if role == "evidence-receipt" else None,
+        }
+        for role, item in (
+            ("evidence-receipt", receipt_signer),
+            ("evidence-anchor", anchor_signer),
+        )
+    ]
     return export_evidence_bundle(
         repository,
         store,
-        {signer.key_id: signer.public_key},
+        {
+            receipt_signer.key_id: receipt_signer.public_key,
+            anchor_signer.key_id: anchor_signer.public_key,
+        },
         "tnt_bank-a",
         "tnt_bank-a:adr:0",
         root / "bundle",
         start=export_start,
         checkpoint_interval=2,
+        key_documents=key_documents,
     )
 
 
@@ -223,3 +248,13 @@ def test_pre_provider_anchor_cannot_be_mistaken_for_attested(tmp_path: Path) -> 
     result = run_verifier(bundle)
     assert result.returncode == 1
     assert "anchor 0 attestation status is missing" in result.stderr
+
+
+def test_rotated_revoked_key_signature_is_valid_but_distinctly_reported(tmp_path: Path) -> None:
+    revoked_at = "2026-08-25T01:00:00Z"
+    bundle = build_bundle(tmp_path, revoked_receipt_at=revoked_at)
+    keys = json.loads((bundle / "keys.json").read_bytes())
+    assert all(not item["key_id"].endswith("/v2") for item in keys)  # current key is absent
+    result = run_verifier(bundle)
+    assert result.returncode == 0
+    assert f"valid signature, key local://evidence-receipt/dev-1 revoked at {revoked_at}" in result.stdout

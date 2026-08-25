@@ -15,6 +15,9 @@ class Settings:
     chain_shards_per_tenant: int
     security_event_pool_max_size: int
     security_event_pool_timeout_seconds: float
+    environment: str
+    key_custody_mode: str
+    signing_key_refs: tuple[str, str, str, str]
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -22,6 +25,20 @@ class Settings:
         missing = [name for name in required if not environ.get(name)]
         if missing:
             raise RuntimeError(f"missing required configuration: {', '.join(missing)}")
+        environment = environ.get("MIZAN_ENV", "development")
+        refs = (
+            environ.get("MIZAN_EVIDENCE_RECEIPT_KEY_REF", "local://evidence-receipt/dev-1"),
+            environ.get("MIZAN_EVIDENCE_ANCHOR_KEY_REF", "local://evidence-anchor/dev-1"),
+            environ.get("MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF", "local://execution-token/dev-1"),
+            environ.get("MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF", "local://degraded-grant/dev-1"),
+        )
+        custody = environ.get("MIZAN_KEY_CUSTODY_MODE", "development")
+        if len(set(refs)) != 4:
+            raise RuntimeError("the four signing key roles require distinct key references")
+        if environment == "production" and (custody == "development" or any(
+            item.startswith("local://") for item in refs
+        )):
+            raise RuntimeError("production refuses development custody and local:// signing keys")
         return cls(
             database_url=environ["MIZAN_DATABASE_URL"],
             jwt_issuer=environ["MIZAN_JWT_ISSUER"],
@@ -38,4 +55,7 @@ class Settings:
             security_event_pool_timeout_seconds=float(
                 environ.get("MIZAN_SECURITY_EVENT_POOL_TIMEOUT_SECONDS", "0.25")
             ),
+            environment=environment,
+            key_custody_mode=custody,
+            signing_key_refs=refs,
         )

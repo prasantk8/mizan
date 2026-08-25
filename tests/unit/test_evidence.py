@@ -54,7 +54,7 @@ def test_local_object_store_is_create_only(tmp_path: Path) -> None:
 
 
 def test_receipt_signatures_detect_mutation() -> None:
-    signer = Ed25519EvidenceSigner.generate()
+    signer = Ed25519EvidenceSigner.development()
     payload = {"tenant_id": "tnt_bank-a", "record_hash": "a" * 64}
     signature = signer.sign(payload)
     verify_signature(payload, signature, signer.public_key)
@@ -116,7 +116,7 @@ class CountingStore(LocalImmutableObjectStore):
 
 
 def test_object_verifier_deduplicates_segments_and_requires_worm_anchor(tmp_path: Path) -> None:
-    signer = Ed25519EvidenceSigner.generate()
+    signer = Ed25519EvidenceSigner.development()
     store = CountingStore(tmp_path)
     records, previous = [], "0" * 64
     for sequence in range(10):
@@ -167,9 +167,12 @@ def test_object_verifier_deduplicates_segments_and_requires_worm_anchor(tmp_path
 
 
 def test_publisher_builds_dense_chained_anchor_payloads(tmp_path: Path) -> None:
-    signer = Ed25519EvidenceSigner.generate()
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
     repository = FakeEvidenceRepository([], [])
-    publisher = OutboxPublisher(repository, LocalImmutableObjectStore(tmp_path), signer)
+    publisher = OutboxPublisher(
+        repository, LocalImmutableObjectStore(tmp_path), receipt_signer, anchor_signer
+    )
     for sequence in range(2):
         repository.receipt_data.append(
             {

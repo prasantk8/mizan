@@ -348,3 +348,16 @@ Accordingly, I-11 carries a dated 2026-08-25 waiver: runtime append-only control
 resistance outside the database administrative boundary is conditional and **not achieved** by the
 development provider. T-036 alone may lift the waiver after RFC 3161 tokens verify offline against an
 operator-supplied trust root. This seam makes no custody decision and supplies no real attesting authority.
+
+### G.10 Implementation delta — custody and additive key history (T-025)
+
+The ratified G.1 contract is implemented by a four-role `KeyProvider`: a development-only local adapter and
+a vendor-neutral KMS/HSM sign-in-place adapter whose backend never exposes private material. The roles are
+`evidence-receipt`, `evidence-anchor`, `execution-token`, and `degraded-grant`; active references must be
+distinct. Startup refuses development custody or any `local://` reference in production.
+
+`GET /v1/audit/keys` publishes the additive verification history with role, algorithm, public bytes,
+validity window, and revocation time, and export bundles preserve those same documents. Rotation selects a
+new active key ID only for new signatures. Providers expose no re-sign operation, expired/revoked versions
+remain published, and the verifier distinguishes cryptographic validity under a revoked key from an
+unqualified pass or signature failure. Cloud-vendor selection remains a deployment decision.

@@ -7,10 +7,10 @@ from typing import Any
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.x509.oid import NameOID
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from mizan_control_plane.keys import local_private_key_for_testing
 from mizan_control_plane.mtls import VerifiedPeerSpiffeMiddleware, require_workload_spiffe
 from mizan_control_plane.problems import Problem, problem_response
 
@@ -37,7 +37,7 @@ class InjectSslObject:
 
 
 def client_certificate(uri_san: str | None) -> bytes:
-    key = Ed25519PrivateKey.generate()
+    key = local_private_key_for_testing(f"mtls-{uri_san}")
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ignored-cn")])
     builder = (
         x509.CertificateBuilder()

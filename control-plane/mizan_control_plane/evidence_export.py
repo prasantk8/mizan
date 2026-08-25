@@ -16,7 +16,7 @@ from .evidence import ChainCheckpoint, EvidenceRepository, LocalImmutableObjectS
 BUNDLE_FILES = ("records.json", "receipts.json", "anchors.json", "checkpoints.json", "keys.json")
 
 
-def load_public_keyset(path: Path) -> dict[str, Ed25519PublicKey]:
+def load_public_keyset(path: Path) -> tuple[dict[str, Ed25519PublicKey], list[dict[str, Any]]]:
     """Load the public verification-key document published by Mizan."""
     documents = json.loads(path.read_bytes())
     if not isinstance(documents, list) or not documents:
@@ -31,7 +31,7 @@ def load_public_keyset(path: Path) -> dict[str, Ed25519PublicKey]:
         keys[key_id] = Ed25519PublicKey.from_public_bytes(
             base64.urlsafe_b64decode(document["public_key"])
         )
-    return keys
+    return keys, documents
 
 
 def _write(path: Path, value: Any) -> str:
@@ -50,6 +50,7 @@ def export_evidence_bundle(
     start: int | None = None,
     end: int | None = None,
     checkpoint_interval: int = 1000,
+    key_documents: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Export authoritative object evidence; Postgres record documents are not trusted."""
     target.mkdir(parents=True, exist_ok=False)
@@ -90,7 +91,7 @@ def export_evidence_bundle(
                 "head_hash": checkpoint.head_hash,
             }
         )
-    keys = [
+    keys = key_documents or [
         {
             "key_id": key_id,
             "algorithm": "Ed25519",
@@ -141,16 +142,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--checkpoint-interval must be positive")
     repository = EvidenceRepository(args.database_url)
     try:
+        public_keys, key_documents = load_public_keyset(args.keyset)
         target = export_evidence_bundle(
             repository,
             LocalImmutableObjectStore(args.object_store),
-            load_public_keyset(args.keyset),
+            public_keys,
             args.tenant_id,
             args.stream_id,
             args.output,
             start=args.from_sequence,
             end=args.to_sequence,
             checkpoint_interval=args.checkpoint_interval,
+            key_documents=key_documents,
         )
     finally:
         repository.pool.close()

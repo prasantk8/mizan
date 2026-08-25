@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import rfc8785
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from mizan_control_plane.keys import local_private_key_for_testing
 from mizan_control_plane.schema_validation import ContractSchemas
 from mizan_security.degraded import (
     DegradedAllowGate,
@@ -43,7 +44,7 @@ def signed_grant(key: Ed25519PrivateKey, **updates: object) -> dict:
 
 
 def gate(tmp_path, *, enabled: bool = True, max_bytes: int = 100_000):
-    issuer_key = Ed25519PrivateKey.generate()
+    issuer_key = local_private_key_for_testing("degraded-issuer")
     verifier = DegradedGrantVerifier(
         [
             TrustedGrantIssuer(
@@ -55,7 +56,7 @@ def gate(tmp_path, *, enabled: bool = True, max_bytes: int = 100_000):
     wal = EncryptedDegradedWal(
         tmp_path / "degraded.wal",
         b"k" * 32,
-        Ed25519PrivateKey.generate(),
+        local_private_key_for_testing("degraded-receipt"),
         "kms://degraded/wal-1",
         max_bytes=max_bytes,
     )
@@ -123,7 +124,7 @@ def test_grant_replay_and_wal_capacity_fail_closed(tmp_path) -> None:
 
 def test_caller_supplied_unknown_key_never_establishes_trust(tmp_path) -> None:
     subject, _ = gate(tmp_path)
-    attacker = Ed25519PrivateKey.generate()
+    attacker = local_private_key_for_testing("degraded-attacker")
     with pytest.raises(DegradedModeError, match="trusted"):
         subject.authorize(
             tenant_id="tnt_bank-a",

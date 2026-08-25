@@ -1346,6 +1346,11 @@ paths:
         "409": { description: "Tamper evidence found (first broken link + expected/actual hashes)" }
   /v1/audit/anchors:
     get: { summary: "List signed checkpoints/anchors for a stream (compliance evidence export)", responses: { "200": {description: OK} } }
+  /v1/audit/keys:
+    get:
+      summary: "Publish additive verification key history for evidence, execution, and degraded-grant signatures"
+      responses:
+        "200": { description: "Keyset items include key_id, role, algorithm, public_key, not_before, not_after, and revoked_at" }
 
   /v1/risk/evaluate:
     post: { summary: Standalone risk scoring for a context (used by authorize internally; exposed for tooling),
@@ -1571,6 +1576,12 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_BENCHMARK_RESULTS_DIR` | `benchmarks/results` | build/test | Destination for machine-readable benchmark artifacts; changing it has no runtime effect. |
 | `MIZAN_BENCHMARK_COMMIT_SHA` | checked-out `HEAD` | build/test | Optional assertion only: when set it must exactly equal `HEAD`; it cannot relabel a run. Artifacts also record `worktree_clean`, and provenance validation rejects dirty runs or SHAs that do not resolve to commits in this repository. |
 | `MIZAN_ANCHOR_PROVIDER` | `development-unattested` | deployment | Provider selected for anchor attestation. T-033 ships only `development-unattested`, whose anchor payload is explicitly labelled `none_development`/`unattested`; any other value fails startup/construction until T-036 supplies the ratified production provider. |
+| `MIZAN_ENV` | `development` | deployment | `production` enables mandatory startup custody assertions; production refuses development custody or any `local://` signing reference. |
+| `MIZAN_KEY_CUSTODY_MODE` | `development` | deployment | `development` or deployment-provided `kms_hsm`; production requires `kms_hsm`. |
+| `MIZAN_EVIDENCE_RECEIPT_KEY_REF` | `local://evidence-receipt/dev-1` | deployment | Active `evidence-receipt` signing key; must be distinct from every other role. |
+| `MIZAN_EVIDENCE_ANCHOR_KEY_REF` | `local://evidence-anchor/dev-1` | deployment | Active `evidence-anchor` signing key; rotation is additive and never re-signs history. |
+| `MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF` | `local://execution-token/dev-1` | deployment | Active `execution-token` signing key. |
+| `MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF` | `local://degraded-grant/dev-1` | deployment | Active `degraded-grant` signing key; separate from the degraded WAL encryption key. |
 | `MIZAN_LOW_RISK_DEGRADED_ALLOW` | `false` | deployment | Master switch for the entire degraded-allow path. False disables it regardless of grants. |
 | `Policy.fail_open_allowed` | `false` | policy | Per-policy opt-in; requires the master switch **and** a valid grant (I-21). |
 | `DegradedModeGrant.max_duration_seconds` | `3600` | tenant | Ceiling `MIZAN_DEGRADED_GRANT_MAX_SECONDS` = 86400. |

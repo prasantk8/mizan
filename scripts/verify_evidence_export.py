@@ -64,13 +64,22 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
     if not records:
         raise VerificationFailure("record set is empty")
     keys: dict[str, Ed25519PublicKey] = {}
+    key_metadata: dict[str, dict[str, Any]] = {}
     for item in key_documents:
+        required_key_fields = {
+            "key_id", "role", "algorithm", "public_key", "not_before", "not_after", "revoked_at"
+        }
+        if set(item) != required_key_fields:
+            raise VerificationFailure(
+                f"key {item.get('key_id')} lifecycle metadata is incomplete or contains unknown fields"
+            )
         if item.get("algorithm") != "Ed25519":
             raise VerificationFailure(f"key {item.get('key_id')} uses an unsupported algorithm")
         try:
             keys[item["key_id"]] = Ed25519PublicKey.from_public_bytes(
                 base64.urlsafe_b64decode(item["public_key"])
             )
+            key_metadata[item["key_id"]] = item
         except Exception as exc:
             raise VerificationFailure(f"key {item.get('key_id')} is malformed") from exc
 
@@ -101,6 +110,8 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
         key = keys.get(payload.get("key_id"))
         if key is None:
             raise VerificationFailure(f"receipt key is unavailable at sequence {sequence}")
+        if key_metadata[payload["key_id"]].get("role") != "evidence-receipt":
+            raise VerificationFailure(f"receipt key has wrong role at sequence {sequence}")
         verify_signature(payload, receipt.get("signature", ""), key, f"receipt {sequence}")
         receipt_by_sequence[sequence] = payload
     for record in records:
@@ -136,6 +147,8 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
         key = keys.get(payload.get("key_id"))
         if key is None:
             raise VerificationFailure(f"anchor key is unavailable at anchor {number}")
+        if key_metadata[payload["key_id"]].get("role") != "evidence-anchor":
+            raise VerificationFailure(f"anchor key has wrong role at anchor {number}")
         verify_signature(payload, row.get("signature", ""), key, f"anchor {number}")
         attestations = payload.get("attestations")
         if not isinstance(attestations, list) or not attestations:
@@ -204,6 +217,11 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
             for row in anchors
             for attestation in row["payload"]["attestations"]
         ),
+        "revoked_keys": sorted({
+            item["key_id"]: item["revoked_at"]
+            for item in key_metadata.values()
+            if item.get("revoked_at")
+        }.items()),
     }
 
 
@@ -224,6 +242,8 @@ def main() -> int:
     )
     if result["unattested"]:
         print("ATTESTATION: UNATTESTED — development provider; no external authority verified.")
+    for key_id, revoked_at in result["revoked_keys"]:
+        print(f"KEY STATUS: valid signature, key {key_id} revoked at {revoked_at}.")
     print("WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.")
     print("LIMITATION: The anchor signature is Mizan's own. No independent timestamp authority is present, so a party holding Mizan's database and signing key could rebuild and re-sign this history.")
     print("NOT COVERED: Records omitted before chaining and an entire final anchor withheld before export leave no proof in this bundle.")
