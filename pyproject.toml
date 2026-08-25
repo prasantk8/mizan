@@ -15,6 +15,9 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
 ]
 
+[project.scripts]
+mizan-export-evidence = "mizan_control_plane.evidence_export:main"
+
 [dependency-groups]
 dev = [
   "hypothesis>=6.130,<7",

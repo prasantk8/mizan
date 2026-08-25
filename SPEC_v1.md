@@ -1682,5 +1682,11 @@ Authorization transaction (single Postgres txn)
   Until T-036, successful output must state that anchors are Mizan-self-signed and cannot withstand a party
   holding both Mizan's database and signing key; it must also disclose pre-chain omission and withheld-final-
   anchor limits.
+- **Operator export entry point.** An installed control-plane package exposes `mizan-export-evidence`.
+  Operators supply the runtime-role PostgreSQL DSN, immutable object-store root, published public-keyset
+  document, tenant, stream, output directory, and optional inclusive sequence bounds. The command reconstructs
+  records from receipt-addressed immutable objects and creates the v1.0 directory atomically with respect to
+  its new output path; it never accepts private signing material and never reads record documents from the
+  searchable PostgreSQL tables. Production deployment must authorize and audit invocation outside this CLI.
 
 **Local development:** do not mock away hash semantics. The contract test set is (a) an in-memory deterministic chain writer for unit tests, (b) golden vectors for RFC 8785 canonicalization and corruption detection, (c) a containerized Postgres/Kafka/object-store integration suite, (d) a generated 100k-record fixture verified via checkpointed parallel ranges in a separate performance profile.

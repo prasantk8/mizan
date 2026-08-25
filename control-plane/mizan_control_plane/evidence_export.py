@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import json
@@ -10,9 +11,27 @@ import rfc8785
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .evidence import ChainCheckpoint, LocalImmutableObjectStore
+from .evidence import ChainCheckpoint, EvidenceRepository, LocalImmutableObjectStore
 
 BUNDLE_FILES = ("records.json", "receipts.json", "anchors.json", "checkpoints.json", "keys.json")
+
+
+def load_public_keyset(path: Path) -> dict[str, Ed25519PublicKey]:
+    """Load the public verification-key document published by Mizan."""
+    documents = json.loads(path.read_bytes())
+    if not isinstance(documents, list) or not documents:
+        raise ValueError("verification keyset must be a non-empty JSON array")
+    keys: dict[str, Ed25519PublicKey] = {}
+    for document in documents:
+        if document.get("algorithm") != "Ed25519":
+            raise ValueError(f"unsupported key algorithm for {document.get('key_id')}")
+        key_id = document.get("key_id")
+        if not isinstance(key_id, str) or key_id in keys:
+            raise ValueError("verification key IDs must be unique strings")
+        keys[key_id] = Ed25519PublicKey.from_public_bytes(
+            base64.urlsafe_b64decode(document["public_key"])
+        )
+    return keys
 
 
 def _write(path: Path, value: Any) -> str:
@@ -104,3 +123,40 @@ def export_evidence_bundle(
     }
     _write(target / "manifest.json", manifest)
     return target
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Export a self-contained Mizan evidence bundle")
+    parser.add_argument("--database-url", required=True, help="PostgreSQL runtime-role DSN")
+    parser.add_argument("--object-store", required=True, type=Path, help="Immutable object-store root")
+    parser.add_argument("--keyset", required=True, type=Path, help="Published verification keyset JSON")
+    parser.add_argument("--tenant-id", required=True)
+    parser.add_argument("--stream-id", required=True)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--from-sequence", type=int)
+    parser.add_argument("--to-sequence", type=int)
+    parser.add_argument("--checkpoint-interval", type=int, default=1000)
+    args = parser.parse_args(argv)
+    if args.checkpoint_interval < 1:
+        parser.error("--checkpoint-interval must be positive")
+    repository = EvidenceRepository(args.database_url)
+    try:
+        target = export_evidence_bundle(
+            repository,
+            LocalImmutableObjectStore(args.object_store),
+            load_public_keyset(args.keyset),
+            args.tenant_id,
+            args.stream_id,
+            args.output,
+            start=args.from_sequence,
+            end=args.to_sequence,
+            checkpoint_interval=args.checkpoint_interval,
+        )
+    finally:
+        repository.pool.close()
+    print(target)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

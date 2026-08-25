@@ -314,3 +314,13 @@ and cryptography packages; CI runs it in a clean environment with the network na
 Amendment G.2 is implemented by T-036, its passing output labels the anchor as Mizan-self-signed and gives
 the database-plus-signing-key rewrite limitation equal prominence. This creates portable checkability now
 without misrepresenting self-attestation as external proof.
+
+### G.7 Implementation delta — operator export path (T-043)
+
+The installed control-plane package exposes `mizan-export-evidence`, taking an explicit runtime-role DSN,
+immutable object-store root, published public keyset, tenant/stream selection, new output directory, and
+optional inclusive range. This command is deliberately read-only: it accepts no private key and reconstructs
+record documents only from receipt-addressed immutable objects. Deployment authorization and invocation
+audit remain operator controls outside the CLI. A live PostgreSQL contract test must traverse authorization,
+outbox publication, anchoring, the operator command, and the standalone verifier across subprocess boundaries;
+hand-built fixtures alone are not evidence that the production pipeline and portable verifier agree.
