@@ -9,6 +9,7 @@ from cryptography.exceptions import InvalidSignature
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.evidence import (
     ChainCheckpoint,
+    DevelopmentUnattestedAnchorProvider,
     Ed25519EvidenceSigner,
     LocalImmutableObjectStore,
     ObjectEvidenceVerifier,
@@ -187,6 +188,7 @@ def test_publisher_builds_dense_chained_anchor_payloads(tmp_path: Path) -> None:
     assert repository.anchor_data[1]["payload"]["prev_anchor_hash"] == canonical_hash(
         repository.anchor_data[0]["payload"]
     )
+    assert anchor["attestations"] == [DevelopmentUnattestedAnchorProvider().attest({})]
 
 
 @pytest.mark.parametrize(

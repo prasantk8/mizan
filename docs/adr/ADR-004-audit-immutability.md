@@ -250,7 +250,8 @@ the answer stops being Mizan's word and becomes the customer's own key. It never
 
 - **Anchor payload gains `attestations[]`** — an ordered array, each entry
   `{type, status, authority, obtained_at, evidence}` with `type ∈ {rfc3161, customer_countersignature,
-  none_development}` and `status ∈ {attested, pending, failed}`. An array, not a field: two independent
+  none_development}` and `status ∈ {attested, pending, failed, unattested}`; `unattested` is valid only with
+  `none_development` and is forbidden in production. An array, not a field: two independent
   authorities mean one compromised TSA does not collapse the claim. `MIZAN_ANCHOR_TSA_ENDPOINTS` requires
   ≥1 endpoint in production; two independent authorities are recommended for the enterprise tier.
 - **Attestation is asynchronous and is never on the authorization hot path.** A TSA outage must not make a
@@ -333,3 +334,17 @@ anchor ending immediately before the range, and its signed `head_hash` must equa
 `prev_hash`; the bundle may not establish its own left edge. Export checkpoints remain unsigned derived
 indexes for parallel verification and must be labelled as performance aids, never listed as independent
 evidence in a successful verdict.
+
+### G.9 Implementation delta — provider seam and dated I-11 waiver (T-033)
+
+Anchoring now calls an `AnchorProvider.attest(anchor_payload)` seam selected by
+`MIZAN_ANCHOR_PROVIDER`. The only T-033 implementation is `development-unattested`; it adds an
+`attestations[]` entry whose type is `none_development`, status is `unattested`, authority is
+`development`, and evidence/time are null. Unknown provider names fail construction and cannot silently
+fall back. The offline verifier rejects missing/mislabelled attestation state and prints `UNATTESTED` for
+this provider.
+
+Accordingly, I-11 carries a dated 2026-08-25 waiver: runtime append-only controls are achieved, but rewrite
+resistance outside the database administrative boundary is conditional and **not achieved** by the
+development provider. T-036 alone may lift the waiver after RFC 3161 tokens verify offline against an
+operator-supplied trust root. This seam makes no custody decision and supplies no real attesting authority.

@@ -38,6 +38,7 @@ def build_bundle(
     anchor_interval: int | None = None,
     anchor_head_overrides: dict[int, str] | None = None,
     export_start: int | None = None,
+    include_attestations: bool = True,
 ) -> Path:
     signer = Ed25519EvidenceSigner.generate("local://evidence/export-test")
     store = LocalImmutableObjectStore(root / "objects")
@@ -91,6 +92,14 @@ def build_bundle(
             "object_key": f"anchors/tnt_bank-a/export/{to_sequence}.json",
             "object_version": "fixture-version",
         }
+        if include_attestations:
+            anchor_payload["attestations"] = [{
+                "type": "none_development",
+                "status": "unattested",
+                "authority": "development",
+                "obtained_at": None,
+                "evidence": None,
+            }]
         anchor_rows.append({"payload": anchor_payload, "signature": signer.sign(anchor_payload)})
         previous_anchor_hash = canonical_hash(anchor_payload)
     repository = ExportRepository(receipts, anchor_rows)
@@ -130,6 +139,7 @@ def test_standalone_export_verifies_and_discloses_self_signed_limit(tmp_path: Pa
     assert "anchor signature is Mizan's own" in result.stdout
     assert "holding Mizan's database and signing key" in result.stdout
     assert "unsigned checkpoints were used only as a parallel-verification performance aid" in result.stdout
+    assert "ATTESTATION: UNATTESTED" in result.stdout
     source = Path("scripts/verify_evidence_export.py").read_text(encoding="utf-8")
     assert "mizan_control_plane" not in source
     assert "rfc8785==0.1.4 cryptography==50.0.0" in source
@@ -206,3 +216,10 @@ def test_non_genesis_range_is_pinned_by_preceding_anchor(tmp_path: Path) -> None
     result = run_verifier(bundle)
     assert result.returncode == 1
     assert "left-edge anchor head does not match record 2 previous hash" in result.stderr
+
+
+def test_pre_provider_anchor_cannot_be_mistaken_for_attested(tmp_path: Path) -> None:
+    bundle = build_bundle(tmp_path, include_attestations=False)
+    result = run_verifier(bundle)
+    assert result.returncode == 1
+    assert "anchor 0 attestation status is missing" in result.stderr

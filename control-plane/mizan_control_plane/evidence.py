@@ -27,6 +27,30 @@ class NullDeliverySink:
         return None
 
 
+class AnchorProvider(Protocol):
+    def attest(self, anchor_payload: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class DevelopmentUnattestedAnchorProvider:
+    """Explicit no-trust provider for development; never an external attestation."""
+
+    def attest(self, anchor_payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "type": "none_development",
+            "status": "unattested",
+            "authority": "development",
+            "obtained_at": None,
+            "evidence": None,
+        }
+
+
+def anchor_provider_from_config(name: str | None = None) -> AnchorProvider:
+    selected = name or os.environ.get("MIZAN_ANCHOR_PROVIDER", "development-unattested")
+    if selected != "development-unattested":
+        raise RuntimeError(f"anchor provider {selected!r} is not implemented")
+    return DevelopmentUnattestedAnchorProvider()
+
+
 class LocalImmutableObjectStore:
     """Development WORM analogue: create-only objects addressed by content version."""
 
@@ -704,11 +728,13 @@ class OutboxPublisher:
         store: LocalImmutableObjectStore,
         signer: Ed25519EvidenceSigner,
         delivery: DeliverySink | None = None,
+        anchor_provider: AnchorProvider | None = None,
     ) -> None:
         self.repository = repository
         self.store = store
         self.signer = signer
         self.delivery = delivery or NullDeliverySink()
+        self.anchor_provider = anchor_provider or anchor_provider_from_config()
 
     def drain(self, tenant_id: str, limit: int = 100) -> int:
         published = 0
@@ -761,7 +787,7 @@ class OutboxPublisher:
         key = (
             f"anchors/{tenant_id}/{stream_id.replace(':', '_')}/{last['sequence_number']:020d}.json"
         )
-        unsigned = {
+        anchor_core = {
             "anchor_id": str(uuid4()),
             "tenant_id": tenant_id,
             "stream_id": stream_id,
@@ -776,6 +802,7 @@ class OutboxPublisher:
             "key_id": self.signer.key_id,
             "anchored_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
+        unsigned = anchor_core | {"attestations": [self.anchor_provider.attest(anchor_core)]}
         object_version = self.store.put_once(key, rfc8785.dumps(unsigned))
         anchor = unsigned | {"object_key": key, "object_version": object_version}
         signature = self.signer.sign(anchor)

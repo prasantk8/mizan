@@ -137,6 +137,17 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
         if key is None:
             raise VerificationFailure(f"anchor key is unavailable at anchor {number}")
         verify_signature(payload, row.get("signature", ""), key, f"anchor {number}")
+        attestations = payload.get("attestations")
+        if not isinstance(attestations, list) or not attestations:
+            raise VerificationFailure(f"anchor {number} attestation status is missing")
+        for attestation in attestations:
+            if attestation.get("type") == "none_development":
+                if attestation.get("status") != "unattested":
+                    raise VerificationFailure(
+                        f"anchor {number} development attestation is not labelled unattested"
+                    )
+            elif attestation.get("status") != "attested":
+                raise VerificationFailure(f"anchor {number} has no verified external attestation")
         expected_anchor_from = payload["to_sequence"] + 1
         expected_anchor_previous = canonical_hash(payload)
     if anchors[-1]["payload"]["to_sequence"] != range_end:
@@ -187,6 +198,12 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
         "to_sequence": range_end,
         "anchors": len(anchors),
         "anchor_attestation": manifest["assurance"]["anchor_attestation"],
+        "unattested": all(
+            attestation.get("type") == "none_development"
+            and attestation.get("status") == "unattested"
+            for row in anchors
+            for attestation in row["payload"]["attestations"]
+        ),
     }
 
 
@@ -205,6 +222,8 @@ def main() -> int:
         f"for sequences {result['from_sequence']} through {result['to_sequence']} "
         f"({result['records']} records, {result['anchors']} anchors)."
     )
+    if result["unattested"]:
+        print("ATTESTATION: UNATTESTED — development provider; no external authority verified.")
     print("WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.")
     print("LIMITATION: The anchor signature is Mizan's own. No independent timestamp authority is present, so a party holding Mizan's database and signing key could rebuild and re-sign this history.")
     print("NOT COVERED: Records omitted before chaining and an entire final anchor withheld before export leave no proof in this bundle.")
