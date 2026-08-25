@@ -143,6 +143,43 @@ def test_authorize_persists_adr_and_outbox_atomically(tmp_path: Path) -> None:
     )
     assert completed["state"] == "EXECUTED"
 
+    expiring_token = execution.issue("tnt_bank-a", response.decision_id)
+    expiring_lease = execution.redeem(
+        expiring_token,
+        response.decision_id,
+        "spiffe://mizan/executor/wealth",
+        "execution-expiry",
+    )
+    expired_at = "2020-01-01T00:00:00Z"
+    with execution.pool.connection() as connection, connection.transaction():
+        execution._scope(connection, "tnt_bank-a")
+        connection.execute(
+            "UPDATE mizan.execution_leases "
+            "SET expires_at=%s, document=jsonb_set(document,'{expires_at}',to_jsonb(%s::text)) "
+            "WHERE tenant_id=%s AND lease_id=%s",
+            (expired_at, expired_at, "tnt_bank-a", expiring_lease["lease_id"]),
+        )
+    with pytest.raises(Problem, match="expired"):
+        execution.heartbeat(
+            "tnt_bank-a",
+            response.decision_id,
+            expiring_lease["lease_id"],
+            "spiffe://mizan/executor/wealth",
+        )
+    with execution.pool.connection() as connection, connection.transaction():
+        execution._scope(connection, "tnt_bank-a")
+        expired_state = connection.execute(
+            "SELECT state FROM mizan.execution_leases WHERE tenant_id=%s AND lease_id=%s",
+            ("tnt_bank-a", expiring_lease["lease_id"]),
+        ).fetchone()[0]
+        expiry_events = connection.execute(
+            "SELECT count(*) FROM mizan.decision_events "
+            "WHERE tenant_id=%s AND decision_id=%s AND event_type='LEASE_EXPIRED'",
+            ("tnt_bank-a", response.decision_id),
+        ).fetchone()[0]
+    assert expired_state == "LEASE_EXPIRED"
+    assert expiry_events == 1
+
     approvals = ApprovalRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     controls = {
         "quorum": 2,

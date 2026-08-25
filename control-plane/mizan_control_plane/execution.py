@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from psycopg_pool import ConnectionPool
 from .canonical import canonical_hash
 from .evidence import append_decision_event_tx
 from .problems import Problem
+from .schema_validation import ContractSchemas
 
 
 def _jti_hash(jti: str) -> str:
@@ -27,18 +29,23 @@ class ExecutionTokenCodec:
         private_key: Ed25519PrivateKey,
         public_key: Ed25519PublicKey | None = None,
         clock_skew_seconds: int = 30,
+        schemas: ContractSchemas | None = None,
     ) -> None:
         self.issuer = issuer
         self.private_key = private_key
         self.public_key = public_key or private_key.public_key()
         self.clock_skew_seconds = clock_skew_seconds
+        self.schemas = schemas or ContractSchemas(
+            Path(__file__).resolve().parents[2] / "SPEC_v1.md"
+        )
 
     def encode(self, claims: dict[str, Any]) -> str:
+        self.schemas.validate("ExecutionTokenClaims", claims)
         return jwt.encode(claims, self.private_key, algorithm="EdDSA", headers={"typ": "JWT"})
 
     def decode(self, token: str) -> dict[str, Any]:
         try:
-            return jwt.decode(
+            claims = jwt.decode(
                 token,
                 self.public_key,
                 algorithms=["EdDSA"],
@@ -47,6 +54,12 @@ class ExecutionTokenCodec:
                 leeway=self.clock_skew_seconds,
                 options={"require": ["exp", "iat", "nbf", "iss", "aud", "jti"]},
             )
+            self.schemas.validate("ExecutionTokenClaims", claims)
+            return claims
+        except Problem as exc:
+            raise Problem(
+                403, "execution_token_invalid", "Execution capability claims are malformed"
+            ) from exc
         except jwt.PyJWTError as exc:
             raise Problem(
                 403, "execution_token_invalid", "Execution capability is invalid or expired"
@@ -315,6 +328,7 @@ class ExecutionService:
         outcome: dict[str, Any] | None,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
+        terminal_error: Problem | None = None
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
             row = connection.execute(
@@ -345,8 +359,8 @@ class ExecutionService:
                     {"lease_id": lease_id},
                     now,
                 )
-                raise Problem(409, "lease_expired", "Execution lease expired")
-            if operation == "heartbeat":
+                terminal_error = Problem(409, "lease_expired", "Execution lease expired")
+            elif operation == "heartbeat":
                 if lease["extensions_used"] >= lease["max_extensions"]:
                     raise Problem(
                         409, "lease_extension_exhausted", "Lease extension budget is exhausted"
@@ -364,7 +378,7 @@ class ExecutionService:
                 )
                 lease["state"] = "EXECUTING"
                 event_type, payload = "LEASE_EXTENDED", {"lease_id": lease_id}
-            else:
+            elif operation == "complete":
                 assert outcome is not None
                 lease["state"] = "FAILED" if outcome["failure_code"] else "EXECUTED"
                 lease["result_hash"] = outcome["result_hash"]
@@ -372,17 +386,24 @@ class ExecutionService:
                     "EXECUTION_FAILED" if outcome["failure_code"] else "EXECUTION_COMPLETED"
                 )
                 payload = {"lease_id": lease_id, **outcome}
-            self._save_lease(connection, tenant_id, lease)
-            append_decision_event_tx(
-                connection,
-                tenant_id,
-                decision_id,
-                event_type,
-                {"kind": "service", "id": peer_spiffe, "authenticated_workload": peer_spiffe},
-                payload,
-                now,
-            )
-            return lease
+            if terminal_error is None:
+                self._save_lease(connection, tenant_id, lease)
+                append_decision_event_tx(
+                    connection,
+                    tenant_id,
+                    decision_id,
+                    event_type,
+                    {
+                        "kind": "service",
+                        "id": peer_spiffe,
+                        "authenticated_workload": peer_spiffe,
+                    },
+                    payload,
+                    now,
+                )
+        if terminal_error is not None:
+            raise terminal_error
+        return lease
 
     @staticmethod
     def _save_lease(connection: Any, tenant_id: str, lease: dict[str, Any]) -> None:
@@ -416,6 +437,9 @@ class ExecutionService:
             "context_hash": adr["context_hash"],
             "binding_profile": adr["tool"]["binding_profile"],
             "delegation_chain_hash": canonical_hash(adr["agent"]["delegation_chain"]),
+            "constraints_hash": canonical_hash(adr.get("constraints"))
+            if adr.get("constraints")
+            else None,
         }
         if any(claims[key] != value for key, value in expected.items()):
             raise Problem(
@@ -433,6 +457,21 @@ class ExecutionService:
             )
         if agent_state not in {"ACTIVE", "MONITORED"}:
             raise Problem(403, "agent_not_active", "Agent is no longer active")
+        if claims.get("approval_epoch_id") is not None:
+            approval = connection.execute(
+                "SELECT document FROM mizan.approvals WHERE tenant_id=%s AND decision_id=%s",
+                (claims["tenant_id"], claims["decision_id"]),
+            ).fetchone()
+            if (
+                not approval
+                or approval[0]["state"] not in {"APPROVED", "OVERRIDDEN"}
+                or approval[0]["current_epoch_id"] != claims["approval_epoch_id"]
+            ):
+                raise Problem(
+                    403,
+                    "approval_epoch_changed",
+                    "Approval epoch is no longer executable",
+                )
 
     def _require_receipts(
         self, connection: Any, tenant_id: str, decision_id: str, adr: dict[str, Any]

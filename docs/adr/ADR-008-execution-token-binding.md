@@ -70,3 +70,20 @@ The result is the property that makes this usable: **a retry that changes only v
 The execution token additionally binds `tenant_id`, `agent_id`, `principal_id`, `delegation_chain_hash`, and `authorized_executor` (a SPIFFE workload identity). Each Tool version carries a reviewed `execution.executor_spiffe_ids` allowlist; the authorization server selects exactly one executor from it, and callers cannot propose or override the value. It has fixed audience `mizan-execution-gateway`; issuer, algorithms, and verification keys come from deployment allowlists, never from token-controlled selection. Redemption verifies all identity bindings against current authenticated context and agent status before atomically consuming `jti`.
 
 The resulting lease copies `redeemed_jti`, agent, principal, and authorized executor. Heartbeat and completion authenticate the peer with mTLS and require the same executor identity. Knowledge of `decision_id` or `lease_id`, or possession of a capability issued to a different workload, is insufficient. Every issuance and lease transition appends a typed `DecisionEvent`, with only a hash of `jti` entering evidence so the bearer value is never logged.
+
+## Implementation Amendment B — Strict claims and durable expiry
+
+**Date:** 2026-08-25 · **Trigger:** completion audit found that signature-valid partial claims
+could reach redemption as unhandled lookup failures, and expiry evidence was rolled back with the
+HTTP error · **Spec anchors:** SPEC v1.2 §2.10–§2.12, I-10, I-23
+
+The issuer validates the complete `ExecutionTokenClaims` JSON Schema before signing, and the
+gateway validates the same closed schema after JWT cryptographic, issuer, audience, and time
+checks. Missing, mistyped, wrongly prefixed, or unknown claims fail as a controlled 403. For
+approved actions, redemption also reloads the Approval and requires the token's
+`approval_epoch_id` to still be the current executable epoch. `constraints_hash` is revalidated
+alongside every other context binding.
+
+Detecting an expired lease is a state transition, not merely an error response. The service commits
+`LEASE_EXPIRED` and its DecisionEvent first, then returns the controlled conflict to the caller, so
+the operational state and immutable evidence cannot be rolled back by exception handling.

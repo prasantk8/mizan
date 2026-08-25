@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; contract blockers remain parked while T-011 receives an independent audit.
+Release completion audit; contract blockers remain parked while T-012 receives an independent audit.
 
 ## Agent Queue
 
@@ -22,7 +22,7 @@ Release completion audit; contract blockers remain parked while T-011 receives a
 | T-008 | Evidence pipeline: ADR_Record + DecisionEvent sequencers, outbox, immutable receipts, object-store segments, signed anchors, `/v1/audit/verify` (ADR-004 amendments A/B) | CODEX | T-003 | DONE |
 | T-009 | Approval API + epoch state machine (ADR-007: snapshots, escalate/override atomicity, rejection modes) | CODEX | T-004 | PARKED(B-7) |
 | T-010 | Dashboard shell + decision/audit views (PRD §44) | CODEX | T-006 | REVIEW |
-| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | REVIEW |
+| T-011 | Binding profiles + executor-bound token/lease lifecycle (ADR-008), incl. atomic redemption CAS and SPIFFE match (V-13/V-17/V-20) | CODEX | T-004 | PARKED(B-8) |
 | T-012 | Redaction pipeline: DLP attestation, keyed commitments, manifest, reject-on-scan-failure (I-19) | CODEX | T-008 | REVIEW |
 | T-013 | External payload boundary: parser budgets + envelope disposition + versioned projections + drift telemetry (ADR-006) | CODEX | T-004 | REVIEW |
 | T-014 | Claim-ledger CI gate: reject scoped code changes whose change-set does not update WORK_LOG (H-8) | CODEX | T-002 | DONE |
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-011 (CODEX audit):** Audit malformed capability handling, complete claim binding, lease timing, receipt gates, and controlled-error behavior; B-8 separately parks caller-argument recomputation.
+> **T-012 (CODEX audit):** Audit redaction transform correctness for nested arrays, fail-closed security-event emission, commitment verification, and safe stored payloads.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-011 audit · Enforced the complete closed token-claims schema at issue and redeem, revalidated constraints and live approval epoch, and fixed expired lease state/evidence rollback by committing before the controlled error; 74 unit plus four live integration tests pass; PARKED only on B-8 argument recomputation · next: T-012 audit
 - 2026-08-25 · CODEX · T-005 audit · Corrected production/simulation selector parity using registry-enriched risk and normalized environment, added native Cedar decimal encoding/method comparisons with representability rejection, and reran 71 unit plus four live integration tests; benchmark measured 6,991 eval/s at p99 0.1703 ms; task DONE · next: T-011 audit
 - 2026-08-25 · CODEX · T-006 audit · Added authenticated agent lifecycle PATCH with real two-token dual control, normative transition graph, versioned immutable binding-profile publication, recorded policy simulation using the production compiler, delegation-edge persistence, and live tests; PARKED policy transition endpoint on content-hash contradiction B-9 · next: T-005 audit
 - 2026-08-25 · CODEX · T-003 audit · Removed runtime UPDATE/DELETE grants from immutable evidence, corrected `dgn_*` nonce storage, added receipt/anchor chain FKs, token↔lease relational bindings, approval-state/document checks, and a separately mounted rollback migration with destructive disposable-db verification; live schema/repository/rollback gates pass; task DONE · next: T-005/T-006 audit

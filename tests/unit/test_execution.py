@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mizan_control_plane.execution import ExecutionTokenCodec
@@ -41,3 +42,23 @@ def test_execution_codec_rejects_tampering_and_wrong_issuer() -> None:
     other = ExecutionTokenCodec("https://other-issuer.test", codec.private_key)
     with pytest.raises(Problem):
         other.decode(token)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_message"),
+    [
+        (lambda payload: payload.pop("parameters_hash"), "malformed"),
+        (lambda payload: payload.update({"tool_id": "pol_wrong-prefix"}), "malformed"),
+        (lambda payload: payload.update({"unbound_claim": "surprise"}), "malformed"),
+    ],
+)
+def test_execution_codec_rejects_signed_but_nonconforming_claims(
+    mutation, expected_message
+) -> None:
+    codec = ExecutionTokenCodec("https://issuer.mizan.test", Ed25519PrivateKey.generate())
+    payload = claims()
+    mutation(payload)
+    # Bypass encode's issuer-side contract gate to model a compromised or older issuer.
+    token = jwt.encode(payload, codec.private_key, algorithm="EdDSA")
+    with pytest.raises(Problem, match=expected_message):
+        codec.decode(token)
