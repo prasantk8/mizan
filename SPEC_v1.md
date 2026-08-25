@@ -360,6 +360,8 @@ Every identifier in every schema below references this file. A build that inline
     { "if":   { "properties": { "decision": { "enum": ["CONSTRAIN", "REDACT"] } }, "required": ["decision"] },
       "then": { "required": ["constraints"],
                 "properties": { "constraints": { "type": "object" } } } },
+    { "if":   { "properties": { "decision": { "not": { "enum": ["CONSTRAIN", "REDACT"] } } }, "required": ["decision"] },
+      "then": { "not": { "required": ["constraints"] } } },
     { "if":   { "properties": { "status": { "enum": ["APPROVED", "ACTIVE", "SUPERSEDED"] } }, "required": ["status"] },
       "then": { "required": ["approver"],
                 "properties": { "approver": { "type": "string" } } } },

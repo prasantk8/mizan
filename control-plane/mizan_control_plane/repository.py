@@ -117,7 +117,7 @@ class PostgresAuthorizationRepository:
                 risk=doc["risk"],
                 policies=doc["policies"],
                 reasons=doc["reasons"],
-                constraints=doc.get("constraints"),
+                constraints=None,
                 degraded=doc["degraded"],
             )
             return PersistedDecision(

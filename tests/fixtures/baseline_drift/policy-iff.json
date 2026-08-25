@@ -1,0 +1,12 @@
+{
+  "check": "policy_iff",
+  "schema": {
+    "title": "Policy",
+    "allOf": [
+      {
+        "if": {"properties": {"decision": {"enum": ["CONSTRAIN", "REDACT"]}}},
+        "then": {"required": ["constraints"]}
+      }
+    ]
+  }
+}

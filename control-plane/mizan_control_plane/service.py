@@ -350,7 +350,7 @@ class AuthorizationService:
         return (
             winner.decision,
             [f"Matched {p.policy_id} v{p.version}" for p in matches],
-            winner.constraints,
+            None,
         )
 
     @staticmethod

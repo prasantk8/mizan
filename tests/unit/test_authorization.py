@@ -211,6 +211,34 @@ def test_idempotent_retry_returns_same_decision() -> None:
     assert len(repository.adr_documents) == 1
 
 
+def test_allow_response_and_persisted_replay_are_byte_identical_with_stray_policy_constraints() -> None:
+    class ReconstructingRepository(InMemoryAuthorizationRepository):
+        def find_decision_by_request(self, tenant_id: str, request_id: str):
+            persisted = super().find_decision_by_request(tenant_id, request_id)
+            if persisted is None:
+                return None
+            return persisted.model_copy(
+                update={"response": persisted.response.model_copy(update={"constraints": None})}
+            )
+
+    _, base = service()
+    repository = ReconstructingRepository(agents=base.agents.values(), tools=base.tools.values())
+    repository.policies = [
+        PolicyMatch(
+            policy_id="pol_allow-with-stray-obligation",
+            version=1,
+            content_hash="a" * 64,
+            decision="ALLOW",
+            priority=100,
+            constraints={"max_value": {"amount": 100, "currency": "AED"}},
+        )
+    ]
+    subject = AuthorizationService(repository, RegistryFloorRiskProvider(), "test", "f" * 64)
+    first = subject.authorize(identity(), context())
+    replay = subject.authorize(identity(), context())
+    assert first.model_dump_json() == replay.model_dump_json()
+
+
 def test_i13_in_memory_repository_assigns_persisted_chain_fields() -> None:
     subject, repository = service()
     subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000051"))

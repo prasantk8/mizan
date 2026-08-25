@@ -123,6 +123,32 @@ def test_ratified_policy_hash_excludes_only_lifecycle_fields() -> None:
     assert policy_semantic_hash(active | {"priority": 101}) != expected
 
 
+def test_allow_policy_cannot_carry_constraints() -> None:
+    document = {
+        "schema_version": "1.3",
+        "policy_id": "pol_allow-obligation",
+        "tenant_id": "tnt_bank-a",
+        "name": "Invalid allow obligation",
+        "version": 1,
+        "status": "DRAFT",
+        "author": "prn_author",
+        "approver": None,
+        "effective_from": None,
+        "applies_to": {},
+        "conditions": {"field": "environment.name", "op": "eq", "value": "development"},
+        "decision": "ALLOW",
+        "constraints": {"rate_limit_per_hour": 10},
+        "priority": 100,
+        "fail_open_allowed": False,
+        "execution_token_ttl_seconds": None,
+        "compiled_ref": None,
+        "content_hash": "0" * 64,
+        "created_at": "2026-08-25T00:00:00Z",
+    }
+    with pytest.raises(Problem, match="should not be valid"):
+        ContractSchemas(Path("SPEC_v1.md")).validate("Policy", document)
+
+
 def test_review_configuration_must_match_mode_and_internal_rejection_contract() -> None:
     base = {
         "status": "DRAFT",

@@ -89,3 +89,12 @@ a recorded simulation, APPROVED requires a strongly authenticated human distinct
 and activation records a UTC effective time while atomically superseding an older ACTIVE version.
 Each transition verifies that the recomputed semantic hash still equals the stored hash and emits a
 transactional outbox event for cache invalidation and audit processing.
+
+### Amendment B — obligation shape is bidirectional (2026-08-25)
+
+The Policy contract now enforces its existing “constraints are required iff the decision is CONSTRAIN or
+REDACT” statement in both directions. Policies with either obligation-bearing decision must contain a
+non-null constraints object; every other decision must omit `constraints`. Under ratified B-10 Option A,
+reachable authorization responses therefore always carry `constraints: null`, and idempotent replay never
+attempts to reconstruct an obligation from the deliberately closed ADR_Record schema. This does not add
+constrained execution semantics or extend ADR_Record; those remain deferred to T-028.

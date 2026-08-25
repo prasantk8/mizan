@@ -38,7 +38,12 @@ def test_closed_schema_negative_fixture_is_rejected() -> None:
     assert set(fixture["required_record_fields"]) - set(fixture["adr_properties"])
 
 
-def test_all_four_negative_fixture_classes_are_committed() -> None:
+def test_all_negative_fixture_classes_are_committed() -> None:
     assert {fixture["check"] for fixture in fixtures().values()} == {
-        "meta_schema", "typed_id", "reachability", "closed_schema"
+        "meta_schema", "typed_id", "reachability", "closed_schema", "policy_iff"
     }
+
+
+def test_policy_iff_negative_fixture_is_rejected() -> None:
+    fixture = fixtures()["policy-iff"]
+    assert validator.policy_iff_errors(fixture["schema"])

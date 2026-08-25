@@ -150,6 +150,23 @@ def closed_schema_errors(schemas: Iterable[tuple[Path, dict[str, Any]]], root: P
     return errors
 
 
+def policy_iff_errors(policy: dict[str, Any]) -> list[str]:
+    """Require both directions of Policy.constraints' documented decision iff."""
+    all_of = policy.get("allOf", [])
+    allowed = {"CONSTRAIN", "REDACT"}
+    forward = any(
+        set(rule.get("if", {}).get("properties", {}).get("decision", {}).get("enum", [])) == allowed
+        and "constraints" in rule.get("then", {}).get("required", [])
+        for rule in all_of
+    )
+    reverse = any(
+        set(rule.get("if", {}).get("properties", {}).get("decision", {}).get("not", {}).get("enum", [])) == allowed
+        and "constraints" in rule.get("then", {}).get("not", {}).get("required", [])
+        for rule in all_of
+    )
+    return [] if forward and reverse else ["Policy constraints says iff but schema does not encode both implications"]
+
+
 def negative_fixture_errors(root: Path) -> list[str]:
     fixture_dir = root / "tests/fixtures/baseline_drift"
     errors: list[str] = []
@@ -158,6 +175,7 @@ def negative_fixture_errors(root: Path) -> list[str]:
         "typed_id": lambda data: bool(typed_id_errors([(fixture_dir / "fixture.json", data["schema"])], root)),
         "reachability": lambda data: data["token"] not in data.get("source", "") and not data.get("waived", False),
         "closed_schema": lambda data: data["record_decision"] not in data["adr_decisions"] or bool(set(data["required_record_fields"]) - set(data["adr_properties"])),
+        "policy_iff": lambda data: bool(policy_iff_errors(data["schema"])),
     }
     seen: set[str] = set()
     for path in sorted(fixture_dir.glob("*.json")):
@@ -184,16 +202,17 @@ def main() -> int:
     messages.extend(typed_id_errors(schemas, ROOT))
     messages.extend(reachability_errors(ROOT))
     messages.extend(closed_schema_errors(schemas, ROOT))
+    policy_schema = next((schema for _, schema in schemas if schema.get("title") == "Policy"), {})
+    messages.extend(policy_iff_errors(policy_schema))
     messages.extend(negative_fixture_errors(ROOT))
     for message in messages:
         fail(message)
     if messages:
         print(f"Baseline validation failed with {len(messages)} error(s).", file=sys.stderr)
         return 1
-    print(f"Baseline valid: {len(REQUIRED_PATHS)} boundaries, {len(schemas)} JSON blocks, {len(known_ids)} schema IDs; four drift gates proven.")
+    print(f"Baseline valid: {len(REQUIRED_PATHS)} boundaries, {len(schemas)} JSON blocks, {len(known_ids)} schema IDs; five drift gates proven.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
