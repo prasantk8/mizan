@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mizan_control_plane.canonical import binding_hash
@@ -225,6 +226,86 @@ def test_evidence_failure_prevents_decision_response() -> None:
     with pytest.raises(Problem) as raised:
         subject.authorize(identity(), context())
     assert raised.value.status == 503
+
+
+class FailingRiskProvider:
+    def evaluate(self, context: EvaluationContext, floor: str) -> dict[str, Any]:
+        raise RuntimeError("risk dependency unavailable")
+
+
+class FailingPolicyRepository(InMemoryAuthorizationRepository):
+    def matching_policies(
+        self, tenant_id: str, context: EvaluationContext, risk_level: str | None = None
+    ) -> list[PolicyMatch]:
+        raise RuntimeError("Cedar evaluation error: injected")
+
+
+class UnexpectedPersistenceRepository(InMemoryAuthorizationRepository):
+    def persist_decision(
+        self, decision: Any, adr_document: dict, normalized_context: dict
+    ) -> None:
+        raise ValueError("unexpected persistence defect")
+
+
+def _service_with_repository(
+    repository: InMemoryAuthorizationRepository, risk_provider: Any = None
+) -> AuthorizationService:
+    return AuthorizationService(
+        repository,
+        risk_provider or RegistryFloorRiskProvider(),
+        "test",
+        "f" * 64,
+    )
+
+
+def test_i8_risk_engine_failure_persists_system_fail_closed_deny() -> None:
+    _, repository = service()
+    subject = _service_with_repository(repository, FailingRiskProvider())
+    with pytest.raises(Problem) as raised:
+        subject.authorize(identity(), context())
+    assert raised.value.status == 403
+    assert raised.value.code == "authorization_failed_closed"
+    assert repository.adr_documents[0]["decision"] == "DENY"
+    assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
+    assert repository.adr_documents[0]["policies"] == []
+    ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
+
+
+def test_v15_policy_engine_failure_persists_system_fail_closed_deny() -> None:
+    _, template = service()
+    repository = FailingPolicyRepository(
+        agents=template.agents.values(), tools=template.tools.values()
+    )
+    subject = _service_with_repository(repository)
+    with pytest.raises(Problem) as raised:
+        subject.authorize(identity(), context())
+    assert raised.value.status == 403
+    assert raised.value.code == "authorization_failed_closed"
+    assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
+    ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
+
+
+def test_system_fail_closed_evidence_failure_has_distinct_counter_and_alert(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, repository = service()
+    repository.fail_writes = True
+    subject = _service_with_repository(repository, FailingRiskProvider())
+    with pytest.raises(Problem) as raised:
+        subject.authorize(identity(), context())
+    assert raised.value.status == 503
+    assert raised.value.code == "fail_closed_evidence_write_failed"
+    assert subject.failure_counters["system_fail_closed_evidence_write_failed"] == 1
+    assert "system_fail_closed_evidence_write_failed" in caplog.text
+
+
+def test_unexpected_persistence_exception_is_not_swallowed() -> None:
+    _, template = service()
+    repository = UnexpectedPersistenceRepository(
+        agents=template.agents.values(), tools=template.tools.values()
+    )
+    with pytest.raises(ValueError, match="unexpected persistence defect"):
+        _service_with_repository(repository).authorize(identity(), context())
 
 
 def test_delegation_requires_registered_edge_depth_and_parent_tool_permission() -> None:

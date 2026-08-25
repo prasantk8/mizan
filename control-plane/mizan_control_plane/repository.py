@@ -17,6 +17,7 @@ from .models import (
     RegistryTool,
 )
 from .policy_engine import CedarPolicyEvaluator
+from .ports import EvidenceWriteError
 
 
 class PostgresAuthorizationRepository:
@@ -225,7 +226,7 @@ class InMemoryAuthorizationRepository:
         self, decision: PersistedDecision, adr_document: dict, normalized_context: dict
     ) -> None:
         if self.fail_writes:
-            raise RuntimeError("injected evidence failure")
+            raise EvidenceWriteError("injected evidence failure")
         self.decisions[(adr_document["tenant_id"], str(decision.request_id))] = decision
         self.adr_documents.append(adr_document)
         self.normalized_contexts[(adr_document["tenant_id"], decision.decision_id)] = copy.deepcopy(

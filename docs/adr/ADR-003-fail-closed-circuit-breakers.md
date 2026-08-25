@@ -101,3 +101,20 @@ A token-carried `key_ref` is descriptive, not authoritative. This prevents an at
 The per-node degraded stream lives on a dedicated encrypted volume. Before an ALLOW response is returned, the node writes the canonical ADR_Record plus stream metadata, fsyncs it under `MIZAN_DEGRADED_WAL_FSYNC_MODE=always`, and returns a locally signed receipt. WAL capacity is bounded; full disk, fsync error, missing/expired encryption key, corrupt tail, or inability to produce the receipt all fail closed (I-26).
 
 Records use monotonically increasing per-node sequence numbers and authenticated encryption. Recovery verifies every receipt and record hash before idempotent publication to the degraded object-store stream. Publication must finish within `MIZAN_DEGRADED_WAL_REPLAY_DEADLINE_SECONDS` after the record store recovers; breach pages security/compliance and disables further degraded grants on that node. Operators may quarantine corrupt records but may never skip them and continue the same stream.
+
+## Amendment C — fail-closed decisions remain evidence-bearing
+
+**Date:** 2026-08-25 · **Trigger:** R-004 F-2 · **Spec anchors:** SPEC v1.3.1 §5.1, I-8, V-15
+
+A risk-engine or policy-engine failure is an authorization decision, not an absent response. Mizan
+persists a DENY ADR_Record with `decision_basis=system_fail_closed`, no cited policies, the static
+tool risk floor when live risk is unavailable, and the evaluator build/configuration hash. Once that
+record commits, the API returns HTTP 403 `authorization_failed_closed`: access was deliberately
+refused, while 503 is reserved for the materially different state in which required evidence could
+not be committed.
+
+If the fail-closed evidence write itself fails, the service returns 503
+`fail_closed_evidence_write_failed`, increments the dedicated
+`system_fail_closed_evidence_write_failed` counter, and emits a critical structured log event. This
+is the sole honest no-record terminal case. Expected evidence-store errors are translated; unrelated
+exception types are not swallowed by a blanket handler and retain their diagnostic identity.

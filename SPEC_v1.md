@@ -1410,7 +1410,7 @@ RECEIVED ──enrich (§3.1, fail-closed)──► EVALUATING ──┬─► A
 
 Every state that renders a **decision** writes exactly one ADR_Record before the HTTP response is sent (INVARIANT I-1). A `422` enrichment miss is not a decision: nothing evaluated, nothing to record beyond an audit entry.
 
-**No matching ACTIVE policy is always `DENY`.** It is not tenant-configurable. The ADR_Record uses `decision_basis=default_deny` with `policies=[]`, so the safest path remains schema-valid and auditable (V-15). Engine/dependency denials use `system_fail_closed`; a degraded grant uses `degraded_grant`.
+**No matching ACTIVE policy is always `DENY`.** It is not tenant-configurable. The ADR_Record uses `decision_basis=default_deny` with `policies=[]`, so the safest path remains schema-valid and auditable (V-15). Risk or policy-engine failure produces a `DENY`, `decision_basis=system_fail_closed`, `policies=[]` record before returning HTTP 403 `authorization_failed_closed`; a degraded grant uses `degraded_grant`. If that fail-closed evidence write also fails, Mizan returns 503 `fail_closed_evidence_write_failed`, increments the dedicated `system_fail_closed_evidence_write_failed` counter, and emits a critical alert because no truthful record can exist.
 
 ### 5.2 REQUIRE_APPROVAL state machine (multi-party banking workflows)
 

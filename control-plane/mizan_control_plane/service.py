@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import rfc8785
+from psycopg import Error as PostgresError
 
 from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .models import (
@@ -16,7 +19,7 @@ from .models import (
     PersistedDecision,
     PolicyMatch,
 )
-from .ports import AuthorizationRepository, RiskProvider
+from .ports import AuthorizationRepository, EvidenceWriteError, RiskProvider
 from .problems import Problem
 
 RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
@@ -36,6 +39,8 @@ DECISION_ORDER = {
     "ESCALATE": 3,
     "DENY": 4,
 }
+LOGGER = logging.getLogger(__name__)
+EXPECTED_EVIDENCE_ERRORS = (EvidenceWriteError, PostgresError)
 
 
 class AuthorizationService:
@@ -50,6 +55,7 @@ class AuthorizationService:
         self.risk_provider = risk_provider
         self.evaluator_build = evaluator_build
         self.configuration_hash = configuration_hash
+        self.failure_counters: Counter[str] = Counter()
 
     def authorize(
         self, identity: AuthenticatedIdentity, context: EvaluationContext
@@ -124,11 +130,34 @@ class AuthorizationService:
         try:
             risk = self.risk_provider.evaluate(enriched, tool.risk_tier)
         except Exception as exc:
-            raise Problem(503, "risk_engine_unavailable", "Risk evaluation failed closed") from exc
+            return self._system_fail_closed(
+                identity,
+                enriched,
+                context_hash,
+                context_document,
+                classification_source,
+                {"level": tool.risk_tier, "floor_source": "degraded_floor"},
+                "risk_engine_failure",
+                exc,
+            )
         if RISK_ORDER[risk["level"]] < RISK_ORDER[tool.risk_tier]:
             risk = {"level": tool.risk_tier, "floor_source": "tool_registry_floor"}
 
-        matches = self.repository.matching_policies(identity.tenant_id, enriched, risk["level"])
+        try:
+            matches = self.repository.matching_policies(
+                identity.tenant_id, enriched, risk["level"]
+            )
+        except RuntimeError as exc:
+            return self._system_fail_closed(
+                identity,
+                enriched,
+                context_hash,
+                context_document,
+                classification_source,
+                risk,
+                "policy_engine_failure",
+                exc,
+            )
         terminal_problem: Problem | None = None
         try:
             decision, reasons, constraints = self._combine(matches)
@@ -166,13 +195,72 @@ class AuthorizationService:
         )
         try:
             self.repository.persist_decision(persisted, adr, context_document)
-        except Exception as exc:
+        except EXPECTED_EVIDENCE_ERRORS as exc:
             raise Problem(
                 503, "evidence_write_failed", "Decision was not returned because evidence failed"
             ) from exc
         if terminal_problem is not None:
             raise terminal_problem
         return response
+
+    def _system_fail_closed(
+        self,
+        identity: AuthenticatedIdentity,
+        context: EvaluationContext,
+        context_hash: str,
+        context_document: dict[str, Any],
+        classification_source: str,
+        risk: dict[str, Any],
+        reason: str,
+        cause: Exception,
+    ) -> AuthorizationResponse:
+        now = datetime.now(UTC)
+        decision_id = self._decision_id(identity.tenant_id, context.request_id)
+        response = AuthorizationResponse(
+            decision_id=decision_id,
+            decision="DENY",
+            risk=risk,
+            policies=[],
+            reasons=[f"System failed closed: {reason}"],
+            constraints=None,
+            degraded={"is_degraded": False, "reason": "none", "grant_ref": None},
+        )
+        adr = self._adr_document(
+            identity,
+            context,
+            response,
+            context_hash,
+            now,
+            classification_source,
+            decision_basis="system_fail_closed",
+        )
+        persisted = PersistedDecision(
+            decision_id=decision_id,
+            request_id=context.request_id,
+            response=response,
+            context_hash=context_hash,
+            created_at=now,
+        )
+        try:
+            self.repository.persist_decision(persisted, adr, context_document)
+        except EXPECTED_EVIDENCE_ERRORS as evidence_error:
+            metric = "system_fail_closed_evidence_write_failed"
+            self.failure_counters[metric] += 1
+            LOGGER.critical(
+                metric,
+                extra={"tenant_id": identity.tenant_id, "decision_id": decision_id, "reason": reason},
+                exc_info=evidence_error,
+            )
+            raise Problem(
+                503,
+                "fail_closed_evidence_write_failed",
+                "Authorization failed closed but its evidence could not be persisted",
+            ) from evidence_error
+        raise Problem(
+            403,
+            "authorization_failed_closed",
+            "Authorization was denied because a required evaluator dependency failed",
+        ) from cause
 
     @staticmethod
     def _validate_identity_binding(
@@ -249,8 +337,11 @@ class AuthorizationService:
         context_hash: str,
         now: datetime,
         classification_source: str,
+        decision_basis: str | None = None,
     ) -> dict:
-        decision_basis = "matched_policy" if response.policies else "default_deny"
+        decision_basis = decision_basis or (
+            "matched_policy" if response.policies else "default_deny"
+        )
         document = {
             "schema_version": "1.2",
             "decision_id": response.decision_id,

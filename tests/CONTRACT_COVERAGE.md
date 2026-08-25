@@ -13,7 +13,7 @@ argument-revalidation, and semantic-policy-hash coverage.
 | I-4, I-5 | `unit/test_authorization.py::test_delegation_requires_registered_edge_depth_and_parent_tool_permission` |
 | I-6 | `unit/test_invariant_properties.py::test_i6_i15_approval_state_machine_fuzzer` |
 | I-7 | `unit/test_degraded.py::test_degraded_path_fails_closed` |
-| I-8 | `unit/test_authorization.py::test_no_matching_policy_is_recorded_default_deny` |
+| I-8 | `unit/test_authorization.py::test_i8_risk_engine_failure_persists_system_fail_closed_deny` |
 | I-9, I-10 | `integration/test_authorize_postgres.py::test_authorize_persists_adr_and_outbox_atomically` (fresh authoritative context, bound-vs-volatile argument recomputation, CAS/replay signal, epoch/constraint/profile checks) |
 | I-11 | `unit/test_evidence.py::test_checkpointed_parallel_verifier_detects_corruption` + `integration/postgres/schema_contract.sql` |
 | I-12 | `unit/test_redaction.py::test_redaction_hashes_stored_payload_and_commits_to_source` + live stored-hash/manifest verification |
@@ -39,7 +39,7 @@ argument-revalidation, and semantic-policy-hash coverage.
 | V-11, V-12 | PostgreSQL rollback test + mandatory payload-free redaction failure outbox tests |
 | V-13, V-17, V-20, V-21 | live execution lifecycle integration + `unit/test_execution.py` |
 | V-14 | escalation stale-race property plus live atomic reject→review close/open test |
-| V-15 | ADR representability property test and exact JSON Schema validation |
+| V-15 | `unit/test_authorization.py::test_v15_policy_engine_failure_persists_system_fail_closed_deny` |
 | V-16 | `unit/test_degraded.py::test_caller_supplied_unknown_key_never_establishes_trust` |
 | V-18 | hostile gzip/JSON/budget/disposition tests in `unit/test_external_payload.py` |
 | V-19 | live DecisionEvent identical-retry assertion in `integration/test_authorize_postgres.py` |
