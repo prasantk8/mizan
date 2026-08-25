@@ -20,3 +20,14 @@ MIZAN_TEST_DATABASE_URL="postgresql://mizan_app:integration-only-mizan@127.0.0.1
   uv run pytest -q tests/integration/test_authorize_postgres.py
 MIZAN_TEST_DATABASE_URL="postgresql://mizan_app:integration-only-mizan@127.0.0.1:${published_port}/mizan" \
   make benchmark-sequencer
+
+"${compose[@]}" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U mizan_owner -d mizan \
+  < infra/postgres/rollback/0001_domain_schema.sql
+"${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U mizan_owner -d mizan \
+  -c "DO \$\$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='mizan')
+           OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname='mizan_app') THEN
+          RAISE EXCEPTION 'rollback contract failed';
+        END IF;
+      END \$\$;"

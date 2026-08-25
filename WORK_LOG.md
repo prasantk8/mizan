@@ -6,7 +6,7 @@
 
 ## Active Task
 
-Release completion audit; next target is T-003 storage-contract review.
+Release completion audit; next target is T-005/T-006 policy and registry review.
 
 ## Agent Queue
 
@@ -14,7 +14,7 @@ Release completion audit; next target is T-003 storage-contract review.
 |---|---|---|---|---|
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
-| T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | REVIEW |
+| T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
 | T-004 | `/v1/authorize` walking skeleton: token→tenancy, §3.1 enrichment (fail-closed), evaluate stub, ADR_Record write | CODEX | T-003 | PARKED(B-8) |
 | T-005 | Policy DSL parser + Cedar compiler spike (ADR-002 benchmark) | CODEX | T-001 | REVIEW |
 | T-006 | Registry CRUD (agents/tools/policies) + list/search endpoints | CODEX | T-003 | REVIEW |
@@ -51,7 +51,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-003 (CODEX audit):** Audit every §2 persisted model, RLS policy, immutable trigger, typed FK, and rollback path against the frozen schemas.
+> **T-005/T-006 (CODEX audit):** Audit policy compilation/selection and registry transition/cross-field behavior against schema and API contracts.
 
 ---
 
@@ -70,6 +70,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · CODEX · T-003 audit · Removed runtime UPDATE/DELETE grants from immutable evidence, corrected `dgn_*` nonce storage, added receipt/anchor chain FKs, token↔lease relational bindings, approval-state/document checks, and a separately mounted rollback migration with destructive disposable-db verification; live schema/repository/rollback gates pass; task DONE · next: T-005/T-006 audit
 - 2026-08-25 · CODEX · T-008/T-015 audit · Replaced helper-only perf proof with the real receipt/object/anchor verifier; deduplicated segment reads, parallelized 100k Ed25519 receipt checks, required matching WORM anchors, handled missing/malformed evidence as controlled failures, and corrected shard default 16→4; actual 100k path passes in 6.409s; 61 unit + four live integration tests pass; both tasks DONE · next: T-003 audit
 - 2026-08-25 · CODEX · T-014 · Release audit found CI lacked uv installation and never ran lint/unit/invariant/performance gates; added locked setup-uv jobs for Ruff, 60 unit/property tests, 100k chain benchmark, and live Postgres suite; local equivalents pass; task independently audited DONE · next: T-008 audit
 - 2026-08-25 · CODEX · T-007 · Added Hypothesis chain/representability/approval fuzzing and I-1..I-26/V-1..V-21 coverage index; closed delegation, quorum, policy dual-control, binding unknown-field, DecisionEvent retry, external receipt validation, audit-attestation and encrypted degraded-WAL gaps; 60 unit + four live integration tests pass; B-7/B-8 remain contract decisions · next: HUMAN B-7/B-8

@@ -179,7 +179,7 @@ CREATE TABLE mizan.approvals (
   tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
   approval_id mizan.approval_id NOT NULL,
   decision_id mizan.decision_id NOT NULL,
-  state text NOT NULL,
+  state text NOT NULL CHECK (state IN ('PENDING','PARTIALLY_APPROVED','APPROVED','REJECTED','EXPIRED','WITHDRAWN','REVIEW_REQUIRED','OVERRIDDEN')),
   active_epoch_id mizan.epoch_id,
   requester_id mizan.principal_id NOT NULL,
   controls jsonb NOT NULL CHECK (jsonb_typeof(controls) = 'object'),
@@ -281,6 +281,13 @@ CREATE TABLE mizan.execution_tokens (
   FOREIGN KEY (tenant_id, tool_id) REFERENCES mizan.tools(tenant_id, tool_id)
 );
 
+ALTER TABLE mizan.execution_leases ADD CONSTRAINT execution_lease_token_fk
+  FOREIGN KEY (tenant_id, redeemed_jti_hash)
+  REFERENCES mizan.execution_tokens(tenant_id, jti_hash) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE mizan.execution_tokens ADD CONSTRAINT execution_token_lease_fk
+  FOREIGN KEY (tenant_id, lease_id)
+  REFERENCES mizan.execution_leases(tenant_id, lease_id) DEFERRABLE INITIALLY DEFERRED;
+
 CREATE TABLE mizan.decision_events (
   tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
   event_id mizan.decision_event_id NOT NULL,
@@ -329,7 +336,9 @@ CREATE TABLE mizan.audit_trails (
   occurred_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, audit_id),
   UNIQUE (tenant_id, stream_id, sequence_number),
-  FOREIGN KEY (tenant_id, stream_id) REFERENCES mizan.evidence_chain_heads(tenant_id, stream_id)
+  FOREIGN KEY (tenant_id, stream_id) REFERENCES mizan.evidence_chain_heads(tenant_id, stream_id),
+  CHECK (document->>'tenant_id' = tenant_id::text),
+  CHECK (document->>'audit_id' = audit_id::text)
 );
 
 CREATE TABLE mizan.external_payload_envelopes (
@@ -347,7 +356,7 @@ CREATE TABLE mizan.external_payload_envelopes (
 CREATE TABLE mizan.degraded_mode_grants (
   tenant_id mizan.tenant_id NOT NULL REFERENCES mizan.tenants(tenant_id),
   grant_id mizan.degraded_grant_id NOT NULL,
-  nonce uuid NOT NULL,
+  nonce text NOT NULL CHECK (nonce ~ '^dgn_[a-zA-Z0-9_-]{16,128}$'),
   not_before timestamptz NOT NULL,
   expires_at timestamptz NOT NULL CHECK (expires_at > not_before),
   revoked_at timestamptz,
@@ -382,7 +391,8 @@ CREATE TABLE mizan.evidence_receipts (
   signed_payload jsonb NOT NULL CHECK (jsonb_typeof(signed_payload) = 'object'),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (tenant_id, receipt_id),
-  UNIQUE (tenant_id, stream_id, sequence_number, record_hash)
+  UNIQUE (tenant_id, stream_id, sequence_number, record_hash),
+  FOREIGN KEY (tenant_id, stream_id) REFERENCES mizan.evidence_chain_heads(tenant_id, stream_id)
 );
 
 CREATE TABLE mizan.evidence_anchors (
@@ -399,7 +409,8 @@ CREATE TABLE mizan.evidence_anchors (
   signed_payload jsonb NOT NULL CHECK (jsonb_typeof(signed_payload) = 'object'),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (tenant_id, anchor_id),
-  UNIQUE (tenant_id, stream_id, to_sequence)
+  UNIQUE (tenant_id, stream_id, to_sequence),
+  FOREIGN KEY (tenant_id, stream_id) REFERENCES mizan.evidence_chain_heads(tenant_id, stream_id)
 );
 
 CREATE FUNCTION mizan.reject_evidence_mutation() RETURNS trigger
@@ -492,6 +503,8 @@ END $$;
 
 GRANT USAGE ON SCHEMA mizan TO mizan_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA mizan TO mizan_app;
+REVOKE UPDATE, DELETE ON mizan.adr_records, mizan.decision_events, mizan.audit_trails,
+  mizan.approval_votes, mizan.evidence_receipts, mizan.evidence_anchors FROM mizan_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA mizan TO mizan_app;
 GRANT EXECUTE ON FUNCTION mizan.current_tenant_id() TO mizan_app;
 GRANT EXECUTE ON FUNCTION mizan.reserve_evidence_sequence(mizan.tenant_id, text, mizan.sha256_hex, mizan.sha256_hex) TO mizan_app;

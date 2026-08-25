@@ -27,6 +27,19 @@ BEGIN
   IF unprotected_count <> 0 THEN RAISE EXCEPTION '% tables lack forced RLS', unprotected_count; END IF;
 END $$;
 
+DO $$
+DECLARE table_name text;
+BEGIN
+  FOREACH table_name IN ARRAY ARRAY[
+    'adr_records','decision_events','audit_trails','approval_votes','evidence_receipts','evidence_anchors'
+  ] LOOP
+    IF has_table_privilege('mizan_app', 'mizan.' || table_name, 'UPDATE')
+       OR has_table_privilege('mizan_app', 'mizan.' || table_name, 'DELETE') THEN
+      RAISE EXCEPTION 'runtime role can mutate immutable table %', table_name;
+    END IF;
+  END LOOP;
+END $$;
+
 INSERT INTO mizan.tenants(tenant_id, region, status)
 VALUES ('tnt_bank-a', 'ae-dubai-1', 'ACTIVE'), ('tnt_bank-b', 'ae-dubai-1', 'ACTIVE');
 
@@ -74,6 +87,12 @@ VALUES (
   '{"members":[{"principal_id":"prn_alice","roles":["manager"],"control_domain":"business.ops"},{"principal_id":"prn_bob","roles":["manager"],"control_domain":"risk.control"},{"principal_id":"prn_compliance","roles":["compliance"],"control_domain":"compliance.control"}]}',
   now()
 );
+INSERT INTO mizan.degraded_mode_grants(
+  tenant_id,grant_id,nonce,not_before,expires_at,document
+) VALUES (
+  'tnt_bank-a','dgr_fixture-0001','dgn_0123456789abcdef',now(),now()+interval '5 minutes',
+  '{"tenant_id":"tnt_bank-a","grant_id":"dgr_fixture-0001","nonce":"dgn_0123456789abcdef"}'
+);
 
 SET ROLE mizan_app;
 BEGIN;
@@ -111,7 +130,7 @@ BEGIN
     UPDATE mizan.adr_records SET decision = 'DENY'
     WHERE tenant_id = 'tnt_bank-a' AND decision_id = 'adr_decision-0001';
     RAISE EXCEPTION 'immutable ADR accepted update';
-  EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
+  EXCEPTION WHEN object_not_in_prerequisite_state OR insufficient_privilege THEN NULL;
   END;
 END $$;
 ROLLBACK;

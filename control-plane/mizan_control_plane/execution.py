@@ -83,7 +83,7 @@ class ExecutionService:
                      FROM mizan.adr_records a
                      JOIN mizan.tools t ON t.tenant_id=a.tenant_id AND t.tool_id=a.tool_id
                      JOIN mizan.agents ag ON ag.tenant_id=a.tenant_id AND ag.agent_id=a.agent_id
-                    WHERE a.tenant_id=%s AND a.decision_id=%s FOR UPDATE OF a""",
+                    WHERE a.tenant_id=%s AND a.decision_id=%s""",
                 (tenant_id, decision_id),
             ).fetchone()
             if not row:

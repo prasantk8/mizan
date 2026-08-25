@@ -10,3 +10,7 @@ The third argument is deliberately `true`, limiting tenancy to the current trans
 
 Canonical SPEC documents are stored in `document jsonb`. Security-critical identifiers, lifecycle fields, foreign keys, hashes, and sequence numbers are also extracted into typed columns so the database—not naming convention in application code—enforces I-3, I-16, and I-20.
 
+Forward migrations live in `migrations/`, which is the only directory mounted into PostgreSQL
+initialization. Destructive rollback scripts live separately in `rollback/` and are operator-invoked.
+`make test-postgres` provisions a disposable database and exercises forced RLS, typed IDs, immutable
+privileges/triggers, dense rollback-safe allocation, and the live repositories.
