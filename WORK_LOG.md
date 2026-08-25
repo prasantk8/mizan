@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**Stage 3 resumed; T-043/T-042 are in REVIEW and T-041 is next.** Export verification now binds every in-range anchor and the preceding left-edge anchor to records, while labelling unsigned checkpoints only as performance aids. Continue the CP-B sequence without revisiting accepted CP-A work.
+**Stage 3 corrections T-043/T-042/T-041 are in REVIEW; T-033 is next.** The real operator export path is gated, exported anchors bind to records, and benchmark artifacts now carry resolvable clean-worktree provenance. Continue toward the CP-B crypto boundary.
 
 ## Agent Queue
 
@@ -52,7 +52,7 @@
 | T-038 | R-005 §10: Merkle inclusion proofs — anchor `merkle_root` with RFC 6962 domain separation, `/v1/audit/inclusion/{decision_id}`, standalone `--inclusion` verification (ADR-004 Option-2 path) | CODEX | T-030, T-036 | READY |
 | T-039 | R-005 §10: RFC 6962 consistency proofs between successive anchors — append-only proven cryptographically, not only by numbering | CODEX | T-038 | READY |
 | T-040 | R-005 §10: `make attack` adversary drill over a real bundle; committed deterministic output that **must** include the uncaught attack classes | CODEX | T-036, T-039, T-024 | READY |
-| T-041 | R-006 V-1/V-2: benchmark artifact provenance — `commit_sha` must name a real commit, record `worktree_clean`, CI rejects dirty/unresolvable artifacts; register `MIZAN_BENCHMARK_*` keys in SPEC | CODEX | — | READY |
+| T-041 | R-006 V-1/V-2: benchmark artifact provenance — `commit_sha` must name a real commit, record `worktree_clean`, CI rejects dirty/unresolvable artifacts; register `MIZAN_BENCHMARK_*` keys in SPEC | CODEX | — | REVIEW |
 | T-042 | R-006 V-4/V-5: verifier binds **every** in-range anchor `head_hash` to its record and pins the left edge via the anchor ending at `range_start-1`; PASS line stops crediting unsigned checkpoints as evidence | CODEX | — | REVIEW |
 | T-043 | R-006 V-6: operator entry point that produces a bundle + live-Postgres end-to-end test (authorize → drain → anchor → export → run `verify_evidence_export.py` as a subprocess). Closes the self-certifying-fixture gap | CODEX | — | REVIEW |
 
@@ -87,7 +87,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Next Executable Action
 
-> **T-042 complete; claim T-041 next.** Continue the dispositioned sequence:
+> **T-041 complete; claim T-033 next.** Continue the dispositioned sequence:
 >
 > `T-043 → T-042 → T-041 → T-033 → T-025 → T-036` **(stop at CP-B)** `→ T-038 → T-039` **(CP-C)** `→ T-031 → T-034 → T-035 → T-024 → T-040 → T-037` **(CP-D)** `→ T-026 → T-023`
 >
@@ -115,6 +115,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-25 · TEST-rigor/CODEX · T-041 · Benchmark writer now derives HEAD itself, permits `MIZAN_BENCHMARK_COMMIT_SHA` only as an exact HEAD assertion, records pre-write `worktree_clean`, and provenance validation rejects dirty artifacts plus SHAs that do not resolve to repository commits; registered both `MIZAN_BENCHMARK_*` keys in SPEC §8 under the post-hoc H-3 config rule and upgraded the accepted chain artifact with its previously logged clean state; the new validator rejected the actual pre-fix artifact from `153f676af3af54e09539ddc37c427ba6146f9281` with missing `worktree_clean` (exit 1), while forged-SHA and dirty-worktree regression cases now reject; 144 unit/property, Ruff, five baseline drift gates, and the committed artifact validator pass; limitation: Git-object provenance proves what checkout was measured, not that the committer or host is independently trustworthy; hostile DB+signing-key answer remains **no** · next: T-033 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-042 · Offline verifier now binds every anchor terminating inside the export to that record hash and requires the signed anchor immediately before a non-genesis range to pin the first record's `prev_hash`; PASS output explicitly labels unsigned checkpoints as a performance aid rather than evidence; SPEC §10 and ADR-004 G.8 amended; two validly signed hostile bundles (wrong intermediate head and self-asserted left edge) were accepted by the verifier on pre-fix `de5c1e599611fc9bf25dbc55974dd1aabae08c2b`, causing both new gates to fail `assert 0 == 1`, and now reject distinctly; 142 unit/property, Ruff, and five baseline drift gates pass; limitation: a complete final anchor can still be withheld and self-signing remains inside Mizan until T-036; hostile DB+signing-key answer remains **no** · next: T-041 CODEX
 - 2026-08-25 · CLAUDE-rigor/CODEX · T-043 · Added installed `mizan-export-evidence` entry point accepting an explicit runtime DSN/object root/public keyset/tenant/stream/output/range and no private key, with SPEC §10 plus ADR-004 G.7 contract deltas; added live isolated-tenant PostgreSQL gate that authorizes two requests, drains two outbox records, anchors them, invokes the exporter as a subprocess, then invokes the standalone verifier as a second subprocess over the produced bundle; on pre-fix `4aae6ac66972b38739fec0f4640ce39a0561334e` the old module returned success but emitted no path and produced no operator bundle, so the new gate failed at `assert '' == <bundle path>` rather than ImportError; implementation passes 140 unit/property, 12 live PostgreSQL, Ruff, and five baseline drift gates; limitation: CLI invocation authorization/auditing remains a deployment control and the bundle remains self-signed until T-036; hostile DB+signing-key answer remains **no** · next: T-042 CODEX
 - 2026-08-25 · CLAUDE · R-006/CP-A · Independently validated the four CP-A commits: re-ran make check (five drift gates, up from four), 140 unit/property tests, the golden bundle under `python -I` with the Mizan package stripped from `sys.path` (no `mizan` module loaded, PASS plus all three disclosure lines), and confirmed each tamper test refreshes the manifest hash so the case is not caught trivially by the checksum layer; sampled all four pre-fix SHAs and found every claim honest, `73c7de9` still carrying `constraints=doc.get("constraints")`; confirmed `policy_engine.py:166` untouched and `ADR_Record` unextended; accepted T-016/T-029/T-030/T-032 DONE and credited three unrequested improvements (export reconstructs from the object store and explicitly distrusts Postgres, `record_anchor` validates under a stream-head `FOR UPDATE` instead of `ON CONFLICT DO NOTHING`, and the verifier already prints its own limitations three tasks before T-037 requires it); raised V-1..V-7, queued T-041/T-042/T-043 ahead of T-033, bound V-3 into the T-036 row, amended H-3's config clause post-hoc, and added standing rule 9; hostile DB+signing-key answer remains **no** and is unchanged until T-036 · next: T-043 CODEX, then T-042, T-041, T-033

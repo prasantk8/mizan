@@ -1568,6 +1568,8 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 
 | Key | Default | Scope | Notes |
 |---|---|---|---|
+| `MIZAN_BENCHMARK_RESULTS_DIR` | `benchmarks/results` | build/test | Destination for machine-readable benchmark artifacts; changing it has no runtime effect. |
+| `MIZAN_BENCHMARK_COMMIT_SHA` | checked-out `HEAD` | build/test | Optional assertion only: when set it must exactly equal `HEAD`; it cannot relabel a run. Artifacts also record `worktree_clean`, and provenance validation rejects dirty runs or SHAs that do not resolve to commits in this repository. |
 | `MIZAN_LOW_RISK_DEGRADED_ALLOW` | `false` | deployment | Master switch for the entire degraded-allow path. False disables it regardless of grants. |
 | `Policy.fail_open_allowed` | `false` | policy | Per-policy opt-in; requires the master switch **and** a valid grant (I-21). |
 | `DegradedModeGrant.max_duration_seconds` | `3600` | tenant | Ceiling `MIZAN_DEGRADED_GRANT_MAX_SECONDS` = 86400. |

@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_FIELDS = {
-    "benchmark", "commit_sha", "host", "measurements", "parameters", "timestamp_utc"
+    "benchmark", "commit_sha", "host", "measurements", "parameters", "timestamp_utc",
+    "worktree_clean",
 }
 REQUIRED_HOST_FIELDS = {"cpu", "logical_cores", "os", "python"}
 
@@ -32,6 +35,16 @@ def validate(results_dir: Path, required: set[str]) -> list[str]:
         found.add(benchmark)
         if not path.name.startswith(f"{benchmark}-{document['commit_sha']}"):
             errors.append(f"{path}: filename does not bind benchmark and commit SHA")
+        if document["worktree_clean"] is not True:
+            errors.append(f"{path}: benchmark ran with a dirty worktree")
+        resolved = subprocess.run(
+            ["git", "cat-file", "-e", f"{document['commit_sha']}^{{commit}}"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+        )
+        if resolved.returncode != 0:
+            errors.append(f"{path}: commit_sha does not resolve to a repository commit")
     for benchmark in sorted(required - found):
         errors.append(f"missing benchmark artifact: {benchmark}")
     return errors
