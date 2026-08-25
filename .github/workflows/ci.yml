@@ -47,7 +47,12 @@ jobs:
       - name: Gate execution security module unit coverage
         run: uv run --frozen pytest -q tests/unit/test_execution.py --cov=mizan_control_plane.execution --cov-fail-under=50
       - name: Verify 100k-record chain performance
-        run: uv run --frozen python -m benchmarks.chain_verifier
+        env:
+          MIZAN_BENCHMARK_RESULTS_DIR: ${{ runner.temp }}/benchmark-results
+        run: |
+          uv run --frozen python -m benchmarks.chain_verifier
+          uv run --frozen python scripts/validate_benchmark_artifacts.py \
+            --results-dir "$MIZAN_BENCHMARK_RESULTS_DIR" --require chain-verifier
 
   postgres-contract:
     runs-on: ubuntu-latest

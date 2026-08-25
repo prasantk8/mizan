@@ -10,6 +10,8 @@ from threading import Barrier
 
 import psycopg
 
+from benchmarks.artifacts import write_artifact
+
 TENANT = "tnt_bank-a"
 SHARDS = 4
 OPERATIONS_PER_SHARD = 500
@@ -59,9 +61,13 @@ def main() -> int:
         "p99_ms": round(sorted(samples)[int(len(samples) * 0.99)], 4),
     }
     print(json.dumps(result, sort_keys=True))
+    write_artifact(
+        "evidence-sequencer",
+        result,
+        {"shards": SHARDS, "operations_per_shard": OPERATIONS_PER_SHARD},
+    )
     return 0 if throughput >= 1_000 else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

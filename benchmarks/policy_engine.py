@@ -6,6 +6,7 @@ import time
 
 from mizan_control_plane.policy_engine import compile_policy
 
+from benchmarks.artifacts import write_artifact
 from tests.unit.test_authorization import context
 from tests.unit.test_policy_engine import policy
 
@@ -33,9 +34,13 @@ def main() -> int:
         "p99_ms": round(percentile(samples, 0.99), 4),
     }
     print(json.dumps(result, sort_keys=True))
+    write_artifact(
+        "policy-engine",
+        result,
+        {"iterations": 5_000, "warmup_iterations": 200},
+    )
     return 0 if result["evaluations_per_second"] >= 1_000 and result["p99_ms"] < 5 else 1
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

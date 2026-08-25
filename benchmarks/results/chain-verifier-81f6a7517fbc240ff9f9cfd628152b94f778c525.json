@@ -1,0 +1,28 @@
+{
+  "benchmark": "chain-verifier",
+  "commit_sha": "81f6a7517fbc240ff9f9cfd628152b94f778c525",
+  "host": {
+    "cpu": "arm",
+    "logical_cores": 16,
+    "os": "macOS-15.1-arm64-arm-64bit",
+    "python": "3.12.12"
+  },
+  "measurements": {
+    "checked_records": 100000,
+    "checkpoints": 100,
+    "records": 100000,
+    "records_per_second": 15637.19,
+    "segments": 100,
+    "target_seconds": 10,
+    "valid": true,
+    "verification_seconds": 6.395,
+    "workers": 4
+  },
+  "parameters": {
+    "checkpoint_interval": 1000,
+    "records": 100000,
+    "segment_size": 1000,
+    "workers": 4
+  },
+  "timestamp_utc": "2026-08-25T17:47:01.490930+00:00"
+}

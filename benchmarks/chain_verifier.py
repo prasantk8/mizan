@@ -12,6 +12,8 @@ from mizan_control_plane.evidence import (
     canonical_hash_bytes,
 )
 
+from benchmarks.artifacts import write_artifact
+
 RECORDS = 100_000
 SEGMENT_SIZE = 1_000
 CHECKPOINT_INTERVAL = 1_000
@@ -130,6 +132,16 @@ def main() -> int:
         "target_seconds": 10,
     }
     print(json.dumps(report, sort_keys=True))
+    write_artifact(
+        "chain-verifier",
+        report,
+        {
+            "records": RECORDS,
+            "segment_size": SEGMENT_SIZE,
+            "checkpoint_interval": CHECKPOINT_INTERVAL,
+            "workers": WORKERS,
+        },
+    )
     return 0 if result.valid and result.checked_records == RECORDS and elapsed < 10 else 1
 
 
