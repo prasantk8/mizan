@@ -1,4 +1,8 @@
-from __future__ import annotations
+# Deliberately NOT `from __future__ import annotations`. Route parameters are declared as
+# Annotated[..., Depends(local_dependency)] where the dependency is a closure over create_app's
+# arguments. Under PEP 563 those annotations are strings that FastAPI resolves against module
+# globals, where a closure does not exist: the Depends is lost and the parameter silently becomes
+# a required query parameter. See test_app_routes.py.
 
 import logging
 from collections.abc import AsyncIterator
