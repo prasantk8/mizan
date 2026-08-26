@@ -28,3 +28,13 @@ def test_conformance_corpus_distinguishes_malformed_from_invalid() -> None:
     assert verdicts["malformed-failed-status"] == "MALFORMED"
     assert verdicts["malformed-attested-signed-payload"] == "MALFORMED"
     assert verdicts["malformed-unattested-rfc3161"] == "MALFORMED"
+
+
+def test_deterministic_evidence_mutation_result_is_current() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/check_evidence_mutations.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

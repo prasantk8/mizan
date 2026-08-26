@@ -98,6 +98,8 @@ jobs:
             --tsa-trust-anchor tests/fixtures/evidence_export/public-tsa/usertrust-rsa-root.pem
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/check_evidence_conformance.py
+          sudo unshare --net -- .offline-verifier/bin/python \
+            scripts/check_evidence_mutations.py
 
   implementation-gates:
     runs-on: ubuntu-latest

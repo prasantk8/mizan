@@ -234,6 +234,29 @@ def test_record_byte_mutation_is_rejected_with_specific_reason(tmp_path: Path) -
     assert "record hash mismatch at sequence 1" in result.stderr
 
 
+def test_malformed_json_is_not_misreported_as_invalid_evidence(tmp_path: Path) -> None:
+    bundle = build_bundle(tmp_path)
+    records = (bundle / "records.json").read_bytes()
+    (bundle / "records.json").write_bytes(records[:-1])
+
+    result = run_verifier(bundle)
+
+    assert result.returncode == 3
+    assert "MALFORMED: records.json is missing or malformed" in result.stderr
+
+
+def test_manifest_algorithms_are_normative_not_ignored(tmp_path: Path) -> None:
+    bundle = build_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+    manifest["hash_algorithm"] = "SHA-257"
+    (bundle / "manifest.json").write_bytes(rfc8785.dumps(manifest))
+
+    result = run_verifier(bundle)
+
+    assert result.returncode == 3
+    assert "MALFORMED: manifest hash_algorithm is unsupported" in result.stderr
+
+
 def test_dropped_receipt_is_rejected_with_specific_reason(tmp_path: Path) -> None:
     bundle = build_bundle(tmp_path)
     receipts = json.loads((bundle / "receipts.json").read_bytes())

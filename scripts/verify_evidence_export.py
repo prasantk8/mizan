@@ -41,7 +41,7 @@ def load_json(path: Path) -> Any:
     try:
         return json.loads(path.read_bytes())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise VerificationFailure(f"{path.name} is missing or malformed: {exc}") from exc
+        raise MalformedBundle(f"{path.name} is missing or malformed: {exc}") from exc
 
 
 def verify_signature(payload: dict[str, Any], signature: str, key: Ed25519PublicKey, label: str) -> None:
@@ -151,9 +151,18 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
     tsa_trust_anchors = tsa_trust_anchors or []
     manifest = load_json(bundle / "manifest.json")
     if manifest.get("bundle_version") != "1.0":
-        raise VerificationFailure("manifest bundle_version is unsupported")
+        raise MalformedBundle("manifest bundle_version is unsupported")
+    if manifest.get("canonicalization") != "RFC8785":
+        raise MalformedBundle("manifest canonicalization is unsupported")
+    if manifest.get("hash_algorithm") != "SHA-256":
+        raise MalformedBundle("manifest hash_algorithm is unsupported")
     if set(manifest.get("files", {})) != set(FILES):
-        raise VerificationFailure("manifest file inventory is incomplete or contains unknown files")
+        raise MalformedBundle("manifest file inventory is incomplete or contains unknown files")
+    records = load_json(bundle / "records.json")
+    receipts = load_json(bundle / "receipts.json")
+    anchors = load_json(bundle / "anchors.json")
+    checkpoints = load_json(bundle / "checkpoints.json")
+    key_documents = load_json(bundle / "keys.json")
     for name in FILES:
         path = bundle / name
         try:
@@ -163,11 +172,6 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
         if actual != manifest["files"][name]:
             raise VerificationFailure(f"{name} checksum mismatch")
 
-    records = load_json(bundle / "records.json")
-    receipts = load_json(bundle / "receipts.json")
-    anchors = load_json(bundle / "anchors.json")
-    checkpoints = load_json(bundle / "checkpoints.json")
-    key_documents = load_json(bundle / "keys.json")
     if not records:
         raise VerificationFailure("record set is empty")
     keys: dict[str, Ed25519PublicKey] = {}
