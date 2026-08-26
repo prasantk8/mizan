@@ -1235,8 +1235,8 @@ paths:
     get:  { summary: List agents (tenant-scoped), x-sla-p95-ms: 100, responses: { "200": {description: OK} } }
   /v1/agents/{agent_id}:
     get:   { summary: Fetch agent, responses: { "200": {description: OK}, "404": {description: Not found in tenant} } }
-    patch: { summary: "Lifecycle/config change (dual-control for production HIGH/CRITICAL agents)",
-             responses: { "200": {description: OK}, "403": {description: Missing second approver} } }
+    patch: { summary: "Lifecycle/config change (dual-control when the stored OR the submitted document is a production HIGH/CRITICAL agent — see V-22)",
+             responses: { "200": {description: OK}, "403": {description: Missing second approver}, "422": {description: "Delegation parent has not authorized this edge"} } }
 
   /v1/tools:
     post: { summary: "Register tool (§2.6: schema, owner, risk_tier, data_classification, permitted_agents, binding_profile, execution timings)",
@@ -1658,6 +1658,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-19 | DecisionEvent `decision_sequence` allocation and insert are atomic; `previous_event_hash` matches the preceding event, event payload fields are valid for `event_type`, and retries return the existing event rather than creating another. | decision event writer |
 | V-20 | For `financial_write`, token redemption requires a valid `immutable_receipt_ref` covering the originating ADR_Record and any deciding approval event. Receipt tenant, stream, record hash, and signature must verify outside the Postgres administrative boundary. | execution gateway |
 | V-21 | `ExecutionTokenClaims.authorized_executor` is selected server-side from the tool version's non-empty `execution.executor_spiffe_ids`; callers cannot propose or override it. Redemption uses the same immutable tool/profile version cited by the ADR_Record. | tool registration + token issuer |
+| V-22 | An agent PATCH requires a distinct strongly authenticated second approver when the **stored** document or the **submitted** document is a production `HIGH`/`CRITICAL` agent. Evaluating only the submitted side lets one operator remove the protection and change the agent in the same write. The delegation parent edge `create_agent` enforces is re-enforced whenever a PATCH moves `parent_agent_id`. | `PATCH /v1/agents/{agent_id}` |
 
 ---
 

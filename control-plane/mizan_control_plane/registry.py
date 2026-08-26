@@ -21,6 +21,15 @@ POLICY_HASH_EXCLUDED_FIELDS = frozenset(
 )
 
 
+def dual_control_required(document: dict[str, Any]) -> bool:
+    """Whether an agent document is protected. Evaluated over both sides of a PATCH: a write that
+    removes its own protection is exactly the write dual control exists to stop."""
+    return document.get("environment") == "production" and document.get("risk_tier") in {
+        "HIGH",
+        "CRITICAL",
+    }
+
+
 def policy_semantic_hash(document: dict[str, Any]) -> str:
     return canonical_hash(
         {key: value for key, value in document.items() if key not in POLICY_HASH_EXCLUDED_FIELDS}
@@ -316,10 +325,8 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 raise Problem(404, "registry_object_not_found", "Agent was not found")
             old = row[0]
             self._validate_agent_transition(old["lifecycle_state"], document["lifecycle_state"])
-            protected = document["environment"] == "production" and document["risk_tier"] in {
-                "HIGH",
-                "CRITICAL",
-            }
+            protected = dual_control_required(old) or dual_control_required(document)
+            self._require_authorized_parent(connection, tenant_id, agent_id, old, document)
             if protected and (
                 second_actor is None
                 or second_actor.principal_id == actor.principal_id
@@ -348,6 +355,17 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 "DELETE FROM mizan.agent_tools WHERE tenant_id=%s AND agent_id=%s",
                 (tenant_id, agent_id),
             )
+            if old.get("parent_agent_id") != document.get("parent_agent_id"):
+                connection.execute(
+                    "DELETE FROM mizan.agent_delegations WHERE tenant_id=%s AND child_agent_id=%s",
+                    (tenant_id, agent_id),
+                )
+                if document.get("parent_agent_id"):
+                    connection.execute(
+                        "INSERT INTO mizan.agent_delegations(tenant_id,parent_agent_id,child_agent_id) "
+                        "VALUES (%s,%s,%s)",
+                        (tenant_id, document["parent_agent_id"], agent_id),
+                    )
             for tool_id in document["tools"]:
                 connection.execute(
                     "INSERT INTO mizan.agent_tools(tenant_id,agent_id,tool_id) VALUES (%s,%s,%s)",
@@ -371,6 +389,36 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 ),
             )
         return document
+
+    @staticmethod
+    def _require_authorized_parent(
+        connection: Any,
+        tenant_id: str,
+        agent_id: str,
+        old: dict[str, Any],
+        document: dict[str, Any],
+    ) -> None:
+        """The delegation edge create_agent enforces, re-enforced on every write that moves it."""
+        parent_id = document.get("parent_agent_id")
+        if parent_id == old.get("parent_agent_id"):
+            return
+        if parent_id is None:
+            return
+        if parent_id == agent_id:
+            raise Problem(
+                422, "registry_reference_missing", "An agent cannot be its own delegation parent"
+            )
+        parent = connection.execute(
+            "SELECT document FROM mizan.agents WHERE tenant_id=%s AND agent_id=%s",
+            (tenant_id, parent_id),
+        ).fetchone()
+        allowed = parent[0].get("delegation", {}).get("allowed_agent_ids", []) if parent else []
+        if agent_id not in allowed:
+            raise Problem(
+                422,
+                "registry_reference_missing",
+                "Parent has not authorized this delegation edge",
+            )
 
     def publish_binding_profile(
         self, tenant_id: str, tool_id: str, profile: dict[str, Any]

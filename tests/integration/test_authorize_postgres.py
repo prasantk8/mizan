@@ -777,3 +777,51 @@ def test_i25_financial_execution_waits_for_immutable_receipt(tmp_path: Path) -> 
         token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
     )
     assert lease["state"] == "LEASED"
+
+
+def _operator(principal_id: str) -> AuthenticatedPrincipal:
+    return AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",
+        principal_id=principal_id,
+        identity_kind="human",
+        auth_strength="hardware",
+        roles=["registry.admin"],
+    )
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_one_operator_cannot_downgrade_a_production_critical_agent() -> None:
+    repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    protected = agent_document() | {
+        "agent_id": "agt_dual-control",
+        "environment": "production",
+        "risk_tier": "CRITICAL",
+    }
+    repository.create_agent("tnt_bank-a", protected)
+    # The write that removes its own protection: one operator, one PATCH, CRITICAL to LOW.
+    downgrade = protected | {"risk_tier": "LOW", "updated_at": "2026-08-25T00:02:00Z"}
+    with pytest.raises(Problem) as raised:
+        repository.update_agent("tnt_bank-a", "agt_dual-control", downgrade, _operator("prn_admin-a"), None)
+    assert raised.value.code == "agent_dual_control_required"
+    assert repository.get("tnt_bank-a", "agents", "agt_dual-control")["risk_tier"] == "CRITICAL"
+    accepted = repository.update_agent(
+        "tnt_bank-a", "agt_dual-control", downgrade, _operator("prn_admin-a"), _operator("prn_admin-b")
+    )
+    assert accepted["risk_tier"] == "LOW"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_patch_cannot_attach_an_agent_to_a_parent_that_did_not_authorize_it() -> None:
+    repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    parent = agent_document() | {"agent_id": "agt_unwilling-parent"}
+    child = agent_document() | {"agent_id": "agt_grafted-child"}
+    repository.create_agent("tnt_bank-a", parent)
+    repository.create_agent("tnt_bank-a", child)
+    grafted = child | {
+        "parent_agent_id": "agt_unwilling-parent",
+        "updated_at": "2026-08-25T00:03:00Z",
+    }
+    with pytest.raises(Problem) as raised:
+        repository.update_agent("tnt_bank-a", "agt_grafted-child", grafted, _operator("prn_admin-a"), None)
+    assert raised.value.code == "registry_reference_missing"
+    assert repository.get("tnt_bank-a", "agents", "agt_grafted-child").get("parent_agent_id") is None

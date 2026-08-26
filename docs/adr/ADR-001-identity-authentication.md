@@ -68,6 +68,25 @@ the second uses `X-Mizan-Second-Approval: Bearer …`. Both tokens must carry MF
 the same tenant, and different principal IDs. A caller-supplied name is never evidence of approval,
 and bearer values are neither persisted nor included in events.
 
+## Implementation Amendment C — dual control is evaluated over both sides of a PATCH
+
+**Date:** 2026-08-26 · **Trigger:** Stage 5 acceleration review, T-077b · **Spec anchors:** SPEC v1.3 §3 `PATCH /v1/agents/{agent_id}`, V-22
+
+The original amendment named "production HIGH/CRITICAL agent changes" without saying which
+document decides. The implementation read the **submitted** document, so the single write that
+downgrades a production `CRITICAL` agent to `LOW` — while also changing its tools, parent, or
+lifecycle state — evaluated as unprotected and needed no second approver. Protection could be
+removed by the act it was meant to gate.
+
+Dual control is therefore required when the **stored** document or the **submitted** document is a
+production `HIGH`/`CRITICAL` agent. The union is the only reading under which the control is not
+self-defeating; nothing else about the amendment changes.
+
+The same write also re-enforces the delegation edge `create_agent` checks: whenever a PATCH moves
+`parent_agent_id`, the named parent must list the child in `delegation.allowed_agent_ids`, and the
+`agent_delegations` edge is moved with it. Previously a PATCH could graft an agent onto any parent
+in the tenant, and the edge table silently kept the stale row.
+
 ## Implementation Amendment B — application-terminated workload mTLS
 
 **Date:** 2026-08-25 · **Trigger:** R-004 F-5 · **Spec anchors:** SPEC v1.3.1 §3, I-23, V-17
