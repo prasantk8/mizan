@@ -9,13 +9,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import rfc8785
 from cryptography.hazmat.primitives import serialization
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.evidence import Ed25519EvidenceSigner, LocalImmutableObjectStore
 from mizan_control_plane.evidence_export import export_evidence_bundle
 
-from scripts.verify_evidence_export import verify_bundle
+from scripts.verify_evidence_export import (
+    CannotCheck,
+    VerificationFailure,
+    verify_bundle,
+    verify_rfc3161,
+)
 
 
 class ExportRepository:
@@ -159,6 +165,48 @@ def run_verifier(bundle: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def test_rfc3161_missing_openssl_is_cannot_check_not_bad_evidence(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = tmp_path / "root.pem"
+    root.write_text("root")
+    monkeypatch.setattr(
+        "scripts.verify_evidence_export.subprocess.run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("openssl")),
+    )
+    with pytest.raises(CannotCheck, match="executable is unavailable"):
+        verify_rfc3161(
+            {"anchor_digest": "a" * 64, "evidence": "QUE="}, "a" * 64, [root]
+        )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "message"),
+    [
+        ("certificate has expired", "certificate is expired"),
+        ("message imprint mismatch", "imprint does not match"),
+        ("certificate verify error: unable to get local issuer", "not trusted"),
+        ("bad token signature", "malformed or its signature is invalid"),
+    ],
+)
+def test_rfc3161_failures_name_the_evidence_cause(
+    tmp_path: Path, monkeypatch, stderr: str, message: str,
+) -> None:
+    root = tmp_path / "root.pem"
+    root.write_text("root")
+    calls = iter([
+        subprocess.CompletedProcess([], 0, "-verify", ""),
+        subprocess.CompletedProcess([], 1, "", stderr),
+    ])
+    monkeypatch.setattr(
+        "scripts.verify_evidence_export.subprocess.run", lambda *args, **kwargs: next(calls)
+    )
+    with pytest.raises(VerificationFailure, match=message):
+        verify_rfc3161(
+            {"anchor_digest": "a" * 64, "evidence": "QUE="}, "a" * 64, [root]
+        )
 
 
 def test_standalone_export_verifies_and_discloses_self_signed_limit(tmp_path: Path) -> None:

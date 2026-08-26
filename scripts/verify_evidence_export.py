@@ -25,6 +25,10 @@ class VerificationFailure(ValueError):
     pass
 
 
+class CannotCheck(RuntimeError):
+    """The verifier environment cannot evaluate a claim; evidence is not condemned."""
+
+
 def canonical_hash(value: Any) -> str:
     return hashlib.sha256(rfc8785.dumps(value)).hexdigest()
 
@@ -58,14 +62,34 @@ def verify_rfc3161(
             trust.write_bytes(b"\n".join(path.read_bytes() for path in trust_anchors))
         except (OSError, ValueError) as exc:
             raise VerificationFailure("RFC 3161 evidence or trust root is malformed") from exc
-        completed = subprocess.run(
-            ["openssl", "ts", "-verify", "-in", str(token), "-digest", digest, "-CAfile", str(trust)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            probe = subprocess.run(
+                ["openssl", "ts", "-help"], check=False, capture_output=True, text=True
+            )
+        except (FileNotFoundError, OSError) as exc:
+            raise CannotCheck(f"OpenSSL executable is unavailable: {exc}") from exc
+        if probe.returncode not in {0, 1} or "-verify" not in (probe.stdout + probe.stderr):
+            raise CannotCheck("OpenSSL is installed but RFC 3161 'ts -verify' support is unavailable")
+        try:
+            completed = subprocess.run(
+                ["openssl", "ts", "-verify", "-in", str(token), "-digest", digest, "-CAfile", str(trust)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            raise CannotCheck(f"OpenSSL RFC 3161 verification could not be executed: {exc}") from exc
         if completed.returncode != 0:
-            raise VerificationFailure("RFC 3161 token verification failed")
+            detail = (completed.stderr or completed.stdout).lower()
+            if "expired" in detail:
+                reason = "TSA certificate is expired"
+            elif "imprint" in detail or "message digest" in detail:
+                reason = "timestamp message imprint does not match the anchor digest"
+            elif "certificate verify" in detail or "unable to get" in detail:
+                reason = "timestamp signer is not trusted by the operator-supplied root"
+            else:
+                reason = "timestamp token is malformed or its signature is invalid"
+            raise VerificationFailure(f"RFC 3161 {reason}")
 
 
 def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> dict[str, Any]:
@@ -333,6 +357,14 @@ def main() -> int:
     args = parser.parse_args()
     try:
         result = verify_bundle(args.bundle, args.tsa_trust_anchor)
+    except CannotCheck as exc:
+        print(f"CANNOT CHECK: {exc}", file=sys.stderr)
+        print(
+            "ASSURANCE NOT DERIVED: RFC 3161 evidence was not evaluated; "
+            "this is weaker than a successful verification.",
+            file=sys.stderr,
+        )
+        return 2
     except VerificationFailure as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

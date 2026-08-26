@@ -407,3 +407,11 @@ named `anchor_attestation_integrity` event and is never counted as completion. A
 non-terminal sidecar occupies the immutable outcome slot, is escalated for operator attention, and is
 not retried against the TSA. Recovery remains additive; implementations must not update, delete, or
 upsert the occupied evidence row.
+
+### G.14 Implementation delta — unverifiable is not invalid (T-051)
+
+The standalone verifier exits with `CANNOT CHECK` and a distinct status when the operator's OpenSSL
+runtime is missing, cannot execute, or lacks RFC 3161 support. It must not label evidence invalid in
+that condition. Bad signatures/tokens, imprint mismatch, an untrusted signer, and an expired TSA
+certificate remain evidence failures and are reported as distinct causes. Successful external
+assurance is never printed when the RFC 3161 check did not run.

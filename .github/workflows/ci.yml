@@ -85,8 +85,13 @@ jobs:
           .offline-verifier/bin/pip install rfc8785==0.1.4 cryptography==50.0.0
       - name: Verify committed bundle with the network namespace disabled
         run: |
+          openssl version
+          openssl ts -help >/dev/null
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/verify_evidence_export.py tests/fixtures/evidence_export/golden/bundle
+          sudo unshare --net -- .offline-verifier/bin/python \
+            scripts/verify_evidence_export.py tests/fixtures/evidence_export/attested/bundle \
+            --tsa-trust-anchor tests/fixtures/evidence_export/attested/tsa-root.pem
 
   implementation-gates:
     runs-on: ubuntu-latest
