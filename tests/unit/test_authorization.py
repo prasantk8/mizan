@@ -14,6 +14,7 @@ from mizan_control_plane.models import (
     RegistryAgent,
     RegistryTool,
 )
+from mizan_control_plane.policy_engine import CedarPolicyEvaluator
 from mizan_control_plane.problems import Problem
 from mizan_control_plane.repository import InMemoryAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
@@ -285,6 +286,17 @@ class FailingPolicyRepository(InMemoryAuthorizationRepository):
         raise RuntimeError("Cedar evaluation error: injected")
 
 
+class CedarBackedRepository(InMemoryAuthorizationRepository):
+    """Runs the shipped evaluator, so an engine failure is raised the way production raises it."""
+
+    documents: list[dict[str, Any]] = []
+
+    def matching_policies(
+        self, tenant_id: str, context: EvaluationContext, risk_level: str | None = None
+    ) -> list[PolicyMatch]:
+        return CedarPolicyEvaluator().evaluate(self.documents, context, risk_level)
+
+
 class UnexpectedPersistenceRepository(InMemoryAuthorizationRepository):
     def persist_decision(
         self, decision: Any, adr_document: dict, normalized_context: dict
@@ -339,6 +351,44 @@ def test_v15_policy_engine_failure_persists_system_fail_closed_deny() -> None:
     assert raised.value.status == 403
     assert raised.value.code == "authorization_failed_closed"
     assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
+    ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
+
+
+def test_policy_compile_failure_inside_the_evaluator_records_system_fail_closed() -> None:
+    _, template = service()
+    repository = CedarBackedRepository(
+        agents=template.agents.values(), tools=template.tools.values()
+    )
+    # A five-fractional-digit context value is unrepresentable as a Cedar decimal, so the shipped
+    # evaluator raises PolicyCompileError — a ValueError, not the RuntimeError the handler names.
+    repository.documents = [
+        {
+            "schema_version": "1.3",
+            "policy_id": "pol_transfer",
+            "tenant_id": TENANT,
+            "name": "Transfer policy",
+            "version": 1,
+            "status": "ACTIVE",
+            "author": "risk-team",
+            "applies_to": {"tool_ids": [TOOL]},
+            "conditions": {"field": "action.type", "op": "eq", "value": "financial_write"},
+            "decision": "ALLOW",
+            "priority": 100,
+            "content_hash": "1" * 64,
+            "created_at": "2026-08-25T00:00:00Z",
+        }
+    ]
+    request = context()
+    request.security.anomaly_score = 0.12345
+    with pytest.raises(Problem) as raised:
+        subject = _service_with_repository(repository)
+        subject.authorize(identity(), request)
+    assert raised.value.status == 403
+    assert raised.value.code == "authorization_failed_closed"
+    assert repository.adr_documents[0]["decision"] == "DENY"
+    assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
+    assert repository.adr_documents[0]["policies"] == []
+    assert repository.adr_documents[0]["reasons"] == ["System failed closed: policy_engine_failure"]
     ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
 
 

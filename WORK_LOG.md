@@ -89,7 +89,7 @@
 | T-074 | Track B (absorbs T-026 scope) — `mizan-drain-outbox` worker (drain + anchor cadence, backpressure, poison, lag SLO, signals) and an outbox-transactional expiry sweeper reaching `EXPIRED`/`LEASE_EXPIRED` with §4 events — neither state is reached at rest today | CODEX | T-066 | READY |
 | T-075 | Track B — multi-stage image (non-root, `openssl`), SBOM + scan in CI, Helm/production compose profile with migration job, migration runner with a version table so `0002`/`0003` apply to existing databases; app connects as `mizan_app` | CODEX | T-066 | READY |
 | T-076 | Track B — one real `KmsHsmBackend`: HashiCorp Vault Transit (native Ed25519, `custody=kms`), PKCS#11 second (`custody=hsm`); **not** AWS/GCP/Azure KMS (no Ed25519 — would reopen bundle format 1.0, B-18) | CODEX | T-053, **B-18** | READY |
-| T-077 | Track B, CLAUDE-gate — security fixes verified in source: (a) registry write authority (`app.py:76-161`, needs B-17); (b) PATCH dual-control from old ∪ new + delegation re-validation (`registry.py:319-355`); (c) `PolicyCompileError` → `system_fail_closed` (`service.py:152-156`, `policy_engine.py:117-124`); (d) token max-TTL/`kid`/JWKS/class; (e) escalate/override authz (`app.py:317-322`); (f) body-size cap + bounded strings. Each with its pre-fix failing test and SHA | CODEX | — | READY |
+| T-077 | Track B, CLAUDE-gate — security fixes verified in source: (a) registry write authority (`app.py:76-161`, needs B-17); (b) PATCH dual-control from old ∪ new + delegation re-validation (`registry.py:319-355`); (c) `PolicyCompileError` → `system_fail_closed` (`service.py:152-156`, `policy_engine.py:117-124`); (d) token max-TTL/`kid`/JWKS/class; (e) escalate/override authz (`app.py:317-322`); (f) body-size cap + bounded strings. Each with its pre-fix failing test and SHA | CLAUDE | B-17 (a) | IN_PROGRESS(9c1d4a70) |
 | T-078 | Track B — SPEC §4 event conformance: 4 of 32 names emitted; registry creates write no outbox rows. Emit at the writers or amend §4 by ADR; gate test enumerates §4 both ways | CODEX | T-074 | READY |
 | T-079 | Track B — test/CI honesty: `auth.py` tests (0%), `app.py` via `TestClient(create_app())` (0%), per-module coverage floors, R-007 reproduction in CI, loud Postgres skips under `CI=true`, fix three rule-11 tests | CODEX | — | READY |
 | T-080 | Track B — config registry reconciliation: 30 of 48 §8 keys unread → read with production validation or dated waiver; wire or waive `degraded.py` (`is_degraded` hardcoded false) | CODEX | T-066 | READY |
@@ -103,6 +103,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-077 | CLAUDE | 9c1d4a70-3e55-4a2b-9f18-6d0b2c7e4411 | 1 | 2026-08-26T20:10:00Z | 2026-08-26T20:10:00Z | 2026-08-27T00:10:00Z | 59d342d |
 
 ## Blockers & Dependencies
 

@@ -20,6 +20,7 @@ from .models import (
     PersistedDecision,
     PolicyMatch,
 )
+from .policy_engine import PolicyCompileError
 from .ports import (
     AuthorizationRepository,
     DuplicateRequestIdError,
@@ -47,6 +48,9 @@ DECISION_ORDER = {
 }
 LOGGER = logging.getLogger(__name__)
 EXPECTED_EVIDENCE_ERRORS = (EvidenceWriteError, PostgresError)
+# PolicyCompileError is a ValueError raised inside the shipped evaluator, not a RuntimeError:
+# SPEC §5.1 requires policy-engine failure to reach system_fail_closed, never an uncaught 500.
+POLICY_ENGINE_ERRORS = (RuntimeError, PolicyCompileError)
 
 
 class AuthorizationService:
@@ -153,7 +157,7 @@ class AuthorizationService:
             matches = self.repository.matching_policies(
                 identity.tenant_id, enriched, risk["level"]
             )
-        except RuntimeError as exc:
+        except POLICY_ENGINE_ERRORS as exc:
             return self._system_fail_closed(
                 identity,
                 enriched,
