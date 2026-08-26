@@ -1,5 +1,6 @@
 PASS: The exported records, signed receipts, and complete signed anchor chain verified; unsigned checkpoints were used only as a parallel-verification performance aid for sequences 0 through 1 (2 records, 1 anchors).
 ANCHOR 0 ATTESTATION: RFC3161.
+KEY CUSTODY: publicly derivable development key — this bundle is forgeable by anyone who reads it.
 ASSURANCE DERIVED: rfc3161.
 TRUST ROOTS USED: tests/fixtures/evidence_export/public-tsa/freetsa-root.pem, tests/fixtures/evidence_export/public-tsa/usertrust-rsa-root.pem
 WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.

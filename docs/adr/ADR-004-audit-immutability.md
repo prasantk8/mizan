@@ -449,3 +449,11 @@ bundle version 1.0. In particular it fixes the anchor core as the closed project
 `attestations`, `object_key`, and `object_version`, followed by RFC 8785 JCS and SHA-256. The committed
 conformance corpus is the machine-readable compatibility contract; producer and verifier code are
 implementations of this format rather than its source of truth.
+
+### G.18 Implementation delta — explicit key custody (T-053)
+
+Custody, not URI naming, controls production eligibility. `LocalKeyProvider` always has
+`development-derived` custody and refuses every production construction regardless of its key IDs.
+Published key documents carry required `custody` in `{development-derived, kms, hsm}`; KMS/HSM adapters
+receive that value explicitly rather than deriving it from a reference string. Offline verification
+reports publicly derivable development custody as forgeable even when every signature is valid.

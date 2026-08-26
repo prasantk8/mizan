@@ -93,9 +93,13 @@ otherwise `unattested`. Stream assurance is the weakest anchor: `rfc3161` only i
 only a claim under test and MUST equal `{anchor_attestation: derived_state,
 external_timestamp: derived_state == "rfc3161"}`.
 
-Key documents have exactly `key_id`, `role`, `algorithm`, `public_key`, `not_before`, `not_after`, and
-`revoked_at` in version 1.0; `algorithm` is `Ed25519`. A valid signature under a revoked/expired key is
-reported with that lifecycle fact and is not silently upgraded to an unqualified pass.
+Key documents have exactly `key_id`, `role`, `custody`, `algorithm`, `public_key`, `not_before`,
+`not_after`, and `revoked_at` in version 1.0; `algorithm` is `Ed25519` and `custody` is exactly one of
+`development-derived`, `kms`, or `hsm`. Custody is an explicit property of the provider, never inferred
+from `key_id`. A verifier MUST print the exact warning `KEY CUSTODY: publicly derivable development key
+— this bundle is forgeable by anyone who reads it.` when any key is `development-derived`. A valid
+signature under a revoked/expired key is reported with that lifecycle fact and is not silently upgraded
+to an unqualified pass.
 
 `checkpoints.json` is an unsigned derived index. Its dense ranges and endpoint hashes are checked,
 but it supplies no independent evidence and MUST NOT increase assurance.
