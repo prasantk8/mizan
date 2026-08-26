@@ -46,7 +46,29 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
         Settings.from_environment()
     monkeypatch.setenv("MIZAN_ANCHOR_PROVIDER", "rfc3161")
     monkeypatch.setenv("MIZAN_ANCHOR_TSA_ENDPOINTS", "https://tsa.example.test")
+    with pytest.raises(RuntimeError, match="trust anchor"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_ANCHOR_TSA_TRUST_ANCHORS", "/etc/mizan/tsa-root.pem")
     assert Settings.from_environment().anchor_provider == "rfc3161"
+
+
+def test_production_refuses_non_tls_tsa_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
+    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
+    monkeypatch.setenv("MIZAN_ENV", "production")
+    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "kms_hsm")
+    for role, name in zip(KEY_ROLES, (
+        "MIZAN_EVIDENCE_RECEIPT_KEY_REF", "MIZAN_EVIDENCE_ANCHOR_KEY_REF",
+        "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF", "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF",
+    ), strict=True):
+        monkeypatch.setenv(name, f"kms://vault/{role}")
+    monkeypatch.setenv("MIZAN_ANCHOR_PROVIDER", "rfc3161")
+    monkeypatch.setenv("MIZAN_ANCHOR_TSA_ENDPOINTS", "http://tsa.example.test")
+    monkeypatch.setenv("MIZAN_ANCHOR_TSA_TRUST_ANCHORS", "/etc/mizan/tsa-root.pem")
+
+    with pytest.raises(RuntimeError, match="HTTPS"):
+        Settings.from_environment()
 
 
 def test_four_roles_are_distinct_and_rotation_has_no_resign_capability() -> None:

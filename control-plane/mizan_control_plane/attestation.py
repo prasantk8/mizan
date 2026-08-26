@@ -15,10 +15,16 @@ import rfc8785
 class Rfc3161AnchorProvider:
     """Asynchronous RFC 3161 provider: anchor writes pending, worker obtains tokens later."""
 
-    def __init__(self, endpoints: list[str], timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        endpoints: list[str],
+        trust_anchors: list[Path] | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> None:
         if not endpoints:
             raise ValueError("at least one RFC 3161 endpoint is required")
         self.endpoints = endpoints
+        self.trust_anchors = trust_anchors or []
         self.timeout_seconds = timeout_seconds
 
     def attest(self, anchor_payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -56,11 +62,43 @@ class Rfc3161AnchorProvider:
             )
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 token = response.read()
+            failure_reason = self._validation_failure(token, digest, Path(directory))
+        if failure_reason is not None:
+            return pending | {
+                "status": "pending",
+                "obtained_at": None,
+                "evidence": None,
+                "failure_reason": failure_reason,
+            }
         return pending | {
             "status": "attested",
             "obtained_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "evidence": base64.b64encode(token).decode(),
         }
+
+    def _validation_failure(self, token: bytes, digest: str, directory: Path) -> str | None:
+        if not self.trust_anchors:
+            return "token validation unavailable: no TSA trust anchor configured"
+        response = directory / "response.tsr"
+        trust = directory / "trust.pem"
+        try:
+            response.write_bytes(token)
+            trust.write_bytes(b"\n".join(path.read_bytes() for path in self.trust_anchors))
+        except OSError as exc:
+            return f"token validation input unavailable: {exc}"
+        completed = subprocess.run(
+            [
+                "openssl", "ts", "-verify", "-in", str(response),
+                "-digest", digest, "-CAfile", str(trust),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            reason = completed.stderr.strip() or "OpenSSL rejected the timestamp response"
+            return f"RFC 3161 token validation failed: {reason}"
+        return None
 
 
 def pending_attestation_breaker_open(

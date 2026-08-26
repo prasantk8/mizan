@@ -1583,6 +1583,7 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF` | `local://execution-token/dev-1` | deployment | Active `execution-token` signing key. |
 | `MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF` | `local://degraded-grant/dev-1` | deployment | Active `degraded-grant` signing key; separate from the degraded WAL encryption key. |
 | `MIZAN_ANCHOR_TSA_ENDPOINTS` | *(required in production)* | deployment | Comma-separated RFC 3161 authorities. The request contains only the SHA-256 anchor digest; multiple authorities are supported. |
+| `MIZAN_ANCHOR_TSA_TRUST_ANCHORS` | *(required in production)* | deployment | Comma-separated local PEM trust-root paths used by the asynchronous attestation worker to validate each timestamp token before recording `attested`; these roots are operator-supplied and never exported in a bundle. |
 | `MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS` | `900` | deployment | Maximum pending age before the evidence breaker opens; pending streams cannot be described as externally anchored. |
 | `MIZAN_LOW_RISK_DEGRADED_ALLOW` | `false` | deployment | Master switch for the entire degraded-allow path. False disables it regardless of grants. |
 | `Policy.fail_open_allowed` | `false` | policy | Per-policy opt-in; requires the master switch **and** a valid grant (I-21). |

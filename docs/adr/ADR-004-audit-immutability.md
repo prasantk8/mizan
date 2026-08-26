@@ -265,6 +265,11 @@ the answer stops being Mizan's word and becomes the customer's own key. It never
   token and its full certificate chain; the *pinned trust root is supplied by the verifier's operator*
   (`--tsa-trust-anchor`, defaulting to the system store). A trust root shipped by Mizan inside a Mizan bundle
   returns the auditor to trusting Mizan. The verifier must print which trust root it used.
+- **Validate before recording completion.** The asynchronous worker recomputes the anchor imprint and
+  validates every returned token against operator-supplied `MIZAN_ANCHOR_TSA_TRUST_ANCHORS` before it may
+  append an `attested` sidecar. Invalid responses append a named `pending` failure reason and never raise
+  the stream's assurance. Production requires at least one trust root and HTTPS-only TSA endpoints; this
+  validation remains outside the authorization hot path.
 
 ### G.3 What this buys, and what it does not
 

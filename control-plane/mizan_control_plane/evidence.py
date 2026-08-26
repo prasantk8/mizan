@@ -52,7 +52,12 @@ def anchor_provider_from_config(name: str | None = None) -> AnchorProvider:
         return DevelopmentUnattestedAnchorProvider()
     if selected == "rfc3161":
         endpoints = [item for item in os.environ.get("MIZAN_ANCHOR_TSA_ENDPOINTS", "").split(",") if item]
-        return Rfc3161AnchorProvider(endpoints)
+        trust_anchors = [
+            Path(item)
+            for item in os.environ.get("MIZAN_ANCHOR_TSA_TRUST_ANCHORS", "").split(",")
+            if item
+        ]
+        return Rfc3161AnchorProvider(endpoints, trust_anchors)
     raise RuntimeError(f"anchor provider {selected!r} is not implemented")
 
 

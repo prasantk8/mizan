@@ -5,6 +5,7 @@ import hashlib
 import re
 import subprocess
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -72,7 +73,7 @@ def test_rfc3161_verification_fails_without_operator_trust_root() -> None:
         verify_rfc3161({"anchor_digest": "a" * 64, "evidence": "AA=="}, "a" * 64, [])
 
 
-def test_real_rfc3161_response_verifies_offline(tmp_path) -> None:
+def test_real_rfc3161_response_verifies_offline_and_before_recording(tmp_path, monkeypatch) -> None:
     digest = hashlib.sha256(b"anchor-core").hexdigest()
     key = tmp_path / "tsa.key"
     cert = tmp_path / "tsa.pem"
@@ -114,6 +115,28 @@ def test_real_rfc3161_response_verifies_offline(tmp_path) -> None:
         digest,
         [cert],
     )
+
+    class TsaResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return response.read_bytes()
+
+    monkeypatch.setattr(
+        "mizan_control_plane.attestation.urllib.request.urlopen",
+        lambda request, timeout: TsaResponse(),
+    )
+    provider = Rfc3161AnchorProvider(["https://tsa.example.test"], [cert])
+    obtained = provider.obtain({
+        "type": "rfc3161", "status": "pending", "authority": "https://tsa.example.test",
+        "anchor_digest": digest, "evidence": None, "obtained_at": None,
+    })
+    assert obtained["status"] == "attested"
+    assert base64.b64decode(obtained["evidence"]) == response.read_bytes()
     wrong_key = tmp_path / "wrong.key"
     wrong_cert = tmp_path / "wrong.pem"
     subprocess.run(
@@ -170,6 +193,109 @@ def test_tsa_egress_contains_digest_and_no_anchor_payload(tmp_path, monkeypatch)
     assert message_hex == pending["anchor_digest"]
     assert b"tnt_secret-bank" not in observed["body"]
     assert observed["url"] == "https://tsa.example.test"
+
+
+def test_unvalidated_tsa_response_remains_pending_with_named_reason(monkeypatch) -> None:
+    provider = Rfc3161AnchorProvider(["https://tsa.example.test"])
+    pending = provider.attest({"head_hash": "a" * 64})[0]
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b"not-a-timestamp-token"
+
+    monkeypatch.setattr(
+        "mizan_control_plane.attestation.urllib.request.urlopen",
+        lambda request, timeout: Response(),
+    )
+
+    result = provider.obtain(pending)
+
+    assert result["status"] == "pending"
+    assert result["evidence"] is None
+    assert result["failure_reason"] == (
+        "token validation unavailable: no TSA trust anchor configured"
+    )
+
+
+def test_provider_records_attested_only_after_token_validation(tmp_path, monkeypatch) -> None:
+    trust = tmp_path / "tsa-root.pem"
+    trust.write_text("operator root", encoding="utf-8")
+    provider = Rfc3161AnchorProvider(["https://tsa.example.test"], [trust])
+    pending = provider.attest({"head_hash": "a" * 64})[0]
+    commands = []
+
+    def openssl(command, **kwargs):
+        commands.append(command)
+        if "-query" in command:
+            Path(command[command.index("-out") + 1]).write_bytes(b"timestamp-query")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b"validated-timestamp-token"
+
+    monkeypatch.setattr("mizan_control_plane.attestation.subprocess.run", openssl)
+    monkeypatch.setattr(
+        "mizan_control_plane.attestation.urllib.request.urlopen",
+        lambda request, timeout: Response(),
+    )
+
+    result = provider.obtain(pending)
+
+    assert result["status"] == "attested"
+    assert len(commands) == 2
+    assert commands[1][1:3] == ["ts", "-verify"]
+    assert commands[1][commands[1].index("-digest") + 1] == pending["anchor_digest"]
+    assert commands[1][commands[1].index("-CAfile") + 1].endswith("trust.pem")
+
+
+def test_worker_records_validation_failure_as_named_pending_sidecar(monkeypatch) -> None:
+    provider = Rfc3161AnchorProvider(["https://tsa.example.test"])
+    pending = provider.attest({"head_hash": "a" * 64})[0]
+    writes = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b"not-a-timestamp-token"
+
+    monkeypatch.setattr(
+        "mizan_control_plane.attestation.urllib.request.urlopen",
+        lambda request, timeout: Response(),
+    )
+    worker = AnchorAttestationWorker(
+        SimpleNamespace(record_anchor_attestation=lambda *args: writes.append(args)),
+        provider,
+        SimpleNamespace(open=lambda *args: None),
+    )
+
+    assert worker.process(
+        "tnt_bank-a",
+        [{"payload": {"anchor_id": "anchor-1", "attestations": [pending]}}],
+        900,
+    ) == 1
+    recorded = writes[0][2]
+    assert recorded["status"] == "pending"
+    assert recorded["failure_reason"] == (
+        "token validation unavailable: no TSA trust anchor configured"
+    )
 
 
 def test_tsa_outage_opens_only_evidence_breaker_and_authorization_remains_available(

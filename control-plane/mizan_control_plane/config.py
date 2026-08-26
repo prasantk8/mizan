@@ -20,6 +20,7 @@ class Settings:
     signing_key_refs: tuple[str, str, str, str]
     anchor_provider: str
     anchor_tsa_endpoints: tuple[str, ...]
+    anchor_tsa_trust_anchors: tuple[str, ...]
     anchor_attestation_max_pending_seconds: int
 
     @classmethod
@@ -40,14 +41,25 @@ class Settings:
         tsa_endpoints = tuple(
             item for item in environ.get("MIZAN_ANCHOR_TSA_ENDPOINTS", "").split(",") if item
         )
+        tsa_trust_anchors = tuple(
+            item for item in environ.get("MIZAN_ANCHOR_TSA_TRUST_ANCHORS", "").split(",") if item
+        )
         if len(set(refs)) != 4:
             raise RuntimeError("the four signing key roles require distinct key references")
         if environment == "production" and (custody == "development" or any(
             item.startswith("local://") for item in refs
         )):
             raise RuntimeError("production refuses development custody and local:// signing keys")
-        if environment == "production" and (anchor_provider != "rfc3161" or not tsa_endpoints):
-            raise RuntimeError("production requires RFC 3161 anchor provider and TSA endpoint")
+        if environment == "production" and (
+            anchor_provider != "rfc3161" or not tsa_endpoints or not tsa_trust_anchors
+        ):
+            raise RuntimeError(
+                "production requires RFC 3161 anchor provider, TSA endpoint, and trust anchor"
+            )
+        if environment == "production" and any(
+            not endpoint.startswith("https://") for endpoint in tsa_endpoints
+        ):
+            raise RuntimeError("production requires HTTPS RFC 3161 TSA endpoints")
         return cls(
             database_url=environ["MIZAN_DATABASE_URL"],
             jwt_issuer=environ["MIZAN_JWT_ISSUER"],
@@ -69,6 +81,7 @@ class Settings:
             signing_key_refs=refs,
             anchor_provider=anchor_provider,
             anchor_tsa_endpoints=tsa_endpoints,
+            anchor_tsa_trust_anchors=tsa_trust_anchors,
             anchor_attestation_max_pending_seconds=int(
                 environ.get("MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS", "900")
             ),
