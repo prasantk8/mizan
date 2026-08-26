@@ -292,5 +292,56 @@ def test_mixed_anchor_assurance_is_reported_per_anchor_and_uses_weakest(
     )
     monkeypatch.setattr("scripts.verify_evidence_export.verify_rfc3161", lambda *args: None)
     result = verify_bundle(bundle, [tmp_path / "operator-root.pem"])
-    assert result["anchor_assurance"] == [(0, "rfc3161"), (1, "unattested")]
+    assert result["anchor_assurance"] == [(0, "rfc3161", []), (1, "unattested", [])]
     assert result["derived_assurance"] == "unattested"
+
+
+def test_exporter_mixed_authority_anchor_uses_pending_as_weakest_state(tmp_path: Path) -> None:
+    pending_a = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa-a",
+        "anchor_digest": "placeholder", "evidence": None,
+    }
+    pending_b = pending_a | {"authority": "tsa-b"}
+    record = {
+        "tenant_id": "tnt_bank-a", "stream_id": "tnt_bank-a:adr:0",
+        "sequence_number": 0, "prev_hash": "0" * 64, "value": "record-0",
+    }
+    record["record_hash"] = canonical_hash(record)
+    store = LocalImmutableObjectStore(tmp_path / "objects")
+    object_key = "segments/tnt_bank-a/mixed/0.json"
+    object_version = store.put_once(object_key, rfc8785.dumps([record]))
+    receipt = {"payload": {
+        "sequence_number": 0, "record_hash": record["record_hash"],
+        "object_key": object_key, "object_version": object_version,
+    }}
+    anchor = {
+        "payload": {"attestations": [pending_a, pending_b]},
+        "attestations": [pending_a | {"status": "attested", "evidence": "AA=="}],
+    }
+    bundle = export_evidence_bundle(
+        ExportRepository([receipt], [anchor]), store, {},
+        "tnt_bank-a", "tnt_bank-a:adr:0", tmp_path / "bundle",
+    )
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+
+    assert manifest["assurance"] == {
+        "anchor_attestation": "pending",
+        "external_timestamp": False,
+    }
+
+
+def test_undeclared_sidecar_authority_is_rejected(tmp_path: Path) -> None:
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa-a",
+        "anchor_digest": "placeholder", "evidence": None,
+    }
+    bundle = build_bundle(tmp_path, attestation_by_anchor={0: [pending]})
+    anchors = json.loads((bundle / "anchors.json").read_bytes())
+    anchors[0]["attestations"] = [pending | {"authority": "tsa-injected"}]
+    (bundle / "anchors.json").write_bytes(rfc8785.dumps(anchors))
+    refresh_manifest(bundle, "anchors.json")
+
+    result = run_verifier(bundle)
+
+    assert result.returncode == 1
+    assert "sidecar authority is absent from the signed roster: tsa-injected" in result.stderr

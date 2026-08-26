@@ -181,13 +181,34 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
         verify_signature(payload, row.get("signature", ""), key, f"anchor {number}")
         # Final attestations are append-only sidecars. The signed payload retains the
         # original pending marker so completing asynchronous work never rewrites history.
-        attestations = row.get("attestations") or payload.get("attestations")
-        if not isinstance(attestations, list) or not attestations:
+        declared_attestations = payload.get("attestations")
+        if not isinstance(declared_attestations, list) or not declared_attestations:
             raise VerificationFailure(f"anchor {number} attestation status is missing")
+        declared_by_authority = {
+            (item.get("type"), item.get("authority")): item
+            for item in declared_attestations
+        }
+        if len(declared_by_authority) != len(declared_attestations):
+            raise VerificationFailure(
+                f"anchor {number} signed attestation roster contains duplicate authorities"
+            )
+        effective_attestations = dict(declared_by_authority)
+        sidecars = row.get("attestations", [])
+        if not isinstance(sidecars, list):
+            raise VerificationFailure(f"anchor {number} attestation sidecars are malformed")
+        for sidecar in sidecars:
+            identity = (sidecar.get("type"), sidecar.get("authority"))
+            if identity not in declared_by_authority:
+                raise VerificationFailure(
+                    f"anchor {number} sidecar authority is absent from the signed roster: "
+                    f"{identity[1]}"
+                )
+            effective_attestations[identity] = sidecar
         verified_external = False
         pending = False
+        pending_authorities: list[str] = []
         explicitly_unattested = False
-        for attestation in attestations:
+        for attestation in effective_attestations.values():
             if attestation.get("type") == "none_development":
                 if attestation.get("status") != "unattested":
                     raise VerificationFailure(
@@ -197,6 +218,7 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
             elif attestation.get("status") != "attested":
                 if attestation.get("status") == "pending":
                     pending = True
+                    pending_authorities.append(str(attestation.get("authority")))
                     continue
                 raise VerificationFailure(f"anchor {number} has no verified external attestation")
             elif attestation.get("type") == "rfc3161":
@@ -224,11 +246,11 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
                     raise VerificationFailure("customer countersignature is invalid") from exc
         state = (
             "unattested" if explicitly_unattested
-            else "rfc3161" if verified_external
             else "pending" if pending
+            else "rfc3161" if verified_external
             else "unattested"
         )
-        anchor_assurance.append((number, state))
+        anchor_assurance.append((number, state, pending_authorities))
         expected_anchor_from = payload["to_sequence"] + 1
         expected_anchor_previous = canonical_hash(payload)
     if anchors[-1]["payload"]["to_sequence"] != range_end:
@@ -273,7 +295,7 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
     if expected_checkpoint_from != range_end + 1:
         raise VerificationFailure("checkpoint coverage does not reach the terminal record")
 
-    states = [state for _, state in anchor_assurance]
+    states = [state for _, state, _ in anchor_assurance]
     derived_assurance = (
         "rfc3161" if all(state == "rfc3161" for state in states)
         else "unattested" if "unattested" in states
@@ -320,8 +342,12 @@ def main() -> int:
         f"for sequences {result['from_sequence']} through {result['to_sequence']} "
         f"({result['records']} records, {result['anchors']} anchors)."
     )
-    for anchor_number, assurance in result["anchor_assurance"]:
-        print(f"ANCHOR {anchor_number} ATTESTATION: {assurance.upper()}.")
+    for anchor_number, assurance, pending_authorities in result["anchor_assurance"]:
+        suffix = (
+            " Pending authorities: " + ", ".join(pending_authorities) + "."
+            if pending_authorities else ""
+        )
+        print(f"ANCHOR {anchor_number} ATTESTATION: {assurance.upper()}.{suffix}")
     if result["derived_assurance"] != "rfc3161":
         print("ATTESTATION: STREAM NOT EXTERNALLY ANCHORED — at least one anchor lacks a verified RFC 3161 token.")
     for key_id, revoked_at in result["revoked_keys"]:

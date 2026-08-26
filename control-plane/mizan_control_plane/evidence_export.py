@@ -102,15 +102,28 @@ def export_evidence_bundle(
         for key_id, key in sorted(public_keys.items())
     ]
     anchors = repository.anchors(tenant_id, stream_id)
-    effective_attestations = [
-        row.get("attestations") or row.get("payload", {}).get("attestations", [])
-        for row in anchors
-    ]
+    effective_attestations = []
+    for row in anchors:
+        declared = row.get("payload", {}).get("attestations", [])
+        declared_by_authority = {
+            (item.get("type"), item.get("authority")): item for item in declared
+        }
+        if len(declared_by_authority) != len(declared):
+            raise ValueError("anchor signed attestation roster contains duplicate authorities")
+        effective = dict(declared_by_authority)
+        for sidecar in row.get("attestations", []):
+            identity = (sidecar.get("type"), sidecar.get("authority"))
+            if identity not in declared_by_authority:
+                raise ValueError(
+                    "anchor attestation sidecar names an authority absent from the signed roster"
+                )
+            effective[identity] = sidecar
+        effective_attestations.append(list(effective.values()))
     anchor_assurance = [
-        "rfc3161"
-        if any(item.get("type") == "rfc3161" and item.get("status") == "attested" for item in items)
-        else "pending"
+        "pending"
         if any(item.get("status") == "pending" for item in items)
+        else "rfc3161"
+        if any(item.get("type") == "rfc3161" and item.get("status") == "attested" for item in items)
         else "unattested"
         for items in effective_attestations
     ]
