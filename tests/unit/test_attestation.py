@@ -261,41 +261,38 @@ def test_provider_records_attested_only_after_token_validation(tmp_path, monkeyp
     assert commands[1][commands[1].index("-CAfile") + 1].endswith("trust.pem")
 
 
-def test_worker_records_validation_failure_as_named_pending_sidecar(monkeypatch) -> None:
-    provider = Rfc3161AnchorProvider(["https://tsa.example.test"])
-    pending = provider.attest({"head_hash": "a" * 64})[0]
+def test_worker_does_not_persist_validation_failure_and_retries_to_attested() -> None:
+    pending = {
+        "type": "rfc3161",
+        "status": "pending",
+        "authority": "https://tsa.example.test",
+        "anchor_digest": "a" * 64,
+        "requested_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
     writes = []
-
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return None
-
-        def read(self):
-            return b"not-a-timestamp-token"
-
-    monkeypatch.setattr(
-        "mizan_control_plane.attestation.urllib.request.urlopen",
-        lambda request, timeout: Response(),
-    )
+    results = iter([
+        pending | {
+            "failure_reason": "RFC 3161 token validation failed: transient garbage",
+        },
+        pending | {"status": "attested", "evidence": "AA=="},
+    ])
+    calls = []
+    provider = SimpleNamespace(obtain=lambda item: (calls.append(item), next(results))[1])
     worker = AnchorAttestationWorker(
         SimpleNamespace(record_anchor_attestation=lambda *args: writes.append(args)),
         provider,
         SimpleNamespace(open=lambda *args: None),
     )
+    rows = [{
+        "payload": {"anchor_id": "anchor-1", "attestations": [pending]},
+        "attestations": [],
+    }]
 
-    assert worker.process(
-        "tnt_bank-a",
-        [{"payload": {"anchor_id": "anchor-1", "attestations": [pending]}}],
-        900,
-    ) == 1
-    recorded = writes[0][2]
-    assert recorded["status"] == "pending"
-    assert recorded["failure_reason"] == (
-        "token validation unavailable: no TSA trust anchor configured"
-    )
+    assert worker.process("tnt_bank-a", rows, 900) == 0
+    assert writes == []
+    assert worker.process("tnt_bank-a", rows, 900) == 1
+    assert len(calls) == 2
+    assert writes[0][2]["status"] == "attested"
 
 
 def test_tsa_outage_opens_only_evidence_breaker_and_authorization_remains_available(
@@ -330,6 +327,31 @@ def test_worker_appends_final_attestation_without_mutating_anchor_payload() -> N
     ) == 1
     assert writes[0][2]["status"] == "attested"
     assert payload["attestations"][0]["status"] == "pending"
+
+
+def test_worker_does_not_treat_pending_sidecar_as_finalized() -> None:
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": "a" * 64,
+    }
+    calls = []
+    worker = AnchorAttestationWorker(
+        SimpleNamespace(record_anchor_attestation=lambda *args: None),
+        SimpleNamespace(obtain=lambda item: calls.append(item) or item | {
+            "status": "attested", "evidence": "AA==",
+        }),
+        SimpleNamespace(open=lambda *args: None),
+    )
+
+    assert worker.process(
+        "tnt_bank-a",
+        [{
+            "payload": {"anchor_id": "anchor-1", "attestations": [pending]},
+            "attestations": [pending | {"failure_reason": "prior transient failure"}],
+        }],
+        900,
+    ) == 1
+    assert calls == [pending]
 
 
 def test_customer_countersignature_binds_anchor_digest() -> None:

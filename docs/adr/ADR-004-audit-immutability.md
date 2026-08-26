@@ -267,9 +267,11 @@ the answer stops being Mizan's word and becomes the customer's own key. It never
   returns the auditor to trusting Mizan. The verifier must print which trust root it used.
 - **Validate before recording completion.** The asynchronous worker recomputes the anchor imprint and
   validates every returned token against operator-supplied `MIZAN_ANCHOR_TSA_TRUST_ANCHORS` before it may
-  append an `attested` sidecar. Invalid responses append a named `pending` failure reason and never raise
-  the stream's assurance. Production requires at least one trust root and HTTPS-only TSA endpoints; this
-  validation remains outside the authorization hot path.
+  append an `attested` sidecar. Invalid responses remain retryable attempts and do not consume the immutable
+  `(anchor, authority, type)` sidecar slot; the original signed payload remains the durable pending state and
+  stays visible to the pending-SLO breaker. Only an appended `attested` outcome is finalized or counted as a
+  completion. Production requires at least one trust root and HTTPS-only TSA endpoints; this validation
+  remains outside the authorization hot path.
 
 ### G.3 What this buys, and what it does not
 
@@ -387,3 +389,12 @@ the token's message imprint against the independently recomputed anchor digest, 
 Assurance is derived only from successfully validated tokens. The manifest assurance block is merely a claim
 under test; any claimed/derived mismatch fails verification. Development remains explicitly unattested and
 does not satisfy the production form of I-11.
+
+### G.12 Implementation delta — retryable timestamp attempts (T-055)
+
+The append-only `anchor_attestations` sidecar stores outcomes, not attempts. A validation or transport failure
+does not write a `pending` sidecar: the signed anchor payload already supplies the durable pending state, so
+leaving the outcome slot empty preserves retryability and keeps the anchor visible to the pending-SLO breaker.
+The worker treats only `attested` sidecars as finalized, persists only an `attested` provider result, and counts
+only that append as a completion. Diagnostic attempt persistence is deliberately deferred rather than made
+mistakable for assurance evidence; adding it later requires a separately keyed append-only relation.

@@ -156,7 +156,9 @@ class AnchorAttestationWorker:
         completed = 0
         for row in anchor_rows:
             finalized = {
-                (item.get("type"), item.get("authority")) for item in row.get("attestations", [])
+                (item.get("type"), item.get("authority"))
+                for item in row.get("attestations", [])
+                if item.get("status") == "attested"
             }
             payload = row["payload"]
             for pending in payload.get("attestations", []):
@@ -165,15 +167,21 @@ class AnchorAttestationWorker:
                 if (pending.get("type"), pending.get("authority")) in finalized:
                     continue
                 try:
-                    attested = self.provider.obtain(pending)
+                    result = self.provider.obtain(pending)
                 except Exception:
                     if pending_attestation_breaker_open([pending], max_pending_seconds, now):
                         self.breaker.open(
                             "anchor_attestation_slo", tenant_id, payload["anchor_id"]
                         )
                     continue
+                if result.get("status") != "attested":
+                    if pending_attestation_breaker_open([pending], max_pending_seconds, now):
+                        self.breaker.open(
+                            "anchor_attestation_slo", tenant_id, payload["anchor_id"]
+                        )
+                    continue
                 self.repository.record_anchor_attestation(
-                    tenant_id, payload["anchor_id"], attested
+                    tenant_id, payload["anchor_id"], result
                 )
                 completed += 1
         return completed
