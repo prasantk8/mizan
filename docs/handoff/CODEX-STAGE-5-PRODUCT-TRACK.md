@@ -208,7 +208,7 @@ pre-fix failing test and SHA.
 - Under `CI=true`, an absent `MIZAN_TEST_DATABASE_URL` fails instead of skipping.
 - Fix the three rule-11 tests: `test_veto_and_rejection_quorum_are_distinct`,
   `test_dual_control_counts_distinct_control_domains`,
-  `test_real_spiffe_uri_san_reaches_execution_endpoint`.
+  `test_real_spiffe_uri_san_reaches_execution_endpoint` (renamed 2026-08-27).
 
 ### T-080 · Config registry reconciliation (S) — week 3
 
