@@ -457,3 +457,40 @@ Custody, not URI naming, controls production eligibility. `LocalKeyProvider` alw
 Published key documents carry required `custody` in `{development-derived, kms, hsm}`; KMS/HSM adapters
 receive that value explicitly rather than deriving it from a reference string. Offline verification
 reports publicly derivable development custody as forgeable even when every signature is valid.
+
+### G.19 Implementation delta — publication is a process, not a side effect of a request (T-074)
+
+Every amendment above describes publication as asynchronous, and until T-074 nothing performed it
+asynchronously. `OutboxPublisher.drain` existed and was only ever called by a test that stood up its
+own publisher, so a deployed control plane wrote evidence rows that nothing at rest turned into
+receipts. That is not a slow publisher; it is no publisher, and the symptom it produces is remote
+from its cause: a financial write refusing on `immutable_receipt_missing` (I-25) with nothing in the
+logs connecting the refusal to the absent process. `mizan-drain-outbox` is that process.
+
+Four properties are normative for any drainer, not just this one.
+
+**Failure is isolated to a stream.** A segment that cannot be published has its attempt count
+raised and is retried; the other streams in the same batch still publish. Draining a batch as one
+unit means one unpublishable record holds every other tenant's evidence behind it.
+
+**Nothing is dropped, and nothing stuck is allowed to mask the alarm.** A row that exceeds
+`MIZAN_OUTBOX_MAX_ATTEMPTS` is quarantined: excluded from the head of the batch and from the
+publication-lag measurement, never deleted, and reported through the evidence breaker under
+`outbox_poisoned`. The lag SLO exists to be alarming when it breaches; a permanently stuck row
+pinning it above threshold would retire the one signal that matters.
+
+**Backpressure runs toward the work.** A saturated batch means the backlog is growing faster than
+one batch per interval, so the drainer returns immediately instead of sleeping. The bound on that
+is fairness — one busy tenant may not starve another tenant's publication SLO — not throughput.
+
+**Events without receipts are still published.** SPEC §4 approval, policy, agent, execution and
+security events have external subscribers and no evidence receipt, and `drain` has always ignored
+them. They were written, counted against the lag, and delivered to nothing. The drainer now relays
+them to the delivery sink and stamps them, at-least-once: the sink is called before the row is
+marked, because a duplicated SIEM event is recoverable and a silently dropped one is not.
+
+Tenants are configured (`MIZAN_DRAIN_TENANTS`), never discovered. `mizan.tenants` carries FORCE ROW
+LEVEL SECURITY keyed on the current tenant, so a process able to enumerate tenants would already
+have crossed the boundary ADR-005 exists to hold. The cost is real and is recorded as blocker
+B-19: a tenant absent from the drainer's configuration is never published and never swept, and
+nothing in the system currently notices.

@@ -123,3 +123,28 @@ Three consequences, all pending ratification under B-16:
    waiting for them.
 
 `mizan.approval.requested` is emitted through the outbox in the same transaction (SPEC §4).
+
+## Implementation Amendment — expiry is reached, not reported (T-074)
+
+`EXPIRED` was declared terminal by this ADR and was unreachable in the implementation. At commit
+330a2d5 the string appears in exactly one place in the control plane — the `TERMINAL_STATES` set
+literal — and no code path could write it to `mizan.approvals`. An approval whose epoch TTL had
+elapsed stayed `PENDING` in the database indefinitely; the elapsed TTL was noticed only when the
+next voter arrived and was told `approval_epoch_expired`. That is a state the system *computes on
+demand*, not one it *reaches*, and the difference is the whole claim an auditor reads off the row.
+
+The expiry sweeper closes it, under three constraints.
+
+**Expiry never escalates.** SPEC §4 defines `mizan.approval.expired` as an epoch TTL elapsing *with
+no further epoch*. An approval nobody answered is a refusal, and fail-closed means the sweeper
+terminates it rather than opening an escalation epoch on the requester's behalf. Escalation stays a
+deliberate act by someone with the authority to take it.
+
+**A person always beats the sweeper.** The scan that finds expired epochs and the write that closes
+them are different transactions. Every candidate is re-checked under a row lock, through the same
+`approval.expire` domain function the request path would use, and a vote, escalation or withdrawal
+landing in between simply wins: the sweeper logs the race and moves on.
+
+**The transition and its event are one transaction.** G8 admits no dual write. The approval row,
+the epoch row, the `APPROVAL_RESOLVED` DecisionEvent and the `mizan.approval.expired` outbox row
+commit together or not at all.

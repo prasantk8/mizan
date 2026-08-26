@@ -1653,8 +1653,13 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_EXTERNAL_PAYLOAD_MAX_DEPTH` | `32` | deployment | Parser nesting limit; breach is a controlled tool error. |
 | `MIZAN_EXTERNAL_PAYLOAD_MAX_KEYS` | `4096` | deployment | Total keys across the parsed document, not merely top-level keys. |
 | `MIZAN_EXTERNAL_ADAPTER_TIMEOUT_MS` | `2000` | deployment | Adapter breach → controlled tool error (I-17). |
-| `MIZAN_OUTBOX_DRAIN_INTERVAL_MS` | `250` | deployment | Outbox → Kafka/object-store publisher. |
-| `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` | `5` | deployment | Non-financial asynchronous publication SLO; breach opens the evidence breaker. Financial writes always require a receipt before redemption (I-25). |
+| `MIZAN_OUTBOX_DRAIN_INTERVAL_MS` | `250` | deployment | `mizan-drain-outbox` tick interval. A saturated batch is drained again immediately rather than waiting out the interval. |
+| `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` | `5` | deployment | Non-financial asynchronous publication SLO; breach opens the evidence breaker. Financial writes always require a receipt before redemption (I-25). Quarantined rows are excluded from the measurement and raise `outbox_poisoned` instead, so one stuck row cannot hold this alarm permanently open. |
+| `MIZAN_AUDIT_ANCHOR_INTERVAL_RECORDS` | `10000` | deployment | Records published per stream before an anchor is due, whichever comes first with `MIZAN_AUDIT_ANCHOR_INTERVAL_SECONDS`. |
+| `MIZAN_OUTBOX_BATCH_LIMIT` | `100` | deployment | Rows per drain batch. Bounds the size of one published evidence segment. |
+| `MIZAN_OUTBOX_MAX_ATTEMPTS` | `5` | deployment | Failed publication attempts before a row is quarantined: excluded from the batch head and from the lag measurement, never deleted, and reported through the evidence breaker. |
+| `MIZAN_EXPIRY_SWEEP_INTERVAL_SECONDS` | `30` | deployment | Cadence of the expiry sweep that reaches `EXPIRED` and `LEASE_EXPIRED` at rest. Each candidate is re-checked under a row lock; a person who acts between scan and lock always wins. |
+| `MIZAN_DRAIN_TENANTS` | *(required for `mizan-drain-outbox`)* | deployment | Comma-separated tenants the drainer serves, or `--tenant-id` repeated. Tenants are **not** discovered: `mizan.tenants` carries FORCE ROW LEVEL SECURITY keyed on the current tenant, so enumeration would require crossing the isolation boundary of ADR-005. A tenant absent from this list is never published and never swept. |
 
 ### 8.1 MCP Governance Gateway (`mizan-mcp-gateway`)
 

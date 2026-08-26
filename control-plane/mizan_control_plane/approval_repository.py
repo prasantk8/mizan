@@ -60,6 +60,38 @@ def insert_epoch_tx(
     )
 
 
+def update_approval_tx(connection: Any, tenant_id: str, approval: dict[str, Any]) -> None:
+    """Write an approval and its current epoch back on an existing connection.
+
+    Module-level because the expiry sweeper (T-074) reaches `EXPIRED` at rest, with no approver
+    calling in, and has to persist an approval the same way a vote does — same two rows, same
+    order, same transaction as the event it emits.
+    """
+    epoch = current_epoch(approval)
+    connection.execute(
+        "UPDATE mizan.approvals SET state=%s,active_epoch_id=%s,document=%s "
+        "WHERE tenant_id=%s AND approval_id=%s",
+        (
+            approval["state"],
+            epoch["epoch_id"],
+            json.dumps(approval),
+            tenant_id,
+            approval["approval_id"],
+        ),
+    )
+    connection.execute(
+        "UPDATE mizan.approval_epochs SET state=%s,document=%s,closed_at=%s "
+        "WHERE tenant_id=%s AND epoch_id=%s",
+        (
+            epoch["state"],
+            json.dumps(epoch),
+            epoch.get("closed_at"),
+            tenant_id,
+            epoch["epoch_id"],
+        ),
+    )
+
+
 def open_approval_tx(
     connection: Any,
     tenant_id: str,
@@ -464,31 +496,7 @@ class ApprovalRepository:
 
     _insert_epoch = staticmethod(insert_epoch_tx)
 
-    @staticmethod
-    def _update(connection: Any, tenant_id: str, approval: dict[str, Any]) -> None:
-        epoch = current_epoch(approval)
-        connection.execute(
-            "UPDATE mizan.approvals SET state=%s,active_epoch_id=%s,document=%s "
-            "WHERE tenant_id=%s AND approval_id=%s",
-            (
-                approval["state"],
-                epoch["epoch_id"],
-                json.dumps(approval),
-                tenant_id,
-                approval["approval_id"],
-            ),
-        )
-        connection.execute(
-            "UPDATE mizan.approval_epochs SET state=%s,document=%s,closed_at=%s "
-            "WHERE tenant_id=%s AND epoch_id=%s",
-            (
-                epoch["state"],
-                json.dumps(epoch),
-                epoch.get("closed_at"),
-                tenant_id,
-                epoch["epoch_id"],
-            ),
-        )
+    _update = staticmethod(update_approval_tx)
 
     def _update_with_new_epoch(
         self, connection: Any, tenant_id: str, approval: dict[str, Any]

@@ -33,6 +33,7 @@ from mizan_control_plane.evidence import (
     LocalImmutableObjectStore,
     OutboxPublisher,
 )
+from mizan_control_plane.outbox_worker import DrainPolicy, OutboxWorker
 from mizan_control_plane.registry import RegistryRepository, policy_semantic_hash
 
 TENANT = "tnt_bank-a"
@@ -189,7 +190,12 @@ def activate_policy(database_url: str) -> None:
 
 
 def publish_evidence(tmp_path: Path) -> None:
-    """What the T-074 drainer will do continuously: receipts, then an anchor."""
+    """One tick of the shipped T-074 drainer: receipts, relayed events, then an anchor.
+
+    This used to be a hand-rolled drain-and-anchor pair inside the test, which meant the gate was
+    proving that *some* publisher could close the loop, not that the one we ship does. Anchoring is
+    forced due on the first tick because the gate cannot wait out a 300-second cadence.
+    """
     evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     try:
         publisher = OutboxPublisher(
@@ -198,8 +204,10 @@ def publish_evidence(tmp_path: Path) -> None:
             Ed25519EvidenceSigner.development("evidence-receipt"),
             Ed25519EvidenceSigner.development("evidence-anchor"),
         )
-        publisher.drain(TENANT)
-        publisher.anchor(TENANT, f"{TENANT}:adr:0")
+        worker = OutboxWorker(
+            publisher, evidence, None, (TENANT,), DrainPolicy(anchor_interval_seconds=0.0)
+        )
+        worker.tick_tenant(TENANT)
     finally:
         evidence.pool.close()
 

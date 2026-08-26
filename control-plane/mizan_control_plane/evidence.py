@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,8 @@ from .attestation import Rfc3161AnchorProvider
 from .canonical import canonical_hash
 from .keys import KeyRole, SigningKey, development_key_provider
 from .problems import Problem
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DeliverySink(Protocol):
@@ -248,26 +251,131 @@ class EvidenceRepository:
         connection.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
 
     def unpublished(
-        self, tenant_id: str, limit: int = 100, evidence_only: bool = False
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        evidence_only: bool = False,
+        max_attempts: int | None = None,
+        relay_only: bool = False,
     ) -> list[dict[str, Any]]:
+        """Rows still waiting to be published, oldest first.
+
+        `evidence_only` selects the three aggregates that become signed receipts; `relay_only`
+        selects everything else — the SPEC §4 approval, policy, agent and security events, which
+        have external subscribers but no receipt. Neither is a superset of the other on purpose:
+        the two are published by different code with different durability meanings, and a caller
+        that asked for one must never be handed the other.
+
+        `max_attempts` excludes quarantined rows. A poisoned row that kept reappearing at the head
+        of every batch would stall the queue behind it, and — worse — would hold the publication
+        lag permanently above its SLO, which turns a real alarm into background noise.
+        """
+        if evidence_only and relay_only:
+            raise ValueError("evidence_only and relay_only select disjoint sets")
+        clauses = ["tenant_id=%s", "published_at IS NULL"]
+        params: list[Any] = [tenant_id]
+        if evidence_only:
+            clauses.append("aggregate_type IN ('decision','decision_event','audit')")
+        if relay_only:
+            clauses.append("aggregate_type NOT IN ('decision','decision_event','audit')")
+        if max_attempts is not None:
+            clauses.append("attempts < %s")
+            params.append(max_attempts)
+        params.append(limit)
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
-            clause = (
-                " AND aggregate_type IN ('decision','decision_event','audit')"
-                if evidence_only
-                else ""
-            )
             rows = connection.execute(
-                "SELECT outbox_id,event_type,payload,created_at FROM mizan.outbox "
-                "WHERE tenant_id=%s AND published_at IS NULL"
-                + clause
+                "SELECT outbox_id,event_type,payload,created_at,attempts,aggregate_type "
+                "FROM mizan.outbox WHERE "
+                + " AND ".join(clauses)
                 + " ORDER BY outbox_id LIMIT %s FOR UPDATE SKIP LOCKED",
-                (tenant_id, limit),
+                params,
             ).fetchall()
             return [
-                {"outbox_id": row[0], "event_type": row[1], "payload": row[2], "created_at": row[3]}
+                {
+                    "outbox_id": row[0],
+                    "event_type": row[1],
+                    "payload": row[2],
+                    "created_at": row[3],
+                    "attempts": row[4],
+                    "aggregate_type": row[5],
+                }
                 for row in rows
             ]
+
+    def streams(self, tenant_id: str) -> list[str]:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT stream_id FROM mizan.evidence_chain_heads WHERE tenant_id=%s "
+                "ORDER BY stream_id",
+                (tenant_id,),
+            ).fetchall()
+            return [row[0] for row in rows]
+
+    def seconds_since_last_anchor(self, tenant_id: str, stream_id: str) -> float | None:
+        """Age of the newest anchor on a stream, or None if the stream has never been anchored.
+
+        Anchor cadence is a property of the stream, not of the process watching it. Measuring from
+        process start instead means a worker that restarts hourly never reaches a 300-second
+        cadence's first anchor, and a `--once` invocation from cron never anchors at all — the
+        stream keeps accruing published records that nothing binds into an anchor.
+        """
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT extract(epoch FROM clock_timestamp() - max(created_at)) "
+                "FROM mizan.evidence_anchors WHERE tenant_id=%s AND stream_id=%s",
+                (tenant_id, stream_id),
+            ).fetchone()
+        return None if row is None or row[0] is None else float(row[0])
+
+    def backlog(self, tenant_id: str, max_attempts: int) -> dict[str, Any]:
+        """What is unpublished, how old the oldest live row is, and how much is quarantined.
+
+        The age is measured against the database clock, not the worker's: a drainer whose host
+        clock has drifted would otherwise report an SLO it is not actually meeting.
+        """
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT count(*) FILTER (WHERE attempts < %s),"
+                "       count(*) FILTER (WHERE attempts >= %s),"
+                "       coalesce(extract(epoch FROM clock_timestamp()"
+                "                - min(created_at) FILTER (WHERE attempts < %s)),0) "
+                "FROM mizan.outbox WHERE tenant_id=%s AND published_at IS NULL",
+                (max_attempts, max_attempts, max_attempts, tenant_id),
+            ).fetchone()
+            return {"pending": row[0], "quarantined": row[1], "oldest_age_seconds": float(row[2])}
+
+    def record_delivery(self, tenant_id: str, outbox_id: int) -> bool:
+        """Mark a relayed (non-evidence) row published.
+
+        Returns False when another drainer got there first. Delivery is at-least-once — the sink
+        is called before this commits — so a subscriber must tolerate a repeat. The alternative,
+        marking first, would make it at-most-once, and a silently dropped SIEM event is worse than
+        a duplicated one.
+        """
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            updated = connection.execute(
+                "UPDATE mizan.outbox SET published_at=clock_timestamp(),attempts=attempts+1 "
+                "WHERE tenant_id=%s AND outbox_id=%s AND published_at IS NULL",
+                (tenant_id, outbox_id),
+            ).rowcount
+            return updated == 1
+
+    def record_delivery_failure(self, tenant_id: str, outbox_id: int) -> int:
+        """Count a failed publication attempt and report the new total."""
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "UPDATE mizan.outbox SET attempts=attempts+1 "
+                "WHERE tenant_id=%s AND outbox_id=%s AND published_at IS NULL "
+                "RETURNING attempts",
+                (tenant_id, outbox_id),
+            ).fetchone()
+            return row[0] if row else 0
 
     def append_audit(
         self,
@@ -812,6 +920,19 @@ class EvidenceRepository:
         return {"items": [row[0] for row in rows], "next_cursor": next_cursor}
 
 
+@dataclass(frozen=True, slots=True)
+class DrainReport:
+    """What one drain pass did, in the terms the worker schedules on."""
+
+    fetched: int
+    published: int
+    quarantined: tuple[int, ...] = ()
+
+    def saturated(self, limit: int) -> bool:
+        """A full batch means more is waiting; the worker should come straight back."""
+        return self.fetched >= limit
+
+
 class OutboxPublisher:
     def __init__(
         self,
@@ -832,36 +953,97 @@ class OutboxPublisher:
         self.anchor_provider = anchor_provider or anchor_provider_from_config()
 
     def drain(self, tenant_id: str, limit: int = 100) -> int:
-        published = 0
+        return self.drain_batch(tenant_id, limit).published
+
+    def drain_batch(
+        self, tenant_id: str, limit: int = 100, max_attempts: int | None = None
+    ) -> DrainReport:
+        """Publish one batch of evidence rows, isolating failures to a single stream.
+
+        A stream that cannot be published does not stop the others. That is the whole point of
+        doing this per segment: before there was a worker, one unpublishable record would have sat
+        at the head of the queue and held every other tenant's evidence behind it, and the symptom
+        would have been financial writes refusing on `immutable_receipt_missing` for reasons
+        nothing in the logs connected to.
+
+        Nothing is ever dropped. A failed segment has its attempt count raised and is retried on
+        the next tick; once a row crosses `max_attempts` it stops being counted in the publication
+        lag — not because it is forgiven, but because a permanently stuck row pinning the lag above
+        its SLO turns the one alarm that matters into a constant. `DrainReport.quarantined` is what
+        the worker raises instead, and it opens the evidence breaker on its own.
+        """
+        items = self.repository.unpublished(
+            tenant_id, limit, evidence_only=True, max_attempts=max_attempts
+        )
         groups: dict[str, list[dict[str, Any]]] = {}
-        for item in self.repository.unpublished(tenant_id, limit, evidence_only=True):
-            groups.setdefault(item["payload"]["stream_id"], []).append(item)
-        for stream_id, items in groups.items():
-            items.sort(key=lambda item: item["payload"]["sequence_number"])
-            first, last = items[0]["payload"], items[-1]["payload"]
-            key = (
-                f"segments/{tenant_id}/{stream_id.replace(':', '_')}/"
-                f"{first['sequence_number']:020d}-{last['sequence_number']:020d}-{last['record_hash']}.json"
-            )
-            canonical = rfc8785.dumps([item["payload"] for item in items])
-            object_version = self.store.put_once(key, canonical)
-            for item in items:
-                payload = item["payload"]
-                receipt = {
-                    "receipt_id": str(uuid4()),
-                    "tenant_id": tenant_id,
-                    "stream_id": stream_id,
-                    "sequence_number": payload["sequence_number"],
-                    "record_hash": payload["record_hash"],
-                    "object_version": object_version,
-                    "object_key": key,
-                    "key_id": self.receipt_signer.key_id,
-                    "issued_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                }
-                signature = self.receipt_signer.sign(receipt)
-                self.repository.record_publication(tenant_id, item["outbox_id"], receipt, signature)
-                self.delivery.publish(item["event_type"], stream_id, payload)
-                published += 1
+        quarantined: list[int] = []
+        for item in items:
+            payload = item["payload"]
+            if not isinstance(payload, dict) or not {
+                "stream_id",
+                "sequence_number",
+                "record_hash",
+            } <= payload.keys():
+                # An evidence aggregate whose payload is not an evidence record cannot be signed
+                # into a receipt by any amount of retrying.
+                attempts = self.repository.record_delivery_failure(tenant_id, item["outbox_id"])
+                LOGGER.error(
+                    "outbox row %s (%s) is not a publishable evidence record; attempts=%s",
+                    item["outbox_id"],
+                    item["event_type"],
+                    attempts,
+                )
+                quarantined.append(item["outbox_id"])
+                continue
+            groups.setdefault(payload["stream_id"], []).append(item)
+        published = 0
+        for stream_id, group in groups.items():
+            try:
+                published += self._publish_segment(tenant_id, stream_id, group)
+            except Exception:
+                LOGGER.exception(
+                    "evidence segment for %s/%s was not published; %s row(s) will be retried",
+                    tenant_id,
+                    stream_id,
+                    len(group),
+                )
+                for item in group:
+                    attempts = self.repository.record_delivery_failure(
+                        tenant_id, item["outbox_id"]
+                    )
+                    if max_attempts is not None and attempts >= max_attempts:
+                        quarantined.append(item["outbox_id"])
+        return DrainReport(fetched=len(items), published=published, quarantined=tuple(quarantined))
+
+    def _publish_segment(
+        self, tenant_id: str, stream_id: str, items: list[dict[str, Any]]
+    ) -> int:
+        published = 0
+        items.sort(key=lambda item: item["payload"]["sequence_number"])
+        first, last = items[0]["payload"], items[-1]["payload"]
+        key = (
+            f"segments/{tenant_id}/{stream_id.replace(':', '_')}/"
+            f"{first['sequence_number']:020d}-{last['sequence_number']:020d}-{last['record_hash']}.json"
+        )
+        canonical = rfc8785.dumps([item["payload"] for item in items])
+        object_version = self.store.put_once(key, canonical)
+        for item in items:
+            payload = item["payload"]
+            receipt = {
+                "receipt_id": str(uuid4()),
+                "tenant_id": tenant_id,
+                "stream_id": stream_id,
+                "sequence_number": payload["sequence_number"],
+                "record_hash": payload["record_hash"],
+                "object_version": object_version,
+                "object_key": key,
+                "key_id": self.receipt_signer.key_id,
+                "issued_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            }
+            signature = self.receipt_signer.sign(receipt)
+            self.repository.record_publication(tenant_id, item["outbox_id"], receipt, signature)
+            self.delivery.publish(item["event_type"], stream_id, payload)
+            published += 1
         return published
 
     def anchor(

@@ -245,6 +245,28 @@ def open_next_epoch(
     return updated
 
 
+def expire(approval: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """Close an approval whose open epoch ran out of time.
+
+    Expiry is terminal and fail-closed. SPEC §4 defines `mizan.approval.expired` as "epoch TTL
+    elapsed with no further epoch", so this never escalates on anyone's behalf: an approval nobody
+    answered is a refusal, not a question that quietly keeps ageing. The caller is a sweeper rather
+    than a person, which is why every precondition is re-asserted here — the row it selected may
+    have been voted on between the scan and the lock.
+    """
+    now = now or datetime.now(UTC)
+    updated = copy.deepcopy(approval)
+    if updated["state"] in TERMINAL_STATES:
+        raise Problem(409, "approval_terminal", "Terminal approval cannot expire")
+    epoch = current_epoch(updated)
+    if epoch["state"] != "OPEN":
+        raise Problem(409, "approval_epoch_not_open", "Only an open epoch can expire")
+    if now < datetime.fromisoformat(epoch["expires_at"].replace("Z", "+00:00")):
+        raise Problem(409, "approval_epoch_live", "Approval epoch has not expired")
+    _close(updated, epoch, "EXPIRED", "EXPIRED", now)
+    return updated
+
+
 def withdraw(approval: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     updated = copy.deepcopy(approval)

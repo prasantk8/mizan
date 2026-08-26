@@ -37,6 +37,27 @@ def _base64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
+def save_lease_tx(connection: Any, tenant_id: str, lease: dict[str, Any]) -> None:
+    """Write a lease back on an existing connection.
+
+    Module-level because the expiry sweeper (T-074) reaches `LEASE_EXPIRED` at rest, without an
+    executor calling in, and must persist a lease exactly the way a redemption path does. Two
+    writers with two shapes for the same row is how a state machine develops a second opinion.
+    """
+    connection.execute(
+        "UPDATE mizan.execution_leases SET state=%s,extensions_used=%s,document=%s,expires_at=%s "
+        "WHERE tenant_id=%s AND lease_id=%s",
+        (
+            lease["state"],
+            lease["extensions_used"],
+            json.dumps(lease),
+            lease["expires_at"],
+            tenant_id,
+            lease["lease_id"],
+        ),
+    )
+
+
 class ExecutionTokenCodec:
     def __init__(
         self,
@@ -625,20 +646,7 @@ class ExecutionService:
             raise terminal_error
         return lease
 
-    @staticmethod
-    def _save_lease(connection: Any, tenant_id: str, lease: dict[str, Any]) -> None:
-        connection.execute(
-            "UPDATE mizan.execution_leases SET state=%s,extensions_used=%s,document=%s,expires_at=%s "
-            "WHERE tenant_id=%s AND lease_id=%s",
-            (
-                lease["state"],
-                lease["extensions_used"],
-                json.dumps(lease),
-                lease["expires_at"],
-                tenant_id,
-                lease["lease_id"],
-            ),
-        )
+    _save_lease = staticmethod(save_lease_tx)
 
     def _revalidate(
         self,
