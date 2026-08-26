@@ -310,8 +310,9 @@ anchor, which remains T-033/T-036.
 
 The v1 export is a manifest-bound directory containing canonical records recovered from immutable receipt
 objects, signed receipts, the complete chained anchor set, verification checkpoints, and the public keys
-needed for those signatures. The standalone verifier imports no Mizan code and needs only pinned RFC 8785
-and cryptography packages; CI runs it in a clean environment with the network namespace disabled. Until
+needed for those signatures. The standalone verifier imports no Mizan code and needs pinned RFC 8785 and
+cryptography packages; RFC 3161 verification additionally requires the OpenSSL 3 CLI. CI runs it in a clean
+environment with the network namespace disabled. Until
 Amendment G.2 is implemented by T-036, its passing output labels the anchor as Mizan-self-signed and gives
 the database-plus-signing-key rewrite limitation equal prominence. This creates portable checkability now
 without misrepresenting self-attestation as external proof.
@@ -361,3 +362,23 @@ validity window, and revocation time, and export bundles preserve those same doc
 new active key ID only for new signatures. Providers expose no re-sign operation, expired/revoked versions
 remain published, and the verifier distinguishes cryptographic validity under a revoked key from an
 unqualified pass or signature failure. Cloud-vendor selection remains a deployment decision.
+
+### G.11 Implementation delta — external timestamp verification (T-036)
+
+The T-033 I-11 waiver is lifted for production. `Rfc3161AnchorProvider` writes a pending attestation carrying
+only the SHA-256 digest of the canonical anchor core, and its worker exchanges an RFC 3161 query with the
+configured TSA. Pending age beyond `MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS` opens the evidence breaker;
+pending output is never called externally anchored. Multiple TSA entries and additive customer
+countersignatures are representable in `attestations[]`.
+
+Completion never mutates the signed anchor. Final RFC 3161 tokens and customer countersignatures are written
+to the append-only, tenant-scoped `anchor_attestations` sidecar and exported beside the original signed
+payload. Assurance is calculated per anchor and the stream takes the weakest result; a mixed stream is never
+described as externally anchored. The standalone verifier derives that result only after OpenSSL validates
+each RFC 3161 token against operator-supplied trust roots, and rejects any stronger manifest claim.
+
+Offline verification invokes RFC 3161 token validation against trust roots supplied by the operator, checks
+the token's message imprint against the independently recomputed anchor digest, and prints the roots used.
+Assurance is derived only from successfully validated tokens. The manifest assurance block is merely a claim
+under test; any claimed/derived mismatch fails verification. Development remains explicitly unattested and
+does not satisfy the production form of I-11.

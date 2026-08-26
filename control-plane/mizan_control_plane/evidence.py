@@ -14,6 +14,7 @@ import rfc8785
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from psycopg_pool import ConnectionPool
 
+from .attestation import Rfc3161AnchorProvider
 from .canonical import canonical_hash
 from .keys import KeyRole, SigningKey, development_key_provider
 from .problems import Problem
@@ -29,7 +30,7 @@ class NullDeliverySink:
 
 
 class AnchorProvider(Protocol):
-    def attest(self, anchor_payload: dict[str, Any]) -> dict[str, Any]: ...
+    def attest(self, anchor_payload: dict[str, Any]) -> dict[str, Any] | list[dict[str, Any]]: ...
 
 
 class DevelopmentUnattestedAnchorProvider:
@@ -47,9 +48,12 @@ class DevelopmentUnattestedAnchorProvider:
 
 def anchor_provider_from_config(name: str | None = None) -> AnchorProvider:
     selected = name or os.environ.get("MIZAN_ANCHOR_PROVIDER", "development-unattested")
-    if selected != "development-unattested":
-        raise RuntimeError(f"anchor provider {selected!r} is not implemented")
-    return DevelopmentUnattestedAnchorProvider()
+    if selected == "development-unattested":
+        return DevelopmentUnattestedAnchorProvider()
+    if selected == "rfc3161":
+        endpoints = [item for item in os.environ.get("MIZAN_ANCHOR_TSA_ENDPOINTS", "").split(",") if item]
+        return Rfc3161AnchorProvider(endpoints)
+    raise RuntimeError(f"anchor provider {selected!r} is not implemented")
 
 
 class LocalImmutableObjectStore:
@@ -583,11 +587,40 @@ class EvidenceRepository:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
             rows = connection.execute(
-                "SELECT signed_payload,signature FROM mizan.evidence_anchors "
+                "SELECT signed_payload,signature,anchor_id FROM mizan.evidence_anchors "
                 "WHERE tenant_id=%s AND stream_id=%s ORDER BY anchor_number NULLS FIRST,to_sequence",
                 (tenant_id, stream_id),
             ).fetchall()
-            return [{"payload": row[0], "signature": row[1]} for row in rows]
+            result = []
+            for row in rows:
+                attestations = connection.execute(
+                    "SELECT document FROM mizan.anchor_attestations "
+                    "WHERE tenant_id=%s AND anchor_id=%s ORDER BY authority,attestation_type",
+                    (tenant_id, row[2]),
+                ).fetchall()
+                result.append({
+                    "payload": row[0],
+                    "signature": row[1],
+                    "attestations": [item[0] for item in attestations],
+                })
+            return result
+
+    def record_anchor_attestation(
+        self, tenant_id: str, anchor_id: str, attestation: dict[str, Any]
+    ) -> None:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            connection.execute(
+                "INSERT INTO mizan.anchor_attestations(tenant_id,anchor_id,authority,attestation_type,document) "
+                "VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (
+                    tenant_id,
+                    anchor_id,
+                    attestation["authority"],
+                    attestation["type"],
+                    json.dumps(attestation),
+                ),
+            )
 
     @staticmethod
     def _page_cursor(created_at: datetime, identifier: str) -> str:
@@ -810,7 +843,10 @@ class OutboxPublisher:
             "key_id": self.anchor_signer.key_id,
             "anchored_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
-        unsigned = anchor_core | {"attestations": [self.anchor_provider.attest(anchor_core)]}
+        proposed = self.anchor_provider.attest(anchor_core)
+        unsigned = anchor_core | {
+            "attestations": proposed if isinstance(proposed, list) else [proposed]
+        }
         object_version = self.store.put_once(key, rfc8785.dumps(unsigned))
         anchor = unsigned | {"object_key": key, "object_version": object_version}
         signature = self.anchor_signer.sign(anchor)

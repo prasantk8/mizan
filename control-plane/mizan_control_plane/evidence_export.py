@@ -101,10 +101,29 @@ def export_evidence_bundle(
         }
         for key_id, key in sorted(public_keys.items())
     ]
+    anchors = repository.anchors(tenant_id, stream_id)
+    effective_attestations = [
+        row.get("attestations") or row.get("payload", {}).get("attestations", [])
+        for row in anchors
+    ]
+    anchor_assurance = [
+        "rfc3161"
+        if any(item.get("type") == "rfc3161" and item.get("status") == "attested" for item in items)
+        else "pending"
+        if any(item.get("status") == "pending" for item in items)
+        else "unattested"
+        for items in effective_attestations
+    ]
+    externally_attested = bool(anchors) and all(state == "rfc3161" for state in anchor_assurance)
+    assurance = (
+        "rfc3161" if externally_attested
+        else "unattested" if "unattested" in anchor_assurance
+        else "pending"
+    )
     documents = {
         "records.json": records,
         "receipts.json": receipts,
-        "anchors.json": repository.anchors(tenant_id, stream_id),
+        "anchors.json": anchors,
         "checkpoints.json": checkpoints,
         "keys.json": keys,
     }
@@ -118,8 +137,8 @@ def export_evidence_bundle(
         "range": {"from_sequence": range_start, "to_sequence": range_end},
         "files": file_hashes,
         "assurance": {
-            "anchor_attestation": "mizan_self_signed",
-            "external_timestamp": False,
+            "anchor_attestation": assurance,
+            "external_timestamp": externally_attested,
         },
     }
     _write(target / "manifest.json", manifest)

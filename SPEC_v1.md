@@ -1530,7 +1530,7 @@ Reasoning/test agents fuzz against these. Each maps to at least one property-bas
 | I-8 | Every policy cited by an ADR_Record was ACTIVE at evaluation time and is pinned as `(policy_id, version, content_hash)`. A `default_deny` or `system_fail_closed` record cites zero policies and pins the evaluator/configuration version through its evidence metadata (V-15). |
 | I-9 | A deferred (approved) execution runs only if the current `context_hash` equals the hash captured at decision time; drift forces re-evaluation. |
 | I-10 | `execution_token` is single-use (atomic CAS on `jti`), TTL-bound by tool/policy config, and bound to `(tenant_id, agent_id, principal_id, delegation_chain_hash, authorized_executor, decision_id, tool_id, binding_profile, parameters_hash, context_hash[, approval_epoch_id])`. Replay → 403 + `mizan.security.*` event. |
-| I-11 | ADR_Records and AuditTrail entries are append-only: no UPDATE/DELETE grants exist on those tables for any runtime role. Integrity outside the DB administrative boundary is conditional on a verified external anchor provider. **Dated waiver (2026-08-25, T-033):** the implemented development provider is explicitly `unattested`; external rewrite resistance is not achieved until T-036 implements and verifies mandatory RFC 3161 attestation. |
+| I-11 | ADR_Records and AuditTrail entries are append-only: no UPDATE/DELETE grants exist for runtime roles, and every production anchor is externally timestamped by at least one RFC 3161 authority and verified offline against an operator-supplied trust root. Final tokens are append-only `anchor_attestations` sidecars; they never rewrite the signed anchor. Assurance is derived per anchor and the stream takes the weakest result. Development anchors are explicitly `unattested` and never satisfy or claim this production invariant. |
 | I-12 | The stored audit `payload` is post-redaction and `stored_payload_hash` commits to exactly what is stored; the pre-redaction commitment is **keyed** (HMAC), never a bare hash, so low-entropy PII is not recoverable by dictionary attack. |
 | I-13 | **Representability:** every request that passes `EvaluationContext` validation plus §3.1 enrichment yields a schema-valid `ADR_Record`. No decision is renderable that cannot be recorded. Property test: generate valid contexts, assert ADR construction never fails. |
 | I-14 | Every issued token carries a complete, non-null binding tuple; `parameters_hash` is computed only over `bound_pointers` of the cited profile version, so a retry that changes only `volatile_pointers` still redeems, and a change to any bound pointer never does. |
@@ -1575,13 +1575,15 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 |---|---|---|---|
 | `MIZAN_BENCHMARK_RESULTS_DIR` | `benchmarks/results` | build/test | Destination for machine-readable benchmark artifacts; changing it has no runtime effect. |
 | `MIZAN_BENCHMARK_COMMIT_SHA` | checked-out `HEAD` | build/test | Optional assertion only: when set it must exactly equal `HEAD`; it cannot relabel a run. Artifacts also record `worktree_clean`, and provenance validation rejects dirty runs or SHAs that do not resolve to commits in this repository. |
-| `MIZAN_ANCHOR_PROVIDER` | `development-unattested` | deployment | Provider selected for anchor attestation. T-033 ships only `development-unattested`, whose anchor payload is explicitly labelled `none_development`/`unattested`; any other value fails startup/construction until T-036 supplies the ratified production provider. |
+| `MIZAN_ANCHOR_PROVIDER` | `development-unattested` | deployment | `development-unattested` or `rfc3161`; production requires `rfc3161`. Development anchors are explicitly `none_development`/`unattested`. |
 | `MIZAN_ENV` | `development` | deployment | `production` enables mandatory startup custody assertions; production refuses development custody or any `local://` signing reference. |
 | `MIZAN_KEY_CUSTODY_MODE` | `development` | deployment | `development` or deployment-provided `kms_hsm`; production requires `kms_hsm`. |
 | `MIZAN_EVIDENCE_RECEIPT_KEY_REF` | `local://evidence-receipt/dev-1` | deployment | Active `evidence-receipt` signing key; must be distinct from every other role. |
 | `MIZAN_EVIDENCE_ANCHOR_KEY_REF` | `local://evidence-anchor/dev-1` | deployment | Active `evidence-anchor` signing key; rotation is additive and never re-signs history. |
 | `MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF` | `local://execution-token/dev-1` | deployment | Active `execution-token` signing key. |
 | `MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF` | `local://degraded-grant/dev-1` | deployment | Active `degraded-grant` signing key; separate from the degraded WAL encryption key. |
+| `MIZAN_ANCHOR_TSA_ENDPOINTS` | *(required in production)* | deployment | Comma-separated RFC 3161 authorities. The request contains only the SHA-256 anchor digest; multiple authorities are supported. |
+| `MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS` | `900` | deployment | Maximum pending age before the evidence breaker opens; pending streams cannot be described as externally anchored. |
 | `MIZAN_LOW_RISK_DEGRADED_ALLOW` | `false` | deployment | Master switch for the entire degraded-allow path. False disables it regardless of grants. |
 | `Policy.fail_open_allowed` | `false` | policy | Per-policy opt-in; requires the master switch **and** a valid grant (I-21). |
 | `DegradedModeGrant.max_duration_seconds` | `3600` | tenant | Ceiling `MIZAN_DEGRADED_GRANT_MAX_SECONDS` = 86400. |
@@ -1695,8 +1697,9 @@ Authorization transaction (single Postgres txn)
   `keys.json`. The manifest binds every file by SHA-256 and declares the range and current assurance.
   Records are reconstructed from immutable objects referenced by signed receipts, not copied from the
   searchable Postgres document. `scripts/verify_evidence_export.py` verifies the bundle without a database,
-  Mizan package, credential, or network, using only pinned `rfc8785==0.1.4` and `cryptography==50.0.0`.
-  Until T-036, successful output must state that anchors are Mizan-self-signed and cannot withstand a party
+  Mizan package, credential, or network, using pinned `rfc8785==0.1.4` and `cryptography==50.0.0` plus the
+  OpenSSL 3 CLI for RFC 3161 token validation. Unattested development bundles do not invoke OpenSSL.
+  Unless every anchor has a verified external timestamp, successful output must state that the stream cannot withstand a party
   holding both Mizan's database and signing key; it must also disclose pre-chain omission and withheld-final-
   anchor limits.
 - **Operator export entry point.** An installed control-plane package exposes `mizan-export-evidence`.

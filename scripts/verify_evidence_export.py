@@ -8,7 +8,9 @@ import argparse
 import base64
 import hashlib
 import json
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +43,33 @@ def verify_signature(payload: dict[str, Any], signature: str, key: Ed25519Public
         raise VerificationFailure(f"{label} signature is invalid") from exc
 
 
-def verify_bundle(bundle: Path) -> dict[str, Any]:
+def verify_rfc3161(
+    attestation: dict[str, Any], digest: str, trust_anchors: list[Path]
+) -> None:
+    if not trust_anchors:
+        raise VerificationFailure("RFC 3161 attestation requires --tsa-trust-anchor")
+    if attestation.get("anchor_digest") != digest or not attestation.get("evidence"):
+        raise VerificationFailure("RFC 3161 attestation does not bind the anchor digest")
+    with tempfile.TemporaryDirectory(prefix="mizan-tsa-verify-") as directory:
+        token = Path(directory) / "response.tsr"
+        trust = Path(directory) / "trust.pem"
+        try:
+            token.write_bytes(base64.b64decode(attestation["evidence"]))
+            trust.write_bytes(b"\n".join(path.read_bytes() for path in trust_anchors))
+        except (OSError, ValueError) as exc:
+            raise VerificationFailure("RFC 3161 evidence or trust root is malformed") from exc
+        completed = subprocess.run(
+            ["openssl", "ts", "-verify", "-in", str(token), "-digest", digest, "-CAfile", str(trust)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise VerificationFailure("RFC 3161 token verification failed")
+
+
+def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> dict[str, Any]:
+    tsa_trust_anchors = tsa_trust_anchors or []
     manifest = load_json(bundle / "manifest.json")
     if manifest.get("bundle_version") != "1.0":
         raise VerificationFailure("manifest bundle_version is unsupported")
@@ -130,6 +158,7 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
     expected_anchor_from = 0
     if not anchors:
         raise VerificationFailure("anchor set is empty")
+    anchor_assurance: list[tuple[int, str]] = []
     for expected_anchor_number, row in enumerate(anchors):
         payload = row.get("payload", {})
         number = payload.get("anchor_number")
@@ -150,17 +179,56 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
         if key_metadata[payload["key_id"]].get("role") != "evidence-anchor":
             raise VerificationFailure(f"anchor key has wrong role at anchor {number}")
         verify_signature(payload, row.get("signature", ""), key, f"anchor {number}")
-        attestations = payload.get("attestations")
+        # Final attestations are append-only sidecars. The signed payload retains the
+        # original pending marker so completing asynchronous work never rewrites history.
+        attestations = row.get("attestations") or payload.get("attestations")
         if not isinstance(attestations, list) or not attestations:
             raise VerificationFailure(f"anchor {number} attestation status is missing")
+        verified_external = False
+        pending = False
+        explicitly_unattested = False
         for attestation in attestations:
             if attestation.get("type") == "none_development":
                 if attestation.get("status") != "unattested":
                     raise VerificationFailure(
                         f"anchor {number} development attestation is not labelled unattested"
                     )
+                explicitly_unattested = True
             elif attestation.get("status") != "attested":
+                if attestation.get("status") == "pending":
+                    pending = True
+                    continue
                 raise VerificationFailure(f"anchor {number} has no verified external attestation")
+            elif attestation.get("type") == "rfc3161":
+                core = {
+                    key: value for key, value in payload.items()
+                    if key not in {"attestations", "object_key", "object_version"}
+                }
+                digest = hashlib.sha256(rfc8785.dumps(core)).hexdigest()
+                verify_rfc3161(attestation, digest, tsa_trust_anchors)
+                verified_external = True
+            elif attestation.get("type") == "customer_countersignature":
+                key = keys.get(attestation.get("key_id"))
+                if key is None:
+                    raise VerificationFailure("customer countersignature key is unavailable")
+                core = {
+                    key_name: value for key_name, value in payload.items()
+                    if key_name not in {"attestations", "object_key", "object_version"}
+                }
+                digest = hashlib.sha256(rfc8785.dumps(core)).digest()
+                if attestation.get("anchor_digest") != digest.hex():
+                    raise VerificationFailure("customer countersignature digest mismatch")
+                try:
+                    key.verify(base64.urlsafe_b64decode(attestation["evidence"]), digest)
+                except Exception as exc:
+                    raise VerificationFailure("customer countersignature is invalid") from exc
+        state = (
+            "unattested" if explicitly_unattested
+            else "rfc3161" if verified_external
+            else "pending" if pending
+            else "unattested"
+        )
+        anchor_assurance.append((number, state))
         expected_anchor_from = payload["to_sequence"] + 1
         expected_anchor_previous = canonical_hash(payload)
     if anchors[-1]["payload"]["to_sequence"] != range_end:
@@ -205,32 +273,44 @@ def verify_bundle(bundle: Path) -> dict[str, Any]:
     if expected_checkpoint_from != range_end + 1:
         raise VerificationFailure("checkpoint coverage does not reach the terminal record")
 
+    states = [state for _, state in anchor_assurance]
+    derived_assurance = (
+        "rfc3161" if all(state == "rfc3161" for state in states)
+        else "unattested" if "unattested" in states
+        else "pending"
+    )
+    claimed = manifest.get("assurance", {})
+    expected_claim = {
+        "anchor_attestation": derived_assurance,
+        "external_timestamp": derived_assurance == "rfc3161",
+    }
+    if claimed != expected_claim:
+        raise VerificationFailure("manifest assurance claim does not match verified attestations")
+
     return {
         "records": len(records),
         "from_sequence": range_start,
         "to_sequence": range_end,
         "anchors": len(anchors),
         "anchor_attestation": manifest["assurance"]["anchor_attestation"],
-        "unattested": all(
-            attestation.get("type") == "none_development"
-            and attestation.get("status") == "unattested"
-            for row in anchors
-            for attestation in row["payload"]["attestations"]
-        ),
+        "anchor_assurance": anchor_assurance,
         "revoked_keys": sorted({
             item["key_id"]: item["revoked_at"]
             for item in key_metadata.values()
             if item.get("revoked_at")
         }.items()),
+        "derived_assurance": derived_assurance,
+        "trust_anchors": [str(path) for path in tsa_trust_anchors],
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a self-contained Mizan evidence bundle")
     parser.add_argument("bundle", type=Path)
+    parser.add_argument("--tsa-trust-anchor", action="append", type=Path, default=[])
     args = parser.parse_args()
     try:
-        result = verify_bundle(args.bundle)
+        result = verify_bundle(args.bundle, args.tsa_trust_anchor)
     except VerificationFailure as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
@@ -240,12 +320,18 @@ def main() -> int:
         f"for sequences {result['from_sequence']} through {result['to_sequence']} "
         f"({result['records']} records, {result['anchors']} anchors)."
     )
-    if result["unattested"]:
-        print("ATTESTATION: UNATTESTED — development provider; no external authority verified.")
+    for anchor_number, assurance in result["anchor_assurance"]:
+        print(f"ANCHOR {anchor_number} ATTESTATION: {assurance.upper()}.")
+    if result["derived_assurance"] != "rfc3161":
+        print("ATTESTATION: STREAM NOT EXTERNALLY ANCHORED — at least one anchor lacks a verified RFC 3161 token.")
     for key_id, revoked_at in result["revoked_keys"]:
         print(f"KEY STATUS: valid signature, key {key_id} revoked at {revoked_at}.")
+    print(f"ASSURANCE DERIVED: {result['derived_assurance']}.")
+    if result["trust_anchors"]:
+        print("TRUST ROOTS USED: " + ", ".join(result["trust_anchors"]))
     print("WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.")
-    print("LIMITATION: The anchor signature is Mizan's own. No independent timestamp authority is present, so a party holding Mizan's database and signing key could rebuild and re-sign this history.")
+    if result["derived_assurance"] != "rfc3161":
+        print("LIMITATION: The anchor signature is Mizan's own. No complete independent timestamp coverage is present, so a party holding Mizan's database and signing key could rebuild and re-sign this history.")
     print("NOT COVERED: Records omitted before chaining and an entire final anchor withheld before export leave no proof in this bundle.")
     return 0
 

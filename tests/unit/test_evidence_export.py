@@ -15,6 +15,8 @@ from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.evidence import Ed25519EvidenceSigner, LocalImmutableObjectStore
 from mizan_control_plane.evidence_export import export_evidence_bundle
 
+from scripts.verify_evidence_export import verify_bundle
+
 
 class ExportRepository:
     def __init__(self, receipts: list[dict], anchors: list[dict]) -> None:
@@ -42,6 +44,7 @@ def build_bundle(
     export_start: int | None = None,
     include_attestations: bool = True,
     revoked_receipt_at: str | None = None,
+    attestation_by_anchor: dict[int, list[dict]] | None = None,
 ) -> Path:
     receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
     anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
@@ -96,7 +99,9 @@ def build_bundle(
             "object_key": f"anchors/tnt_bank-a/export/{to_sequence}.json",
             "object_version": "fixture-version",
         }
-        if include_attestations:
+        if attestation_by_anchor and anchor_number in attestation_by_anchor:
+            anchor_payload["attestations"] = attestation_by_anchor[anchor_number]
+        elif include_attestations:
             anchor_payload["attestations"] = [{
                 "type": "none_development",
                 "status": "unattested",
@@ -258,3 +263,34 @@ def test_rotated_revoked_key_signature_is_valid_but_distinctly_reported(tmp_path
     result = run_verifier(bundle)
     assert result.returncode == 0
     assert f"valid signature, key local://evidence-receipt/dev-1 revoked at {revoked_at}" in result.stdout
+
+
+def test_manifest_cannot_declare_stronger_assurance_than_verified(tmp_path: Path) -> None:
+    bundle = build_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+    manifest["assurance"] = {"anchor_attestation": "rfc3161", "external_timestamp": True}
+    (bundle / "manifest.json").write_bytes(rfc8785.dumps(manifest))
+    result = run_verifier(bundle)
+    assert result.returncode == 1
+    assert "manifest assurance claim does not match verified attestations" in result.stderr
+
+
+def test_mixed_anchor_assurance_is_reported_per_anchor_and_uses_weakest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bundle = build_bundle(
+        tmp_path,
+        count=4,
+        anchor_interval=2,
+        attestation_by_anchor={
+            0: [{
+                "type": "rfc3161", "status": "attested", "authority": "test-tsa",
+                "anchor_digest": "placeholder", "obtained_at": "2026-08-25T00:01:00Z",
+                "evidence": "AA==",
+            }],
+        },
+    )
+    monkeypatch.setattr("scripts.verify_evidence_export.verify_rfc3161", lambda *args: None)
+    result = verify_bundle(bundle, [tmp_path / "operator-root.pem"])
+    assert result["anchor_assurance"] == [(0, "rfc3161"), (1, "unattested")]
+    assert result["derived_assurance"] == "unattested"
