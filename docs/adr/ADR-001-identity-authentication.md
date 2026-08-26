@@ -68,6 +68,26 @@ the second uses `X-Mizan-Second-Approval: Bearer …`. Both tokens must carry MF
 the same tenant, and different principal IDs. A caller-supplied name is never evidence of approval,
 and bearer values are neither persisted nor included in events.
 
+## Implementation Amendment D — the shipped listener publishes the verified peer
+
+**Date:** 2026-08-26 · **Trigger:** Stage 5 acceleration review, T-066 · **Spec anchors:** SPEC v1.3 §8 `MIZAN_TLS_*`, I-23, `docs/deployment/mtls.md`
+
+Amendment B requires the ASGI server adapter to expose the verified connection's `SSLObject` as
+`scope["ssl_object"]`. No shipped ASGI server does: uvicorn builds its HTTP scope without it, so
+`VerifiedPeerSpiffeMiddleware` read nothing behind a real listener and every execution endpoint
+answered 401 regardless of the client certificate presented. Until T-066 there was no entrypoint
+to notice this, because there was no entrypoint at all.
+
+`mizan-control-plane` therefore installs a protocol class that publishes the transport's
+`ssl_object` into each HTTP scope before dispatch. Nothing else about the contract changes:
+identity still comes only from the verified TLS peer, headers are still never trusted, and the
+middleware still requires `CERT_REQUIRED` and exactly one `spiffe://` URI SAN.
+
+Production refuses to boot without `MIZAN_TLS_CERTIFICATE_FILE`, `MIZAN_TLS_PRIVATE_KEY_FILE`, and
+`MIZAN_TLS_CLIENT_CA_FILE`. A production control plane that cannot authenticate an executor cannot
+bind execution to one, and silently answering 401 to every execution call is a worse failure than
+refusing to start.
+
 ## Implementation Amendment C — dual control is evaluated over both sides of a PATCH
 
 **Date:** 2026-08-26 · **Trigger:** Stage 5 acceleration review, T-077b · **Spec anchors:** SPEC v1.3 §3 `PATCH /v1/agents/{agent_id}`, V-22

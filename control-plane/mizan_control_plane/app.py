@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
@@ -12,7 +16,7 @@ from .auth import TokenVerifier, bearer_token
 from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
 from .execution import ExecutionService
-from .keys import KeyProvider
+from .keys import KEY_ROLES, KeyProvider
 from .models import (
     AgentPatchRequest,
     ApprovalVoteRequest,
@@ -34,6 +38,8 @@ from .risk import RegistryFloorRiskProvider
 from .schema_validation import ContractSchemas
 from .service import AuthorizationService
 
+LOGGER = logging.getLogger(__name__)
+
 
 def create_app(
     settings: Settings | None = None,
@@ -54,7 +60,26 @@ def create_app(
         settings.evaluator_build,
         settings.evaluator_configuration_hash,
     )
-    app = FastAPI(title="Mizan Control Plane API", version="1.3.0")
+
+    @asynccontextmanager
+    async def lifespan(instance: FastAPI) -> AsyncIterator[None]:
+        yield
+        for pool in instance.state.connection_pools:
+            try:
+                pool.close()
+            except Exception:  # a pool that will not close must not mask the others
+                LOGGER.exception("connection pool did not close cleanly")
+
+    app = FastAPI(title="Mizan Control Plane API", version="1.3.0", lifespan=lifespan)
+    # Every pool opened here is closed on shutdown; a caller that builds more (the execution
+    # service opens two) appends them before the server starts.
+    app.state.connection_pools = [
+        authorization_repository.pool,
+        registry_repository.pool,
+        evidence_repository.pool,
+        approval_repository.pool,
+    ]
+    app.state.settings = settings
     app.add_middleware(VerifiedPeerSpiffeMiddleware)
     app.add_exception_handler(Problem, problem_response)
 
@@ -392,6 +417,43 @@ def create_app(
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    def ready() -> JSONResponse:
+        """Readiness is what this process can actually do, not that it started."""
+        checks: dict[str, str] = {}
+        try:
+            # Bounded: readiness must answer, and a probe that blocks is a probe that lies.
+            with authorization_repository.pool.connection(timeout=2.0) as connection:
+                connection.execute("SELECT 1")
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = f"unavailable: {type(exc).__name__}"
+        if key_provider is None:
+            checks["signing_keys"] = "absent"
+        else:
+            try:
+                for role in KEY_ROLES:
+                    key_provider.active_key(role)
+                checks["signing_keys"] = "ok"
+            except Exception as exc:
+                checks["signing_keys"] = f"unavailable: {type(exc).__name__}"
+        checks["evidence_verifier"] = "ok" if evidence_verifier is not None else "absent"
+        checks["execution_service"] = "ok" if execution_service is not None else "absent"
+        if settings.environment == "production":
+            checks["anchor_provider"] = (
+                "ok"
+                if settings.anchor_provider == "rfc3161"
+                and settings.anchor_tsa_endpoints
+                and settings.anchor_tsa_trust_anchors
+                else "unattested"
+            )
+            checks["mutual_tls"] = "ok" if settings.mutual_tls_configured else "absent"
+        ready_now = all(value == "ok" for value in checks.values())
+        return JSONResponse(
+            {"status": "ready" if ready_now else "not_ready", "checks": checks},
+            status_code=200 if ready_now else 503,
+        )
 
     ui_root = Path(__file__).resolve().parents[2] / "ui"
     if (ui_root / "index.html").exists():

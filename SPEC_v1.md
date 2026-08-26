@@ -1573,6 +1573,18 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 
 | Key | Default | Scope | Notes |
 |---|---|---|---|
+| `MIZAN_DATABASE_URL` | *(required)* | deployment | Runtime-role DSN. The application connects as `mizan_app`, never `mizan_owner`; RLS depends on it. |
+| `MIZAN_JWT_ISSUER` | *(required)* | deployment | Exact accepted `iss` for identity tokens. |
+| `MIZAN_JWT_AUDIENCE` | `mizan-control-plane` | deployment | Exact accepted `aud` for identity tokens. |
+| `MIZAN_JWT_PUBLIC_KEY` | *(required)* | deployment | Asymmetric verification key. Symmetric algorithms are never accepted. |
+| `MIZAN_EVALUATOR_BUILD` | `development` | deployment | Recorded in every ADR_Record's `evaluator.build`. Production refuses the `development` placeholder: an unpinned evaluator makes the record unreplayable. |
+| `MIZAN_EVALUATOR_CONFIGURATION_HASH` | 64 zeros | deployment | Recorded in every ADR_Record's `evaluator.configuration_hash`. Production refuses the all-zero placeholder for the same reason. |
+| `MIZAN_EVIDENCE_OBJECT_STORE_ROOT` | `var/evidence` | deployment | Root of the immutable object store the verifier reads. In v1 this is the create-only local WORM analogue; a real WORM target is `MIZAN_AUDIT_ANCHOR_BUCKET`. |
+| `MIZAN_HTTP_HOST` | `127.0.0.1` | deployment | Listener address. The default is loopback so an unconfigured process is not reachable. |
+| `MIZAN_HTTP_PORT` | `8080` | deployment | Listener port. |
+| `MIZAN_TLS_CERTIFICATE_FILE` | *(required in production)* | deployment | Server certificate chain for the in-process mTLS listener (ADR-001 Amendment B). |
+| `MIZAN_TLS_PRIVATE_KEY_FILE` | *(required in production)* | deployment | Server private key for the listener. |
+| `MIZAN_TLS_CLIENT_CA_FILE` | *(required in production)* | deployment | Client CA trust bundle. The listener sets `CERT_REQUIRED`; without it no execution endpoint can authenticate a workload and every one answers 401. |
 | `MIZAN_BENCHMARK_RESULTS_DIR` | `benchmarks/results` | build/test | Destination for machine-readable benchmark artifacts; changing it has no runtime effect. |
 | `MIZAN_BENCHMARK_COMMIT_SHA` | checked-out `HEAD` | build/test | Optional assertion only: when set it must exactly equal `HEAD`; it cannot relabel a run. Artifacts also record `worktree_clean`, and provenance validation rejects dirty runs or SHAs that do not resolve to commits in this repository. |
 | `MIZAN_ANCHOR_PROVIDER` | `development-unattested` | deployment | `development-unattested` or `rfc3161`; production requires `rfc3161`. Development anchors are explicitly `none_development`/`unattested`. |

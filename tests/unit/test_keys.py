@@ -64,6 +64,18 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="trust anchor"):
         Settings.from_environment()
     monkeypatch.setenv("MIZAN_ANCHOR_TSA_TRUST_ANCHORS", "/etc/mizan/tsa-root.pem")
+    with pytest.raises(RuntimeError, match="MIZAN_EXECUTION_TOKEN_ISSUER"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_EXECUTION_TOKEN_ISSUER", "https://execution.issuer.test")
+    with pytest.raises(RuntimeError, match="MIZAN_EVALUATOR_BUILD"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_EVALUATOR_BUILD", "2026.08.26+abc1234")
+    monkeypatch.setenv("MIZAN_EVALUATOR_CONFIGURATION_HASH", "a" * 64)
+    with pytest.raises(RuntimeError, match="MIZAN_TLS_CERTIFICATE_FILE"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_TLS_CERTIFICATE_FILE", "/etc/mizan/server.pem")
+    monkeypatch.setenv("MIZAN_TLS_PRIVATE_KEY_FILE", "/etc/mizan/server.key")
+    monkeypatch.setenv("MIZAN_TLS_CLIENT_CA_FILE", "/etc/mizan/client-ca.pem")
     assert Settings.from_environment().anchor_provider == "rfc3161"
 
 

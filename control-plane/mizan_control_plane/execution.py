@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -16,6 +17,7 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .evidence import append_decision_event_tx
+from .keys import SigningKey
 from .models import EvaluationContext
 from .ports import RiskProvider
 from .problems import Problem
@@ -30,18 +32,30 @@ def _jti_hash(jti: str) -> str:
     return hashlib.sha256(jti.encode()).hexdigest()
 
 
+def _base64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
 class ExecutionTokenCodec:
     def __init__(
         self,
         issuer: str,
-        private_key: Ed25519PrivateKey,
+        private_key: Ed25519PrivateKey | None = None,
         public_key: Ed25519PublicKey | None = None,
         clock_skew_seconds: int = 30,
         schemas: ContractSchemas | None = None,
+        signing_key: SigningKey | None = None,
     ) -> None:
+        if (private_key is None) == (signing_key is None):
+            raise ValueError(
+                "an execution token codec signs with exactly one of private_key or signing_key"
+            )
         self.issuer = issuer
         self.private_key = private_key
-        self.public_key = public_key or private_key.public_key()
+        self.signing_key = signing_key
+        self.public_key = public_key or (
+            private_key.public_key() if private_key is not None else signing_key.public_key()
+        )
         self.clock_skew_seconds = clock_skew_seconds
         self.schemas = schemas or ContractSchemas(
             Path(__file__).resolve().parents[2] / "SPEC_v1.md"
@@ -49,7 +63,14 @@ class ExecutionTokenCodec:
 
     def encode(self, claims: dict[str, Any]) -> str:
         self.schemas.validate("ExecutionTokenClaims", claims)
-        return jwt.encode(claims, self.private_key, algorithm="EdDSA", headers={"typ": "JWT"})
+        if self.private_key is not None:
+            return jwt.encode(claims, self.private_key, algorithm="EdDSA", headers={"typ": "JWT"})
+        # Custody-agnostic path: a KMS/HSM key never leaves its provider, so the JWS is assembled
+        # here and only the signing input crosses the boundary. Verification stays PyJWT's.
+        header = _base64url(json.dumps({"alg": "EdDSA", "typ": "JWT"}, separators=(",", ":")).encode())
+        payload = _base64url(json.dumps(claims, separators=(",", ":")).encode())
+        signature = self.signing_key.sign(f"{header}.{payload}".encode())
+        return f"{header}.{payload}.{_base64url(signature)}"
 
     def decode(self, token: str) -> dict[str, Any]:
         try:

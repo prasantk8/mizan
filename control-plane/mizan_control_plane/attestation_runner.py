@@ -39,32 +39,36 @@ def run_once(
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Complete pending anchor attestations")
     parser.add_argument("--tenant-id", required=True)
     parser.add_argument("--stream-id", required=True)
     parser.add_argument("--interval-seconds", type=float, default=30.0)
     parser.add_argument("--once", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     settings = Settings.from_environment()
     if settings.anchor_provider != "rfc3161":
         parser.error("mizan-attest-anchors requires MIZAN_ANCHOR_PROVIDER=rfc3161")
     repository = EvidenceRepository(settings.database_url)
+    # Endpoint scheme is settled in Settings.from_environment: production refuses non-HTTPS
+    # authorities before this process reaches the provider, which takes no environment argument.
     provider = Rfc3161AnchorProvider(
         list(settings.anchor_tsa_endpoints),
         trust_anchors=[Path(item) for item in settings.anchor_tsa_trust_anchors],
-        environment=settings.environment,
     )
     breaker = ReportingEvidenceBreaker()
-    while True:
-        run_once(
-            repository,
-            provider,
-            breaker,
-            args.tenant_id,
-            args.stream_id,
-            settings.anchor_attestation_max_pending_seconds,
-        )
-        if args.once:
-            return 2 if breaker.opened else 0
-        time.sleep(args.interval_seconds)
+    try:
+        while True:
+            run_once(
+                repository,
+                provider,
+                breaker,
+                args.tenant_id,
+                args.stream_id,
+                settings.anchor_attestation_max_pending_seconds,
+            )
+            if args.once:
+                return 2 if breaker.opened else 0
+            time.sleep(args.interval_seconds)
+    finally:
+        repository.pool.close()
