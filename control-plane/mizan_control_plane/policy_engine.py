@@ -164,6 +164,7 @@ def compile_policy(document_json: str) -> CompiledPolicy:
         decision=document["decision"],
         priority=document["priority"],
         constraints=document.get("constraints"),
+        approval_requirements=document.get("approval_requirements"),
     )
     return CompiledPolicy(match=match, artifact=artifact, policy_set=policy_set)
 

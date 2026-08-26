@@ -1260,6 +1260,9 @@ paths:
     post: { summary: "Lifecycle transition per §5.4 (approver ≠ author enforced here)",
             responses: { "200": {description: OK}, "409": {description: Illegal transition} } }
 
+  /v1/approvals:
+    get: { summary: "Approver queue: approvals awaiting a decision, tenant-scoped, newest first (filters: state; cursor pagination). Each item carries the current epoch's kind, quorum, votes cast, eligible roles and expiry.",
+           x-sla-p95-ms: 200, responses: { "200": {description: OK} } }
   /v1/approvals/{approval_id}:
     get: { summary: "Approval status: state, current epoch, per-epoch votes and eligibility snapshot hash",
            responses: { "200": {description: OK} } }
@@ -1320,6 +1323,18 @@ paths:
 
   /v1/decisions/{decision_id}:
     get: { summary: Fetch immutable ADR_Record + ordered DecisionEvents, responses: { "200": {description: OK} } }
+  /v1/decisions/{decision_id}/execution-token:
+    post:
+      summary: "Issue the ExecutionToken (§2.10) a decision earned. Permitted after ALLOW, or after the decision's approval reaches APPROVED/OVERRIDDEN. Only the agent principal named by the ADR_Record may ask (V-23). At most one unconsumed, unexpired token exists per decision: a repeat request returns the outstanding one rather than granting a second capability. `authorized_executor` is chosen from the tool version's registered set (V-21); a caller may name one of them and never propose a new one."
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false,
+                      properties: { executor_spiffe_id: { oneOf: [ { $ref: "common#/$defs/SpiffeId" }, { type: "null" } ] } } }
+      responses: { "200": {description: "Issued or reissued; body carries execution_token, expires_at, reused"},
+                   "403": {description: "approval_incomplete, decision_not_executable, execution_token_requester_mismatch, or executor_not_authorized"},
+                   "404": {description: Decision not found in tenant},
+                   "422": {description: "Tool has several registered executors and none was named"} }
   /v1/decisions:
     get: { summary: "Search ADRs (filters: agent, tool, decision, risk, principal, customer, time range; cursor pagination)",
            x-sla-p95-ms: 500, responses: { "200": {description: OK} } }
@@ -1671,6 +1686,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-20 | For `financial_write`, token redemption requires a valid `immutable_receipt_ref` covering the originating ADR_Record and any deciding approval event. Receipt tenant, stream, record hash, and signature must verify outside the Postgres administrative boundary. | execution gateway |
 | V-21 | `ExecutionTokenClaims.authorized_executor` is selected server-side from the tool version's non-empty `execution.executor_spiffe_ids`; callers cannot propose or override it. Redemption uses the same immutable tool/profile version cited by the ADR_Record. | tool registration + token issuer |
 | V-22 | An agent PATCH requires a distinct strongly authenticated second approver when the **stored** document or the **submitted** document is a production `HIGH`/`CRITICAL` agent. Evaluating only the submitted side lets one operator remove the protection and change the agent in the same write. The delegation parent edge `create_agent` enforces is re-enforced whenever a PATCH moves `parent_agent_id`. | `PATCH /v1/agents/{agent_id}` |
+| V-23 | `POST /v1/decisions/{id}/execution-token` is accepted only from the agent principal the ADR_Record names, and issues at most one unconsumed, unexpired token per decision — a repeat request returns the outstanding capability, never a second one. Serialized per decision so concurrent requests cannot both mint. | execution token issuer |
 
 ---
 

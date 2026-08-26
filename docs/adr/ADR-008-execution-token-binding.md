@@ -130,3 +130,30 @@ the immutable, tenant-RLS `authorization_contexts` relation and bound by the sam
 the ADR_Record. Redemption requires the arguments again, recomputes the hash using the pinned profile,
 and reruns current authoritative agent/tool/resource/risk enrichment against this snapshot. This is
 the replayable basis for detecting execution-time drift without retaining raw tool payloads.
+
+
+## Implementation Amendment — one capability per decision *(pending ratification: B-16)*
+
+**Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration review, T-067 · **Spec anchors:** SPEC v1.3 §3 `/v1/decisions/{id}/execution-token`, V-21, V-23
+
+`ExecutionService.issue` had no caller outside tests, so no route turned an ALLOW or an APPROVED
+approval into the capability that ADR-008 binds. `POST /v1/decisions/{decision_id}/execution-token`
+is that route, with three properties chosen as the B-16 default:
+
+- **Only the decision's own agent principal may ask.** The requester is taken from the identity
+  token and compared to the `agent.id` the ADR_Record names; a mismatch is 403
+  `execution_token_requester_mismatch`. Nothing in the request body selects the principal.
+- **At most one unconsumed, unexpired token per decision.** A repeat request returns the
+  outstanding capability rather than granting a second one, so an ALLOW cannot be spent twice by
+  asking twice. Issuance is serialized per decision by a transaction-scoped advisory lock —
+  `mizan.adr_records` is append-only and the runtime role holds no `UPDATE` privilege on it, so a
+  row lock is not available and must not be reached for.
+- **The executor is registry-chosen (V-21).** A caller may name one of the tool version's
+  registered `executor_spiffe_ids`; naming anything else is 403, and a tool with several
+  registered executors and no named choice is 422 rather than an arbitrary pick.
+
+Idempotency requires that re-encoding stored claims reproduce the original token byte for byte.
+Claims come back from JSONB in PostgreSQL's key order, not the order they were written, so the
+custody-agnostic signing path canonicalises the JWS payload with RFC 8785 before signing. That
+path exists because a KMS or HSM key never leaves its provider: only the signing input crosses the
+boundary, which is the seam T-076 needs.

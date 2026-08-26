@@ -23,7 +23,11 @@ class AuthorizationRepository(Protocol):
         self, tenant_id: str, request_id: str
     ) -> PersistedDecision | None: ...
     def persist_decision(
-        self, decision: PersistedDecision, adr_document: dict, normalized_context: dict
+        self,
+        decision: PersistedDecision,
+        adr_document: dict,
+        normalized_context: dict,
+        approval_request: dict | None = None,
     ) -> None: ...
 
 

@@ -24,6 +24,13 @@ from mizan_control_plane.service import AuthorizationService
 TENANT = "tnt_bank-a"
 AGENT = "agt_wealth-01"
 TOOL = "tool_transfer"
+APPROVAL_REQUIREMENTS = {
+    "quorum": 2,
+    "approver_roles": ["manager", "risk"],
+    "distinct_roles_required": True,
+    "expiry_seconds": 3600,
+    "rejection_mode": "veto",
+}
 
 
 def context(request_id: str = "018f47a6-7b42-7c00-8000-000000000001") -> EvaluationContext:
@@ -137,6 +144,9 @@ def test_all_policy_decisions_have_explicit_auditable_dispositions(
             decision=policy_decision,
             priority=100,
             constraints={"max_amount": 100} if policy_decision in {"CONSTRAIN", "REDACT"} else None,
+            approval_requirements=APPROVAL_REQUIREMENTS
+            if policy_decision == "REQUIRE_APPROVAL"
+            else None,
         )
     ]
     if expected_status is None:
@@ -299,7 +309,11 @@ class CedarBackedRepository(InMemoryAuthorizationRepository):
 
 class UnexpectedPersistenceRepository(InMemoryAuthorizationRepository):
     def persist_decision(
-        self, decision: Any, adr_document: dict, normalized_context: dict
+        self,
+        decision: Any,
+        adr_document: dict,
+        normalized_context: dict,
+        approval_request: dict | None = None,
     ) -> None:
         raise ValueError("unexpected persistence defect")
 
@@ -468,3 +482,43 @@ def test_delegation_requires_registered_edge_depth_and_parent_tool_permission() 
     request.request_id = "018f47a6-7b42-7c00-8000-000000000077"
     with pytest.raises(Problem, match="delegate this tool"):
         subject.authorize(delegated_identity, request)
+
+
+def test_require_approval_opens_its_approval_in_the_decision_transaction() -> None:
+    subject, repository = service()
+    repository.policies = [
+        PolicyMatch(
+            policy_id="pol_rebalance",
+            version=1,
+            content_hash="b" * 64,
+            decision="REQUIRE_APPROVAL",
+            priority=100,
+            approval_requirements=APPROVAL_REQUIREMENTS,
+        )
+    ]
+    response = subject.authorize(identity(), context())
+    assert response.decision == "REQUIRE_APPROVAL"
+    assert len(repository.approval_requests) == 1
+    request = repository.approval_requests[0]
+    assert request["requester_id"] == "prn_alice-01"
+    # ADR-007: the principal who asked cannot be the principal who approves.
+    assert request["forbidden_approvers"] == ["prn_alice-01"]
+    assert request["controls"]["quorum"] == 2
+    assert request["controls"]["distinct_control_domains_required"] is True
+
+
+def test_a_require_approval_policy_without_requirements_is_rejected_not_recorded() -> None:
+    subject, repository = service()
+    repository.policies = [
+        PolicyMatch(
+            policy_id="pol_rebalance",
+            version=1,
+            content_hash="b" * 64,
+            decision="REQUIRE_APPROVAL",
+            priority=100,
+        )
+    ]
+    with pytest.raises(Problem) as raised:
+        subject.authorize(identity(), context())
+    assert raised.value.code == "approval_requirements_missing"
+    assert repository.adr_documents == []

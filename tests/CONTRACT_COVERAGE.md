@@ -42,6 +42,7 @@ argument-revalidation, and semantic-policy-hash coverage.
 | V-11, V-12 | `unit/test_invariant_properties.py::test_i2_property_hash_chain_is_contiguous` |
 | V-13, V-17, V-20, V-21 | `unit/test_execution.py::test_second_registered_executor_is_selected_and_outsider_fails_both_boundaries` |
 | V-22 | `integration/test_authorize_postgres.py::test_one_operator_cannot_downgrade_a_production_critical_agent` + `integration/test_authorize_postgres.py::test_patch_cannot_attach_an_agent_to_a_parent_that_did_not_authorize_it` |
+| V-23 | `integration/test_closed_loop_postgres.py::test_an_agent_pauses_for_two_approvers_and_then_executes` |
 | V-14 | `unit/test_approval.py::test_stale_epoch_vote_loses_escalation_race` |
 | V-15 | `unit/test_authorization.py::test_v15_policy_engine_failure_persists_system_fail_closed_deny` |
 | V-16 | `unit/test_degraded.py::test_caller_supplied_unknown_key_never_establishes_trust` |

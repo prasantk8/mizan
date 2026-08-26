@@ -82,6 +82,7 @@ def build_execution_service(
         receipt_gate=receipt_gate,
         security_event_pool_max_size=settings.security_event_pool_max_size,
         security_event_pool_timeout_seconds=settings.security_event_pool_timeout_seconds,
+        default_token_ttl_seconds=settings.execution_token_default_ttl_seconds,
     )
 
 

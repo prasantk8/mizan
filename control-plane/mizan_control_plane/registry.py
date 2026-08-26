@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +10,7 @@ from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from .canonical import canonical_hash
 from .models import AuthenticatedPrincipal, EvaluationContext
+from .pagination import decode_cursor, encode_cursor
 from .policy_engine import CedarPolicyEvaluator
 from .problems import Problem
 from .repository import PostgresAuthorizationRepository
@@ -40,20 +40,6 @@ def policy_semantic_hash(document: dict[str, Any]) -> str:
 class Page:
     items: list[dict[str, Any]]
     next_cursor: str | None
-
-
-def encode_cursor(created_at: datetime, identifier: str) -> str:
-    raw = json.dumps([created_at.isoformat(), identifier], separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def decode_cursor(value: str) -> tuple[datetime, str]:
-    try:
-        padded = value + "=" * (-len(value) % 4)
-        timestamp, identifier = json.loads(base64.urlsafe_b64decode(padded))
-        return datetime.fromisoformat(timestamp), str(identifier)
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        raise Problem(400, "invalid_cursor", "Pagination cursor is malformed") from exc
 
 
 class RegistryRepository(PostgresAuthorizationRepository):

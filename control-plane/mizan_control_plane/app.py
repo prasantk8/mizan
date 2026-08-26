@@ -25,12 +25,14 @@ from .models import (
     AgentPatchRequest,
     ApprovalVoteRequest,
     AuditVerifyRequest,
+    AuthenticatedIdentity,
     AuthenticatedPrincipal,
     AuthorizationResponse,
     BindingProfilePublishRequest,
     EvaluationContext,
     ExecuteRequest,
     ExecutionCompleteRequest,
+    ExecutionTokenRequest,
     PolicySimulationRequest,
     PolicyTransitionRequest,
 )
@@ -98,6 +100,9 @@ def create_app(
 
     def principal_from_token(token: str = Depends(bearer_token)):
         return verifier.verify_principal(token)
+
+    def agent_from_token(token: str = Depends(bearer_token)) -> AuthenticatedIdentity:
+        return verifier.verify(token)
 
     def workload_spiffe(request: Request) -> str:
         return require_workload_spiffe(request.scope)
@@ -323,6 +328,33 @@ def create_app(
         if key_provider is None:
             raise Problem(503, "key_provider_unavailable", "Signing key provider is not configured")
         return {"items": key_provider.verification_keyset()}
+
+    @app.get("/v1/approvals")
+    def list_approvals(
+        state: str | None = Query(None, pattern="^[A-Z_]{4,24}$"),
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
+        tenant_id: str = Depends(tenant_from_token),
+    ) -> dict[str, Any]:
+        """The approver's queue: what is waiting, for whom, and until when."""
+        return approval_repository.pending(tenant_id, state, limit, cursor)
+
+    @app.post("/v1/decisions/{decision_id}/execution-token")
+    def issue_execution_token(
+        decision_id: str,
+        request: ExecutionTokenRequest,
+        identity: Annotated[AuthenticatedIdentity, Depends(agent_from_token)],
+    ) -> dict[str, Any]:
+        if execution_service is None:
+            raise Problem(
+                503, "execution_service_unavailable", "Execution keyset is not configured"
+            )
+        return execution_service.issue_for_decision(
+            identity.tenant_id,
+            decision_id,
+            identity.agent_id,
+            request.executor_spiffe_id,
+        )
 
     @app.get("/v1/approvals/{approval_id}")
     def get_approval(

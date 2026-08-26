@@ -9,9 +9,129 @@ from psycopg_pool import ConnectionPool
 from .approval import cast_vote, create_approval, current_epoch, open_next_epoch, withdraw
 from .evidence import append_decision_event_tx
 from .models import AuthenticatedPrincipal
+from .pagination import decode_cursor, encode_cursor
 from .problems import Problem
 
 SYSTEM_ACTOR = {"kind": "system", "id": "mizan-approval-service", "authenticated_workload": None}
+
+
+def authority_snapshot_tx(connection: Any, tenant_id: str, roles: list[str]) -> dict:
+    row = connection.execute(
+        "SELECT mapping_version,document FROM mizan.role_authority_versions "
+        "WHERE tenant_id=%s AND status='APPROVED' ORDER BY mapping_version DESC LIMIT 1",
+        (tenant_id,),
+    ).fetchone()
+    if not row:
+        raise Problem(
+            422, "authority_mapping_missing", "No approved role-authority mapping exists"
+        )
+    members = [member for member in row[1]["members"] if set(member["roles"]) & set(roles)]
+    if not members:
+        raise Problem(422, "approver_pool_empty", "No eligible members exist for required roles")
+    return {
+        "snapshot_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "authority_source": "mizan_role_registry",
+        "authority_mapping_version": row[0],
+        "roles": roles,
+        "members": members,
+    }
+
+
+def insert_epoch_tx(
+    connection: Any, tenant_id: str, approval_id: str, epoch: dict[str, Any]
+) -> None:
+    connection.execute(
+        """INSERT INTO mizan.approval_epochs(
+             tenant_id,epoch_id,approval_id,epoch_number,state,eligibility_snapshot,document,
+             opened_at,expires_at,closed_at
+           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            tenant_id,
+            epoch["epoch_id"],
+            approval_id,
+            epoch["epoch_number"],
+            epoch["state"],
+            json.dumps(epoch["eligibility"]),
+            json.dumps(epoch),
+            epoch["opened_at"],
+            epoch["expires_at"],
+            epoch.get("closed_at"),
+        ),
+    )
+
+
+def open_approval_tx(
+    connection: Any,
+    tenant_id: str,
+    decision_id: str,
+    requester_id: str,
+    forbidden_approvers: set[str],
+    context_hash: str,
+    controls: dict[str, Any],
+) -> dict[str, Any]:
+    """Open an approval on an existing connection.
+
+    Called from the ADR_Record transaction so a REQUIRE_APPROVAL decision and the approval that
+    lets it resume commit together: a decision that says "wait" with nothing to wait for is not a
+    state the evidence should be able to record.
+    """
+    snapshot = authority_snapshot_tx(connection, tenant_id, controls["approver_roles"])
+    approval = create_approval(
+        tenant_id, decision_id, context_hash, controls, snapshot, datetime.now(UTC)
+    )
+    epoch = current_epoch(approval)
+    connection.execute(
+        """INSERT INTO mizan.approvals(
+             tenant_id,approval_id,decision_id,state,active_epoch_id,requester_id,
+             controls,forbidden_approvers,document,created_at
+           ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (
+            tenant_id,
+            approval["approval_id"],
+            decision_id,
+            approval["state"],
+            epoch["epoch_id"],
+            requester_id,
+            json.dumps(controls),
+            json.dumps(sorted(forbidden_approvers)),
+            json.dumps(approval),
+            approval["created_at"],
+        ),
+    )
+    insert_epoch_tx(connection, tenant_id, approval["approval_id"], epoch)
+    append_decision_event_tx(
+        connection,
+        tenant_id,
+        decision_id,
+        "APPROVAL_EPOCH_OPENED",
+        SYSTEM_ACTOR,
+        {
+            "approval_id": approval["approval_id"],
+            "epoch_id": epoch["epoch_id"],
+            "approval_state": "PENDING",
+        },
+        datetime.now(UTC),
+    )
+    connection.execute(
+        "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+        "VALUES (%s,'approval',%s,'mizan.approval.requested',%s)",
+        (
+            tenant_id,
+            approval["approval_id"],
+            json.dumps(
+                {
+                    "approval_id": approval["approval_id"],
+                    "decision_id": decision_id,
+                    "epoch_id": epoch["epoch_id"],
+                    "epoch_number": epoch["epoch_number"],
+                    "roles": epoch["eligibility"]["roles"],
+                    "quorum": epoch["quorum"],
+                    "expires_at": epoch["expires_at"],
+                }
+            ),
+        ),
+    )
+    return approval
 
 
 class ApprovalRepository:
@@ -23,27 +143,7 @@ class ApprovalRepository:
         connection.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant_id,))
 
     def authority_snapshot(self, connection: Any, tenant_id: str, roles: list[str]) -> dict:
-        row = connection.execute(
-            "SELECT mapping_version,document FROM mizan.role_authority_versions "
-            "WHERE tenant_id=%s AND status='APPROVED' ORDER BY mapping_version DESC LIMIT 1",
-            (tenant_id,),
-        ).fetchone()
-        if not row:
-            raise Problem(
-                422, "authority_mapping_missing", "No approved role-authority mapping exists"
-            )
-        members = [member for member in row[1]["members"] if set(member["roles"]) & set(roles)]
-        if not members:
-            raise Problem(
-                422, "approver_pool_empty", "No eligible members exist for required roles"
-            )
-        return {
-            "snapshot_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "authority_source": "mizan_role_registry",
-            "authority_mapping_version": row[0],
-            "roles": roles,
-            "members": members,
-        }
+        return authority_snapshot_tx(connection, tenant_id, roles)
 
     def create(
         self,
@@ -56,49 +156,68 @@ class ApprovalRepository:
     ) -> dict[str, Any]:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
-            snapshot = self.authority_snapshot(connection, tenant_id, controls["approver_roles"])
-            approval = create_approval(
-                tenant_id,
-                decision_id,
-                context_hash,
-                controls,
-                snapshot,
-                datetime.now(UTC),
-            )
-            epoch = current_epoch(approval)
-            connection.execute(
-                """INSERT INTO mizan.approvals(
-                     tenant_id,approval_id,decision_id,state,active_epoch_id,requester_id,
-                     controls,forbidden_approvers,document,created_at
-                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    tenant_id,
-                    approval["approval_id"],
-                    decision_id,
-                    approval["state"],
-                    epoch["epoch_id"],
-                    requester_id,
-                    json.dumps(controls),
-                    json.dumps(sorted(forbidden_approvers)),
-                    json.dumps(approval),
-                    approval["created_at"],
-                ),
-            )
-            self._insert_epoch(connection, tenant_id, approval["approval_id"], epoch)
-            append_decision_event_tx(
+            return open_approval_tx(
                 connection,
                 tenant_id,
                 decision_id,
-                "APPROVAL_EPOCH_OPENED",
-                SYSTEM_ACTOR,
-                {
-                    "approval_id": approval["approval_id"],
-                    "epoch_id": epoch["epoch_id"],
-                    "approval_state": "PENDING",
-                },
-                datetime.now(UTC),
+                requester_id,
+                forbidden_approvers,
+                context_hash,
+                controls,
             )
-            return approval
+
+    def pending(
+        self, tenant_id: str, state: str | None, limit: int, cursor: str | None
+    ) -> dict[str, Any]:
+        """The approver's queue. Tenant-scoped by RLS and by the predicate (I-3)."""
+        clauses = ["tenant_id=%s"]
+        parameters: list[Any] = [tenant_id]
+        if state:
+            clauses.append("state=%s")
+            parameters.append(state)
+        if cursor:
+            created_at, approval_id = decode_cursor(cursor)
+            clauses.append("(created_at,approval_id) < (%s,%s)")
+            parameters.extend([created_at, approval_id])
+        parameters.append(limit)
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT approval_id,decision_id,state,active_epoch_id,requester_id,document,"
+                "created_at FROM mizan.approvals WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY created_at DESC, approval_id DESC LIMIT %s",
+                tuple(parameters),
+            ).fetchall()
+        items = []
+        for approval_id, decision_id, row_state, epoch_id, requester_id, document, created_at in rows:
+            epoch = next(
+                (item for item in document["epochs"] if item["epoch_id"] == epoch_id), None
+            )
+            items.append(
+                {
+                    "approval_id": approval_id,
+                    "decision_id": decision_id,
+                    "state": row_state,
+                    "requester_id": requester_id,
+                    "created_at": created_at.isoformat().replace("+00:00", "Z"),
+                    "epoch": None
+                    if epoch is None
+                    else {
+                        "epoch_id": epoch["epoch_id"],
+                        "epoch_number": epoch["epoch_number"],
+                        "kind": epoch["kind"],
+                        "quorum": epoch["quorum"],
+                        "expires_at": epoch["expires_at"],
+                        "votes_cast": len(epoch["votes"]) + len(epoch.get("carried_votes", [])),
+                        "approver_roles": epoch["eligibility"]["roles"],
+                    },
+                }
+            )
+        next_cursor = (
+            encode_cursor(rows[-1][6], rows[-1][0]) if len(rows) == limit and rows else None
+        )
+        return {"items": items, "next_cursor": next_cursor}
 
     def get(self, tenant_id: str, approval_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection, connection.transaction():
@@ -343,28 +462,7 @@ class ApprovalRepository:
             "requester_id": row[3],
         }
 
-    @staticmethod
-    def _insert_epoch(
-        connection: Any, tenant_id: str, approval_id: str, epoch: dict[str, Any]
-    ) -> None:
-        connection.execute(
-            """INSERT INTO mizan.approval_epochs(
-                 tenant_id,epoch_id,approval_id,epoch_number,state,eligibility_snapshot,document,
-                 opened_at,expires_at,closed_at
-               ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                tenant_id,
-                epoch["epoch_id"],
-                approval_id,
-                epoch["epoch_number"],
-                epoch["state"],
-                json.dumps(epoch["eligibility"]),
-                json.dumps(epoch),
-                epoch["opened_at"],
-                epoch["expires_at"],
-                epoch.get("closed_at"),
-            ),
-        )
+    _insert_epoch = staticmethod(insert_epoch_tx)
 
     @staticmethod
     def _update(connection: Any, tenant_id: str, approval: dict[str, Any]) -> None:

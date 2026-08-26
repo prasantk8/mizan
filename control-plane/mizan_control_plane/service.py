@@ -169,8 +169,9 @@ class AuthorizationService:
                 exc,
             )
         terminal_problem: Problem | None = None
+        winner: PolicyMatch | None = None
         try:
-            decision, reasons, constraints = self._combine(matches)
+            decision, reasons, constraints, winner = self._combine(matches)
         except Problem as exc:
             if exc.code != "NOT_IMPLEMENTED":
                 raise
@@ -204,7 +205,12 @@ class AuthorizationService:
             created_at=now,
         )
         try:
-            self.repository.persist_decision(persisted, adr, context_document)
+            self.repository.persist_decision(
+                persisted,
+                adr,
+                context_document,
+                self._approval_request(decision, winner, enriched),
+            )
         except DuplicateRequestIdError:
             return self._recover_concurrent_request(identity.tenant_id, context, context_hash)
         except UniqueViolation as exc:
@@ -220,6 +226,7 @@ class AuthorizationService:
             ) from exc
         if terminal_problem is not None:
             raise terminal_problem
+        response.approval = adr["approval"] if adr["approval"]["required"] else None
         return response
 
     def _recover_concurrent_request(
@@ -339,9 +346,11 @@ class AuthorizationService:
             raise Problem(403, "invalid_delegation", "Registered acting agent differs from chain")
 
     @staticmethod
-    def _combine(matches: list[PolicyMatch]) -> tuple[str, list[str], dict | None]:
+    def _combine(
+        matches: list[PolicyMatch],
+    ) -> tuple[str, list[str], dict | None, PolicyMatch | None]:
         if not matches:
-            return "DENY", ["No matching ACTIVE policy; default deny"], None
+            return "DENY", ["No matching ACTIVE policy; default deny"], None, None
         winner = max(matches, key=lambda p: (p.priority, DECISION_ORDER[p.decision]))
         same_priority = [p for p in matches if p.priority == winner.priority]
         winner = max(same_priority, key=lambda p: DECISION_ORDER[p.decision])
@@ -355,7 +364,33 @@ class AuthorizationService:
             winner.decision,
             [f"Matched {p.policy_id} v{p.version}" for p in matches],
             None,
+            winner,
         )
+
+    @staticmethod
+    def _approval_request(
+        decision: str, winner: PolicyMatch | None, context: EvaluationContext
+    ) -> dict[str, Any] | None:
+        """The controls a REQUIRE_APPROVAL decision must open its approval with."""
+        if decision != "REQUIRE_APPROVAL":
+            return None
+        requirements = winner.approval_requirements if winner else None
+        if not requirements:
+            raise Problem(
+                422,
+                "approval_requirements_missing",
+                "A REQUIRE_APPROVAL policy must carry approval_requirements",
+            )
+        controls = dict(requirements)
+        controls.setdefault(
+            "distinct_control_domains_required", controls.get("distinct_roles_required", False)
+        )
+        return {
+            # ADR-007: the requesting principal cannot approve its own request.
+            "requester_id": context.principal.id,
+            "forbidden_approvers": [context.principal.id],
+            "controls": controls,
+        }
 
     @staticmethod
     def _decision_id(tenant_id: str, request_id: UUID) -> str:
