@@ -33,6 +33,16 @@ from tests.unit.test_authorization import context
 from tests.unit.test_registry import agent_document
 
 
+def _operator(principal_id: str) -> AuthenticatedPrincipal:
+    return AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",
+        principal_id=principal_id,
+        identity_kind="human",
+        auth_strength="hardware",
+        roles=["registry.admin"],
+    )
+
+
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
 def test_live_control_plane_end_to_end(tmp_path: Path) -> None:
     repository = PostgresAuthorizationRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
@@ -358,7 +368,7 @@ def test_rls_policy_lookup_and_evaluation_stays_inside_authorization_budget() ->
 def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
     repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     document = agent_document()
-    assert repository.create_agent("tnt_bank-a", document) == document
+    assert repository.create_agent("tnt_bank-a", document, _operator("prn_registry-admin")) == document
     assert repository.get("tnt_bank-a", "agents", document["agent_id"]) == document
     page = repository.list("tnt_bank-a", "agents", 200, None)
     assert any(item["agent_id"] == document["agent_id"] for item in page.items)
@@ -394,6 +404,7 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
             "tnt_bank-a",
             "tool_transfer",
             profile,
+            principal,
         )["binding_profile"]["profile_version"]
         == 2
     )
@@ -422,7 +433,7 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
         "created_at": "2026-08-25T00:00:00Z",
     }
     lifecycle_policy["content_hash"] = policy_semantic_hash(lifecycle_policy)
-    repository.create_policy("tnt_bank-a", lifecycle_policy)
+    repository.create_policy("tnt_bank-a", lifecycle_policy, principal)
     repository.simulate_policy(
         "tnt_bank-a",
         lifecycle_policy["policy_id"],
@@ -779,16 +790,6 @@ def test_i25_financial_execution_waits_for_immutable_receipt(tmp_path: Path) -> 
     assert lease["state"] == "LEASED"
 
 
-def _operator(principal_id: str) -> AuthenticatedPrincipal:
-    return AuthenticatedPrincipal(
-        tenant_id="tnt_bank-a",
-        principal_id=principal_id,
-        identity_kind="human",
-        auth_strength="hardware",
-        roles=["registry.admin"],
-    )
-
-
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
 def test_one_operator_cannot_downgrade_a_production_critical_agent() -> None:
     repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
@@ -797,7 +798,10 @@ def test_one_operator_cannot_downgrade_a_production_critical_agent() -> None:
         "environment": "production",
         "risk_tier": "CRITICAL",
     }
-    repository.create_agent("tnt_bank-a", protected)
+    # Creating it already needs four eyes; the point of the test is what happens next.
+    repository.create_agent(
+        "tnt_bank-a", protected, _operator("prn_admin-a"), _operator("prn_admin-b")
+    )
     # The write that removes its own protection: one operator, one PATCH, CRITICAL to LOW.
     downgrade = protected | {"risk_tier": "LOW", "updated_at": "2026-08-25T00:02:00Z"}
     with pytest.raises(Problem) as raised:
@@ -815,8 +819,8 @@ def test_patch_cannot_attach_an_agent_to_a_parent_that_did_not_authorize_it() ->
     repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     parent = agent_document() | {"agent_id": "agt_unwilling-parent"}
     child = agent_document() | {"agent_id": "agt_grafted-child"}
-    repository.create_agent("tnt_bank-a", parent)
-    repository.create_agent("tnt_bank-a", child)
+    repository.create_agent("tnt_bank-a", parent, _operator("prn_admin-a"))
+    repository.create_agent("tnt_bank-a", child, _operator("prn_admin-a"))
     grafted = child | {
         "parent_agent_id": "agt_unwilling-parent",
         "updated_at": "2026-08-25T00:03:00Z",
@@ -825,3 +829,86 @@ def test_patch_cannot_attach_an_agent_to_a_parent_that_did_not_authorize_it() ->
         repository.update_agent("tnt_bank-a", "agt_grafted-child", grafted, _operator("prn_admin-a"), None)
     assert raised.value.code == "registry_reference_missing"
     assert repository.get("tnt_bank-a", "agents", "agt_grafted-child").get("parent_agent_id") is None
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_an_agent_token_cannot_register_a_tool_that_permits_itself() -> None:
+    repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    agent_principal = AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",
+        principal_id="prn_self-serving",
+        identity_kind="agent",
+        auth_strength="federated",
+        roles=["registry.admin"],
+    )
+    document = {
+        "schema_version": "1.2",
+        "tool_id": "tool_self-granted",
+        "tenant_id": "tnt_bank-a",
+        "name": "Self granted",
+        "owner": "wealth-team",
+        "risk_tier": "LOW",
+        "action_type": "financial_write",
+        "resource_owner": "core-banking",
+        "data_classification": "financial",
+        "binding_profile": {
+            "profile_id": "bp_self-granted-v1",
+            "profile_version": 1,
+            "canonicalization": "RFC8785",
+            "bound_pointers": ["/amount"],
+            "volatile_pointers": [],
+            "unknown_pointer_policy": "reject",
+        },
+        "execution": {
+            "executor_spiffe_ids": ["spiffe://mizan/executor/wealth"],
+            "token_ttl_seconds": 300,
+            "lease_ttl_seconds": 900,
+            "heartbeat_interval_seconds": 60,
+            "max_lease_extensions": 24,
+        },
+        "created_at": "2026-08-26T00:00:00Z",
+    }
+    with pytest.raises(Problem) as raised:
+        repository.create_tool("tnt_bank-a", document, agent_principal)
+    assert raised.value.code == "registry_write_auth_insufficient"
+    with pytest.raises(Problem):
+        repository.get("tnt_bank-a", "tools", "tool_self-granted")
+    # A weakly authenticated human is refused for the same reason.
+    weak = AuthenticatedPrincipal(
+        tenant_id="tnt_bank-a",
+        principal_id="prn_password-only",
+        identity_kind="human",
+        auth_strength="password",
+        roles=["registry.admin"],
+    )
+    with pytest.raises(Problem) as weakly:
+        repository.create_tool("tnt_bank-a", document, weak)
+    assert weakly.value.code == "registry_write_auth_insufficient"
+    assert (
+        repository.create_tool("tnt_bank-a", document, _operator("prn_registry-admin"))["tool_id"]
+        == "tool_self-granted"
+    )
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_a_production_critical_agent_cannot_be_created_by_one_operator() -> None:
+    repository = RegistryRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    document = agent_document() | {
+        "agent_id": "agt_four-eyes",
+        "environment": "production",
+        "risk_tier": "CRITICAL",
+    }
+    with pytest.raises(Problem) as raised:
+        repository.create_agent("tnt_bank-a", document, _operator("prn_admin-a"))
+    assert raised.value.code == "registry_dual_control_required"
+    with pytest.raises(Problem) as same_person:
+        repository.create_agent(
+            "tnt_bank-a", document, _operator("prn_admin-a"), _operator("prn_admin-a")
+        )
+    assert same_person.value.code == "registry_dual_control_required"
+    assert (
+        repository.create_agent(
+            "tnt_bank-a", document, _operator("prn_admin-a"), _operator("prn_admin-b")
+        )["agent_id"]
+        == "agt_four-eyes"
+    )

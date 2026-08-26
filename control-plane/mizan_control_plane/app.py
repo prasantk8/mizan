@@ -107,12 +107,36 @@ def create_app(
     def workload_spiffe(request: Request) -> str:
         return require_workload_spiffe(request.scope)
 
+    def second_approver(header: str | None) -> AuthenticatedPrincipal | None:
+        """The X-Mizan-Second-Approval bearer, verified the same way the primary one is."""
+        if not header:
+            return None
+        if not header.startswith("Bearer "):
+            raise Problem(401, "invalid_second_approval", "Second approval must be a bearer token")
+        return verifier.verify_principal(header.removeprefix("Bearer ").strip())
+
+    def matched_second_approver(
+        principal: AuthenticatedPrincipal, header: str | None
+    ) -> AuthenticatedPrincipal | None:
+        second = second_approver(header)
+        if second is not None and second.tenant_id != principal.tenant_id:
+            raise Problem(403, "tenant_mismatch", "Second approver belongs to another tenant")
+        return second
+
     @app.post("/v1/agents", status_code=201)
     def create_agent(
-        document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
+        document: dict[str, Any],
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
         schemas.validate("Agent", document)
-        return registry_repository.create_agent(tenant_id, document)
+        return registry_repository.create_agent(
+            principal.tenant_id,
+            document,
+            principal,
+            matched_second_approver(principal, second_approval),
+            settings.environment,
+        )
 
     @app.get("/v1/agents")
     def list_agents(
@@ -135,29 +159,28 @@ def create_app(
         second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
         schemas.validate("Agent", request.document)
-        second = None
-        if second_approval:
-            if not second_approval.startswith("Bearer "):
-                raise Problem(
-                    401, "invalid_second_approval", "Second approval must be a bearer token"
-                )
-            second = verifier.verify_principal(second_approval.removeprefix("Bearer ").strip())
-            if second.tenant_id != principal.tenant_id:
-                raise Problem(403, "tenant_mismatch", "Second approver belongs to another tenant")
         return registry_repository.update_agent(
             principal.tenant_id,
             agent_id,
             request.document,
             principal,
-            second,
+            matched_second_approver(principal, second_approval),
         )
 
     @app.post("/v1/tools", status_code=201)
     def create_tool(
-        document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
+        document: dict[str, Any],
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
         schemas.validate("Tool", document)
-        return registry_repository.create_tool(tenant_id, document)
+        return registry_repository.create_tool(
+            principal.tenant_id,
+            document,
+            principal,
+            matched_second_approver(principal, second_approval),
+            settings.environment,
+        )
 
     @app.get("/v1/tools")
     def list_tools(
@@ -176,23 +199,32 @@ def create_app(
     def publish_binding_profile(
         tool_id: str,
         request: BindingProfilePublishRequest,
-        tenant_id: str = Depends(tenant_from_token),
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
-        current = registry_repository.get(tenant_id, "tools", tool_id)
+        current = registry_repository.get(principal.tenant_id, "tools", tool_id)
         candidate = current | {"binding_profile": request.binding_profile}
         schemas.validate("Tool", candidate)
         return registry_repository.publish_binding_profile(
-            tenant_id,
+            principal.tenant_id,
             tool_id,
             request.binding_profile,
+            principal,
+            matched_second_approver(principal, second_approval),
+            settings.environment,
         )
 
     @app.post("/v1/policies", status_code=201)
     def create_policy(
-        document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
+        document: dict[str, Any],
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
         schemas.validate("Policy", document)
-        return registry_repository.create_policy(tenant_id, document)
+        # A new policy is inert: it enters DRAFT, and reaching ACTIVE already requires a
+        # simulation and an approver who is not the author (V-1). Creation needs no second pair.
+        return registry_repository.create_policy(
+            principal.tenant_id, document, principal, None, settings.environment
+        )
 
     @app.get("/v1/policies")
     def list_policies(

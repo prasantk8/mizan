@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from mizan_control_plane import app as app_module
 from mizan_control_plane.config import Settings
 from mizan_control_plane.dev_token import ensure_keypair, mint
+from mizan_control_plane.registry import require_registry_authority
 
 TENANT = "tnt_bank-a"
 SIMULATION_CONTEXT = {
@@ -81,6 +82,22 @@ class FakeRepository:
 
     def update_agent(self, *arguments: Any) -> dict[str, Any]:
         return self._record("update_agent", *arguments)
+
+    def _guarded(self, name: str, tenant_id, document, actor, second=None, environment="development"):
+        # The double implements the authority contract with the shipped rule, not a copy of it:
+        # these tests are about which principal the route hands over, not about re-deriving who
+        # may write to a registry.
+        require_registry_authority(actor, document, second, environment)
+        return self._record(name, tenant_id, document, actor, second, environment)
+
+    def create_agent(self, *arguments: Any) -> dict[str, Any]:
+        return self._guarded("create_agent", *arguments)
+
+    def create_tool(self, *arguments: Any) -> dict[str, Any]:
+        return self._guarded("create_tool", *arguments)
+
+    def create_policy(self, *arguments: Any) -> dict[str, Any]:
+        return self._guarded("create_policy", *arguments)
 
 
 @pytest.fixture
@@ -230,3 +247,62 @@ def test_problem_responses_carry_the_contract_media_type(wired) -> None:
     client, _repositories, _private_key = wired
     response = client.get("/v1/agents/agt_wealth-01")
     assert response.headers["content-type"].startswith("application/problem+json")
+
+
+TOOL_DOCUMENT = {
+    "schema_version": "1.2",
+    "tool_id": "tool_self-granted",
+    "tenant_id": TENANT,
+    "name": "Self granted",
+    "owner": "wealth-team",
+    "risk_tier": "LOW",
+    "action_type": "financial_write",
+    "resource_owner": "core-banking",
+    "data_classification": "financial",
+    "binding_profile": {
+        "profile_id": "bp_self-granted-v1",
+        "profile_version": 1,
+        "canonicalization": "RFC8785",
+        "bound_pointers": ["/amount"],
+        "volatile_pointers": [],
+        "unknown_pointer_policy": "reject",
+    },
+    "execution": {
+        "executor_spiffe_ids": ["spiffe://mizan/executor/wealth"],
+        "token_ttl_seconds": 300,
+        "lease_ttl_seconds": 900,
+        "heartbeat_interval_seconds": 60,
+        "max_lease_extensions": 24,
+    },
+    "created_at": "2026-08-26T00:00:00Z",
+}
+
+
+def test_an_agent_token_cannot_register_a_tool_over_http(wired) -> None:
+    client, repositories, private_key = wired
+    response = client.post(
+        "/v1/tools",
+        json=TOOL_DOCUMENT,
+        headers=authorization(private_key, identity_kind="agent", auth_strength="federated"),
+    )
+    assert response.status_code == 403
+    assert response.json()["type"].endswith("registry_write_auth_insufficient")
+    assert repositories["registry"].calls == []
+
+
+@pytest.mark.parametrize("path", ["/v1/agents", "/v1/tools", "/v1/policies"])
+def test_registry_creates_require_a_strongly_authenticated_human(wired, path) -> None:
+    client, repositories, private_key = wired
+    weak = authorization(private_key, identity_kind="human", auth_strength="password")
+    assert client.post(path, json={"anything": True}, headers=weak).status_code in {400, 403}
+    assert repositories["registry"].calls == []
+
+
+def test_a_strong_human_operator_reaches_the_registry(wired) -> None:
+    client, repositories, private_key = wired
+    response = client.post("/v1/tools", json=TOOL_DOCUMENT, headers=authorization(private_key))
+    assert response.status_code == 201, response.text
+    name, arguments = repositories["registry"].calls[-1]
+    assert name == "create_tool"
+    assert arguments[0] == TENANT
+    assert arguments[2].principal_id == "prn_ops-manager"

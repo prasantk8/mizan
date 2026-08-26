@@ -36,6 +36,42 @@ def policy_semantic_hash(document: dict[str, Any]) -> str:
     )
 
 
+def require_registry_authority(
+    actor: AuthenticatedPrincipal,
+    document: dict[str, Any],
+    second_actor: AuthenticatedPrincipal | None,
+    environment: str,
+) -> None:
+    """Who may write to the registry (B-17 default, pending ratification).
+
+    The registry decides what every later authorization is measured against: which tools exist,
+    which agents may call them, and what the binding profile commits to. An agent that can write
+    here can widen its own permissions without a policy change and without an approval, so the
+    write authority is deliberately narrower than the read authority — humans with MFA or hardware
+    only, never an agent or service identity, and four eyes for a production HIGH/CRITICAL object.
+    """
+    if actor.identity_kind != "human" or actor.auth_strength not in {"mfa", "hardware"}:
+        raise Problem(
+            403,
+            "registry_write_auth_insufficient",
+            "Registry writes require a human operator with MFA or hardware authentication",
+        )
+    protected = dual_control_required(document) or (
+        environment == "production" and document.get("risk_tier") in {"HIGH", "CRITICAL"}
+    )
+    if protected and (
+        second_actor is None
+        or second_actor.principal_id == actor.principal_id
+        or second_actor.identity_kind != "human"
+        or second_actor.auth_strength not in {"mfa", "hardware"}
+    ):
+        raise Problem(
+            403,
+            "registry_dual_control_required",
+            "A distinct strongly authenticated second approver is required for this object",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Page:
     items: list[dict[str, Any]]
@@ -49,7 +85,15 @@ class RegistryRepository(PostgresAuthorizationRepository):
         "policies": ("policies", "policy_id"),
     }
 
-    def create_agent(self, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]:
+    def create_agent(
+        self,
+        tenant_id: str,
+        document: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
+    ) -> dict[str, Any]:
+        require_registry_authority(actor, document, second_actor, environment)
         self._require_tenant(tenant_id, document)
         try:
             with self.pool.connection() as connection, connection.transaction():
@@ -108,7 +152,15 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 422, "registry_reference_missing", "Agent references an unknown object"
             ) from exc
 
-    def create_tool(self, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]:
+    def create_tool(
+        self,
+        tenant_id: str,
+        document: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
+    ) -> dict[str, Any]:
+        require_registry_authority(actor, document, second_actor, environment)
         self._require_tenant(tenant_id, document)
         profile = document["binding_profile"]
         if set(profile["bound_pointers"]) & set(profile["volatile_pointers"]):
@@ -155,7 +207,15 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 409, "tool_exists", "tool or binding-profile version already exists"
             ) from exc
 
-    def create_policy(self, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]:
+    def create_policy(
+        self,
+        tenant_id: str,
+        document: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
+    ) -> dict[str, Any]:
+        require_registry_authority(actor, document, second_actor, environment)
         self._require_tenant(tenant_id, document)
         if document["status"] != "DRAFT":
             raise Problem(422, "policy_create_requires_draft", "New policies must begin in DRAFT")
@@ -407,8 +467,19 @@ class RegistryRepository(PostgresAuthorizationRepository):
             )
 
     def publish_binding_profile(
-        self, tenant_id: str, tool_id: str, profile: dict[str, Any]
+        self,
+        tenant_id: str,
+        tool_id: str,
+        profile: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
     ) -> dict[str, Any]:
+        # A binding profile decides which arguments an execution token commits to (ADR-008), so
+        # publishing one carries the same authority as registering the tool it belongs to.
+        require_registry_authority(
+            actor, self.get(tenant_id, "tools", tool_id), second_actor, environment
+        )
         if not profile.get("bound_pointers") or set(profile["bound_pointers"]) & set(
             profile.get("volatile_pointers", [])
         ):

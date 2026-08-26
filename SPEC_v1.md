@@ -1239,8 +1239,8 @@ paths:
              responses: { "200": {description: OK}, "403": {description: Missing second approver}, "422": {description: "Delegation parent has not authorized this edge"} } }
 
   /v1/tools:
-    post: { summary: "Register tool (§2.6: schema, owner, risk_tier, data_classification, permitted_agents, binding_profile, execution timings)",
-            responses: { "201": {description: Created}, "400": {description: "binding_profile bound_pointers empty or overlapping volatile_pointers"} } }
+    post: { summary: "Register tool (§2.6: schema, owner, risk_tier, data_classification, permitted_agents, binding_profile, execution timings). Registry writes require a human operator with MFA or hardware authentication, and four eyes for a production HIGH/CRITICAL object (V-22).",
+            responses: { "201": {description: Created}, "400": {description: "binding_profile bound_pointers empty or overlapping volatile_pointers"}, "403": {description: "registry_write_auth_insufficient or registry_dual_control_required"} } }
   /v1/tools/{tool_id}:
     get: { summary: Fetch tool, responses: { "200": {description: OK}, "404": {description: Not found} } }
   /v1/tools/{tool_id}/binding-profile:
@@ -1685,7 +1685,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-19 | DecisionEvent `decision_sequence` allocation and insert are atomic; `previous_event_hash` matches the preceding event, event payload fields are valid for `event_type`, and retries return the existing event rather than creating another. | decision event writer |
 | V-20 | For `financial_write`, token redemption requires a valid `immutable_receipt_ref` covering the originating ADR_Record and any deciding approval event. Receipt tenant, stream, record hash, and signature must verify outside the Postgres administrative boundary. | execution gateway |
 | V-21 | `ExecutionTokenClaims.authorized_executor` is selected server-side from the tool version's non-empty `execution.executor_spiffe_ids`; callers cannot propose or override it. Redemption uses the same immutable tool/profile version cited by the ADR_Record. | tool registration + token issuer |
-| V-22 | An agent PATCH requires a distinct strongly authenticated second approver when the **stored** document or the **submitted** document is a production `HIGH`/`CRITICAL` agent. Evaluating only the submitted side lets one operator remove the protection and change the agent in the same write. The delegation parent edge `create_agent` enforces is re-enforced whenever a PATCH moves `parent_agent_id`. | `PATCH /v1/agents/{agent_id}` |
+| V-22 | An agent PATCH requires a distinct strongly authenticated second approver when the **stored** document or the **submitted** document is a production `HIGH`/`CRITICAL` agent. Evaluating only the submitted side lets one operator remove the protection and change the agent in the same write. The delegation parent edge `create_agent` enforces is re-enforced whenever a PATCH moves `parent_agent_id`. The same authority governs registry creation: `POST /v1/agents`, `/v1/tools`, `/v1/tools/{id}/binding-profile` and `/v1/policies` require a human operator with MFA or hardware authentication — never an agent or service identity — and four eyes for a production `HIGH`/`CRITICAL` object. | `POST`/`PATCH /v1/agents`, `/v1/tools`, `/v1/policies` |
 | V-23 | `POST /v1/decisions/{id}/execution-token` is accepted only from the agent principal the ADR_Record names, and issues at most one unconsumed, unexpired token per decision — a repeat request returns the outstanding capability, never a second one. Serialized per decision so concurrent requests cannot both mint. | execution token issuer |
 
 ---

@@ -68,6 +68,35 @@ the second uses `X-Mizan-Second-Approval: Bearer …`. Both tokens must carry MF
 the same tenant, and different principal IDs. A caller-supplied name is never evidence of approval,
 and bearer values are neither persisted nor included in events.
 
+## Implementation Amendment E — registry write authority *(pending ratification: B-17)*
+
+**Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration review, T-077a · **Spec anchors:** SPEC v1.3 §3 `/v1/agents`, `/v1/tools`, `/v1/policies`, V-22
+
+`POST /v1/agents`, `POST /v1/tools`, `POST /v1/tools/{id}/binding-profile` and `POST /v1/policies`
+authenticated the *tenant* and nothing else. Demonstrated on `474efce` against a running control
+plane: a token with `identity_kind: "agent"` posted a `financial_write` tool and received 201. An
+agent that can write to the registry can widen its own permissions without a policy change, an
+approval, or anything a reviewer would see as an authorization event — the registry is what every
+later decision is measured against.
+
+The write authority is therefore narrower than the read authority:
+
+- **Human, MFA or hardware, always.** `identity_kind` must be `human` and `auth_strength` must be
+  `mfa` or `hardware`. Agent and service identities are refused with 403
+  `registry_write_auth_insufficient`, as are password-strength humans.
+- **Four eyes for a production HIGH/CRITICAL object**, on creation as well as on PATCH, using the
+  same `X-Mizan-Second-Approval` header and the same distinctness rules as Amendment C. The object
+  is protected if its own document declares production HIGH/CRITICAL *or* the deployment is
+  running in production and the object is HIGH/CRITICAL.
+- **Policy creation takes one operator.** A new policy enters `DRAFT` and is inert; reaching
+  `ACTIVE` already requires a recorded simulation and an approver who is not the author (V-1), so
+  the two-person control is at the point where the policy starts deciding, not where it is typed.
+
+The rule has one home, `require_registry_authority`, and each repository entry point takes the
+acting principal explicitly so a future route cannot omit it. Ratification is open as B-17: the
+alternative the founder may prefer is a dedicated `registry.admin` service identity for
+infrastructure-as-code, which this default deliberately refuses.
+
 ## Implementation Amendment D — the shipped listener publishes the verified peer
 
 **Date:** 2026-08-26 · **Trigger:** Stage 5 acceleration review, T-066 · **Spec anchors:** SPEC v1.3 §8 `MIZAN_TLS_*`, I-23, `docs/deployment/mtls.md`
