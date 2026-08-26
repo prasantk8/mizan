@@ -7,8 +7,8 @@ design. Run it by hand:
 
     uv run python docs/reviews/reproductions/R-007-cpb-attestation.py
 
-Seven cases. Two are regression guards that must never break; five are findings and
-are the acceptance gate for T-049, T-050, T-051, T-055 and T-057.
+Eight cases. Two are regression guards that must never break; six are findings and
+are the acceptance gate for T-049, T-050, T-051, T-055, T-057 and T-061.
 
 | Case | Finding | Expected once fixed                                        | At 94bb25e |
 |------|---------|------------------------------------------------------------|------------|
@@ -19,8 +19,9 @@ are the acceptance gate for T-049, T-050, T-051, T-055 and T-057.
 | 5    | V-12    | a missing OpenSSL fails cleanly, distinguishably, no traceback| RED  T-051 |
 | 6    | V-16    | a transient TSA failure is retried, not written as terminal  | RED  T-055 |
 | 7    | V-17    | an append the store refuses is never counted as a completion | RED  T-057 |
+| 8    | V-19    | an ordinary concurrent double-pass is not a tamper alarm      | RED  T-061 |
 
-**CP-B is gated on cases 1, 2, 3, 4 and 6 only.** Cases 5 and 7 are real findings
+**CP-B is gated on cases 1, 2, 3, 4 and 6 only.** Cases 5, 7 and 8 are real findings
 whose failure mode is reporting and operations, not a false claim of external
 anchoring, so R-007 §5 places them before CP-C. Exit is non-zero while any case is
 open; read the summary block for which checkpoint each one blocks.
@@ -37,6 +38,18 @@ empty, and `record_anchor_attestation` cannot tell an append from a silent refus
 Cases 6 and 7 are the same pairing as 4 and 6: 6 says a failure must stay retryable,
 7 says the retry must be able to land.
 
+Case 8 was added by the CP-C wave-1 re-run on 2026-08-26, by following T-057's fix
+one call site further than case 7 reaches. T-057 is correct and case 7 is genuinely
+green. But it classifies a refused append by *byte-comparing* the stored document to
+the new one, and two RFC 3161 tokens over the same imprint are never byte-identical:
+each carries its own genTime, TSA serial number and optional nonce. So the "benign
+idempotent race" G.13 describes is the one outcome that cannot occur, and an ordinary
+concurrent double-pass — two healthy workers, two valid tokens, nothing hostile —
+classifies as `conflict` and opens `anchor_attestation_integrity`. T-052 then made
+the worker run continuously, which moves this from theoretical to routine. The alarm
+that is supposed to mean "someone reached into the immutable evidence store" is fired
+by concurrency, and an alarm that cries wolf is worse than no alarm at all.
+
 Case 1 matters beyond its verdict: it is the only place in the tree that executes
 *both* halves of the digest agreement. Every committed test stubs one side —
 `test_real_rfc3161_response_verifies_offline` uses a hand-made digest, and the
@@ -44,7 +57,7 @@ mixed-anchor test monkeypatches `verify_rfc3161` with `anchor_digest: "placehold
 If case 1 ever goes red, the signer and the verifier have stopped agreeing on what
 they hash, and no other test in the repository will tell you.
 
-Exit code is 0 only when all seven cases meet their post-fix expectation, so this
+Exit code is 0 only when all eight cases meet their post-fix expectation, so this
 doubles as the CP-B and CP-C re-run gate.
 """
 
@@ -286,10 +299,14 @@ def main(work: Path) -> int:
         def __init__(self) -> None:
             self.rows: dict[tuple[str, str, str], dict] = {}
 
-        def record_anchor_attestation(self, tenant_id: str, anchor_id: str, item: dict) -> None:
-            self.rows.setdefault(
-                (anchor_id, item["authority"], item["type"]), item
-            )  # ON CONFLICT DO NOTHING
+        def record_anchor_attestation(self, tenant_id: str, anchor_id: str, item: dict) -> str:
+            # Mirrors evidence.py:613 after T-057: ON CONFLICT DO NOTHING, then read back
+            # and classify. The classification is byte-equality, which is the point of case 8.
+            key = (anchor_id, item["authority"], item["type"])
+            if key not in self.rows:
+                self.rows[key] = item
+                return "appended"
+            return "unchanged" if self.rows[key] == item else "conflict"
 
     flaky_server = http.server.HTTPServer(("127.0.0.1", 0), Flaky)
     threading.Thread(target=flaky_server.serve_forever, daemon=True).start()
@@ -391,6 +408,77 @@ def main(work: Path) -> int:
         f"{why}; expected the worker never to count a completion the store refused — "
         f"either the append lands or the refusal is a named integrity event, but "
         f"`INSERT ... ON CONFLICT DO NOTHING` returning nothing means neither happens",
+    )
+
+    # --- CASE 8 · V-19 · an ordinary concurrent double-pass raises a tamper alarm ---
+    # T-057 made the refused append visible and classifies it by comparing the stored
+    # document to the new one. ADR-004 G.13 calls an identical document "a benign
+    # idempotent race" — but an RFC 3161 token carries its own genTime, TSA serial and
+    # optional nonce, so two tokens over the SAME imprint are never byte-identical. The
+    # benign branch is therefore unreachable for `rfc3161`, and the only surviving
+    # classification for a concurrent double-pass is `conflict`, which opens the
+    # `anchor_attestation_integrity` breaker. Nothing here is hostile: two healthy
+    # workers, two valid tokens, one slot. There is no lease on the anchor
+    # (no `FOR UPDATE SKIP LOCKED` on the pending-anchor read), and T-052 now runs the
+    # worker continuously, so the stale-snapshot window is open on every pass.
+    class Racer(http.server.BaseHTTPRequestHandler):
+        """A second entirely well-behaved TSA. Every token it mints is valid."""
+
+        attempts = 0
+
+        def do_POST(self) -> None:  # noqa: N802
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            Racer.attempts += 1
+            query = work / f"race-{Racer.attempts}.tsq"
+            reply = work / f"race-{Racer.attempts}.tsr"
+            query.write_bytes(body)
+            sh("openssl", "ts", "-reply", "-queryfile", str(query),
+               "-config", str(config), "-out", str(reply))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/timestamp-reply")
+            self.end_headers()
+            self.wfile.write(reply.read_bytes())
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    race_server = http.server.HTTPServer(("127.0.0.1", 0), Racer)
+    threading.Thread(target=race_server.serve_forever, daemon=True).start()
+    race_endpoint = f"http://127.0.0.1:{race_server.server_address[1]}/tsr"
+    racer = SidecarStore()
+    race_provider = Rfc3161AnchorProvider([race_endpoint], trust_anchors=[trusted])
+    race_core = {"anchor_id": "anchor-race", "head_hash": "d" * 64, "to_sequence": 4}
+    alarms: list[str] = []
+    race_worker = AnchorAttestationWorker(
+        racer, race_provider, type("B", (), {"open": lambda *a: alarms.append(a[1])})()
+    )
+    try:
+        # Worker A wins the race: it obtains a valid token and appends it. Ordinary work.
+        first_pending = next(item for item in race_provider.attest(race_core)
+                             if item.get("type") == "rfc3161")
+        won = race_provider.obtain(first_pending)
+        racer.record_anchor_attestation("tnt_bank-a", "anchor-race", won)
+        # Worker B read the sidecars BEFORE A committed, so its snapshot is empty. That
+        # read-then-TSA-round-trip-then-append window is seconds wide and unguarded.
+        stale = {"payload": race_core | {"attestations": race_provider.attest(race_core)},
+                 "attestations": []}
+        race_worker.process("tnt_bank-a", [stale], 900)
+        stored = racer.rows.get(("anchor-race", race_endpoint, "rfc3161"), {})
+        why = (
+            f"two healthy workers, two valid tokens, one slot; the stored token is "
+            f"{'unchanged' if stored == won else 'the one A appended'} and the alarms "
+            f"raised were {alarms or 'none'}"
+        )
+    except Exception as error:  # noqa: BLE001
+        alarms, why = ["error"], f"{type(error).__name__}: {error}"
+    finally:
+        race_server.shutdown()
+    record(
+        "CASE 8  V-19  two healthy workers attest the same anchor concurrently",
+        "anchor_attestation_integrity" not in alarms,
+        f"{why}; expected no tamper alarm — `anchor_attestation_integrity` must mean "
+        f"someone reached into the immutable store, and byte-equality cannot mean that "
+        f"when every RFC 3161 token carries a fresh genTime, serial and nonce",
     )
 
     failed = [case for case, passed, _ in results if not passed]

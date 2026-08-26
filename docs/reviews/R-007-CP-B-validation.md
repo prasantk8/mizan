@@ -361,3 +361,101 @@ finalized anchors under an independently controlled trust root. What remains is 
 disclosure (T-053), and omission (T-038).
 
 Work order: `docs/handoff/CODEX-CP-C-RUN.md` — eleven tasks in four waves, no mandatory stop before CP-C.
+
+## 9. CP-C wave-1 review — 2026-08-26, head `f06cc95`
+
+T-057, T-051, T-052 and T-056 accepted. Reproduced rather than read: 184 passed / 13 skipped, ruff
+clean, `make check` five drift gates proven, seven cases green at `f06cc95`. Rule 8 sampled directly
+— `1e7b00e`'s `attestation.py` and `evidence.py` were restored into the tree and both of T-057's new
+unit tests failed with `assert 1 == 0`; the worktree restored clean afterwards.
+
+T-056 deserves specific credit. Tokens from two authorities nobody here controls, verifying offline
+against roots nobody here issued, is the difference between implementing RFC 3161 and interoperating
+with it, and it is the first evidence in this repository that the format claim survives contact with
+a party outside the building.
+
+### B-14 was half our error
+
+CODEX parked T-059 on a contract mismatch and was right to. One half of it was a defect in the work
+order: `CODEX-CP-C-RUN.md` line 189 asks for four attestation `type` values where ratified ADR-004
+G.2 defines three. The ratified ADR wins. Refusing to reconcile a ratified artifact with an
+unratified one by guessing is exactly the behaviour the escalation rule exists to produce.
+
+The other half is not a conflict at all but a grammar written flat where the system is layered. An
+attestation entry is persisted in exactly two places. The signed anchor payload is written *before*
+any TSA is contacted and is immutable inside the signature, so it can only ever read `pending` — or
+`unattested`, and only with `none_development`. The append-only sidecar stores outcomes rather than
+attempts under G.12, so it can only ever read `attested`. There is no third location, and therefore
+no write path that emits `failed`. `failed` describes a transient in-flight attempt that G.12 already
+decided, deliberately, never to persist.
+
+So `failed` is reserved vocabulary, the verifier's refusal is correct, and G.15 records the narrowing
+descriptively — it forbids nothing the implementation has ever emitted.
+
+What the disposition surfaced is smaller and more interesting than the blocker. A bundle carrying
+`failed` is currently reported as `anchor N has no verified external attestation`, which sends an
+auditor to chase the operations team when the truth is that someone edited the file. That is V-12's
+mistake in a new place: `cannot check` is not `check failed`, and `malformed` is not `unattested`.
+Bundle 1.0 therefore needs a third verdict class, and the reason is not tidiness:
+
+> The discrepancy is harmless today only because there is exactly one implementation — which is the
+> precise condition T-059 exists to end. An independent implementer reading G.2's flat enum would
+> legitimately accept `failed` and report it as an assurance level. Two conformant verifiers would
+> then return different verdicts on the same bundle, and the format would have failed at the only
+> job it has.
+
+### V-19 — the tamper alarm fires on ordinary concurrency
+
+Found the same way V-16, V-17 and V-18 were found: by following the accepted fix one call site
+further than the gate case that proved it. T-057 is correct and case 7 is genuinely green. But
+`record_anchor_attestation` classifies a refused append by comparing the stored document to the new
+one with `existing[0] == attestation`, and ADR-004 G.13 calls an identical document "a benign
+idempotent race".
+
+That branch is unreachable for `rfc3161`. An RFC 3161 token carries its own `genTime`, a TSA-chosen
+serial number and an optional nonce; two tokens over the same imprint from the same authority are
+never byte-identical, because non-determinism is a property of the protocol rather than an accident.
+The only classification a concurrent double-pass can reach is `conflict`, which opens
+`anchor_attestation_integrity`.
+
+Three facts compose into the severity. There is no lease on the anchor — no `FOR UPDATE SKIP LOCKED`
+anywhere on the pending-anchor read. The window between reading the sidecars and appending spans a
+full TSA network round-trip. And T-052 has just made the worker run continuously, so that window
+opens on every pass. T-057 defined the integrity signal; T-052 built the thing that trips it;
+neither is wrong alone.
+
+Case 8, with two healthy TSAs and two valid tokens:
+
+```
+RED    CASE 8  V-19  two healthy workers attest the same anchor concurrently
+       two healthy workers, two valid tokens, one slot; the stored token is unchanged
+       and the alarms raised were ['anchor_attestation_integrity']
+```
+
+The consequence is that the one alarm meaning *someone reached into the immutable evidence store* is
+fired by ordinary concurrency. An alarm that cries wolf is worse than no alarm: operators learn to
+clear it, and the real event arrives looking exactly like the noise. The secondary cost is a real
+token minted, requested across the trust boundary and discarded on every losing pass.
+
+T-061 must classify semantically — a stored row that validates against the operator's trust roots
+and commits to this anchor's core digest is a second honest witness to the same fact, which is the
+opposite of tampering — and must take a lease before spending a token. The breaker survives; it just
+has to mean something.
+
+### Why V-19 does not reopen CP-B
+
+CP-B asks whether the system asserts external anchoring it does not have. V-19 produces a false
+*alarm*, never a false assurance: the winning token is valid, the anchor is correctly `attested`, and
+no stream is described as externally anchored when it is not. It is an operations and
+signal-integrity defect, so it sits with cases 5 and 7 before CP-C, following §5's own precedent.
+
+### Limitations
+
+The 12 live-PostgreSQL tests are again taken from CODEX's report rather than re-run here. Case 8
+models the JSONB round-trip by hand, and the round-trip is exactly the part a hand model cannot
+reproduce — T-061 is required to carry live-PostgreSQL coverage for it.
+
+### Hostile-party answer: still no
+
+Unchanged and unchanged for the same reason. T-038 and T-039 are the tasks that move it, and T-064
+is the pass that tests whether they did.
