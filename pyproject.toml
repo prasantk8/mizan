@@ -31,7 +31,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["control-plane", "security", "integrations", "."]
+pythonpath = ["control-plane", "security", "integrations", "sdk/python", "."]
 
 [tool.ruff]
 line-length = 100
