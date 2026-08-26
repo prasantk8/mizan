@@ -1656,6 +1656,30 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_OUTBOX_DRAIN_INTERVAL_MS` | `250` | deployment | Outbox → Kafka/object-store publisher. |
 | `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` | `5` | deployment | Non-financial asynchronous publication SLO; breach opens the evidence breaker. Financial writes always require a receipt before redemption (I-25). |
 
+### 8.1 MCP Governance Gateway (`mizan-mcp-gateway`)
+
+A client-side component, configured by one TOML file (`integrations/mcp/example.toml`) with an environment fallback for each identity key. It sets nothing on the control plane and can relax no server default: everything below only decides what the gateway *asks*, and the registry's answer always wins.
+
+| Key | Default | Scope | Notes |
+|---|---|---|---|
+| `[upstream].command` / `.args` / `.env` | *(command required)* | gateway | The MCP tool server this process governs. Env replaces the child's environment when present. |
+| `[mizan].url` (`MIZAN_API_URL`) | *(required)* | gateway | Control plane base URL. |
+| `[mizan].agent_id` (`MIZAN_AGENT_ID`) | *(required)* | gateway | The registered agent the gateway calls as. |
+| `[mizan].agent_token` (`MIZAN_AGENT_TOKEN`) | *(required)* | gateway | Identity token; sent on every call, never logged. The tenant is read from it, never configured (I-3). |
+| `[mizan].agent_version` | `1.0.0` | gateway | Must equal the registered agent version or every authorization is `422`. |
+| `[mizan].operator_token` (`MIZAN_OPERATOR_TOKEN`) | *(none)* | gateway | Human operator credential, required only for `register_unknown_tools`. Registry writes are closed to agent identities (ADR-001 Amendment E). |
+| `[mizan].ca_file` (`MIZAN_CA_FILE`) | *(system trust)* | gateway | Trust roots for the control plane's server certificate. |
+| `[mizan].client_certificate_file` / `client_key_file` | *(none)* | gateway | The gateway's own workload certificate. Required with `executor_spiffe_id` over `https`: the authorized executor is read off the verified peer certificate, never off the body (ADR-001 Amendment B). Startup refuses the combination rather than failing at the first high-risk call. |
+| `[mizan].executor_spiffe_id` (`MIZAN_EXECUTOR_SPIFFE_ID`) | *(none)* | gateway | When set, the gateway is the ADR-008 executor: it redeems the token, holds the lease, and closes it. When unset it governs and records but does not bind execution, and says so in the result. |
+| `[mizan].principal_id` / `principal_type` / `principal_auth_strength` | `prn_mcp-client` / `application` / `federated` | gateway | Who the call is on behalf of when the client does not name an end user. |
+| `[mizan].approval_timeout_seconds` | `900` | gateway | How long a call waits for a human before returning `approval_pending`. Giving up cancels nothing: the approval stays open and the work stays paused. |
+| `[mizan].approval_poll_seconds` | `3` | gateway | Approval poll interval. |
+| `[mizan].execution_binding_retry_seconds` | `15` | gateway | How long an executor keeps waiting on `immutable_receipt_missing` / `approval_receipt_missing` / `receipt_verifier_unavailable`. Publication is asynchronous by design (ADR-004), so arriving early is not being refused. Every other refusal is final on the first answer. |
+| `[mizan].register_unknown_tools` | `false` | gateway | Register upstream tools the registry has never seen, under the operator credential. Existing tools are never overwritten. |
+| `[mizan].tool_id_prefix` | `tool_` | gateway | `read_portfolio` → `tool_read-portfolio`. |
+| `[defaults]` / `[tools.<name>]` `risk_tier` | `HIGH` | gateway | A *floor request* only. An unclassified tool is not a low-risk tool, and the registry's floor always wins. |
+| `[defaults]` / `[tools.<name>]` `bound_pointers` | *(empty)* | gateway | Empty means bind every top-level argument in the tool's own input schema: an argument nobody classified may be the one that decides whether the call is safe. |
+
 ---
 
 ## 9. Server-Side Validation Rules (V-rules)

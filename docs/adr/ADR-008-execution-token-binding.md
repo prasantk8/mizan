@@ -157,3 +157,32 @@ Claims come back from JSONB in PostgreSQL's key order, not the order they were w
 custody-agnostic signing path canonicalises the JWS payload with RFC 8785 before signing. That
 path exists because a KMS or HSM key never leaves its provider: only the signing input crosses the
 boundary, which is the seam T-076 needs.
+
+## Implementation Amendment — an authorization is not a permission to act
+
+**Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration, T-070 live gate · **Spec anchors:** SPEC v1.3 §5.4, §8.1, I-25
+
+The MCP Governance Gateway is the first shipped ADR-008 executor that is not a test. Standing it
+up against a running control plane surfaced two things this ADR had left implicit.
+
+**A refused capability must refuse the call.** The gateway's first shape treated a failure to
+obtain the execution token as a degradation: it recorded the decision, dropped the lease, and
+forwarded the call anyway. That is wrong and it was the only fail-open path in the component. An
+`ALLOW` says the decision is permitted; the capability says *this* execution, by *this* executor,
+on *these* bound arguments, is permitted now. The control plane can and does refuse the second
+after granting the first — a delegation edge withdrawn, an executor no longer registered, an
+approval receipt not yet durable. An executor that cannot obtain a capability has not been
+authorized to act, and must not act. The gateway now returns
+`execution_binding_unavailable` and the tool server never hears about the call.
+
+**Arriving before the publisher is not being refused.** I-25 requires a financial write's
+ADR_Record and approval evidence to be durably published before redemption, and publication is
+asynchronous by design (ADR-004). An executor that redeems within milliseconds of an approval will
+therefore see `immutable_receipt_missing` — a statement about *when*, not *whether*. Executors
+retry exactly the three publication-pending codes for a bounded window
+(`execution_binding_retry_seconds`, default 15s) and treat every other refusal as final on the
+first answer. Retrying anything else would convert a denial into a poll.
+
+Neither property changes the control plane. Both are obligations on anything that redeems a
+capability, and belong here rather than in the gateway, because the next executor will need them
+too.
