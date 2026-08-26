@@ -278,3 +278,86 @@ sampled; the gate's own case 3 and case 4 transitions were taken as the demonstr
 **Hostile-party answer: still no.** For one wiring reason now, rather than two reporting ones.
 
 Work order: `docs/handoff/CODEX-CP-B-CLOSEOUT.md` — T-055 (blocker), T-051, T-052, T-056.
+
+---
+
+## 8. CP-B closeout — 2026-08-26, head `e76b2b6`
+
+**CP-B is PASSED. T-055 and T-036 are accepted DONE.**
+
+Gate cases 1, 2, 3, 4 and 6 are green together, which is the §5 criterion as amended by both re-runs.
+
+**What was reproduced rather than read.** The previous re-run disclosed that it had accepted `make check`
+and the supporting gates from CODEX's report. That limitation is closed here. `ruff check .` clean;
+`make check` clean — 30 boundaries, 14 JSON blocks, 13 schema IDs, five drift gates; 170 passed / 12
+skipped. Rule 8 was sampled directly: `d4d57c7`'s `attestation.py` was checked back out and **both** new
+tests fail against it — `test_worker_does_not_persist_validation_failure_and_retries_to_attested` and
+`test_worker_does_not_treat_pending_sidecar_as_finalized`.
+
+**T-055 is good work.** Outcome-only append semantics are the right choice of the two the order offered,
+and the commit message defended it on the correct ground: the signed payload already carries durable
+pending state, so a diagnostic relation would have bought a diagnostic at the price of a thing the
+assurance derivation could mistake for evidence. CODEX also routed the non-`attested` branch into the SLO
+breaker, which §T-055.4 asked for only implicitly.
+
+### V-17 · An append the store refuses is counted as a completion — **blocks CP-C**
+
+`record_anchor_attestation` (`evidence.py:613-628`) is `INSERT ... ON CONFLICT DO NOTHING` and returns
+`None`. The worker cannot tell an append from a silent refusal, and increments `completed` either way.
+T-055's correctness now rests on the `(anchor, authority, type)` slot being empty, and nothing checks
+that it is.
+
+CODEX disclosed that a pending row written by pre-fix code cannot be repaired in place. True, and not
+the whole cost. T-055 removed the `finalized` skip that used to stop the worker looking at such an
+anchor. Case 7 runs three passes over one against an entirely **healthy** TSA:
+
+```
+after 3 passes against a healthy TSA the sidecar still reads 'pending';
+3 token(s) minted and discarded; the worker reported 3 completion(s)
+```
+
+An unbounded external-call loop against a permanently false completion count. This is not an argument
+against T-055 — it is the argument that the write path needs to be able to fail. Owner: **T-057**.
+
+Cases 6 and 7 are a pair, as 4 and 6 are: 6 says a failed attempt must stay retryable, 7 says the retry
+must be able to land. A fix that greens 7 by restoring the skip reddens 6.
+
+### V-18 · The format is defined only by the program that reads it — **blocks CP-C**
+
+Not a code defect. The anchor core digest — `payload` minus `{attestations, object_key, object_version}`,
+JCS-canonicalised, SHA-256 — is the most load-bearing definition in the product. It appears in
+`evidence.py`, in `verify_evidence_export.py`, and **nowhere in `SPEC_v1.md` or ADR-004**. Rule 12 keeps
+the two copies independent and case 1 proves they agree, but there is no normative statement of what they
+are agreeing about.
+
+The consequence is external, not internal. The only implementation of the bundle format is Mizan's own,
+so "verify it yourself, offline" currently means "run our program." Apply the second founder test to the
+verifier rather than to the evidence and the answer is no. Owner: **T-059**.
+
+### Why neither blocks CP-B
+
+CP-B's question is whether the system asserts external anchoring it does not have. V-17 produces a false
+*completion count* and an unbounded retry, not a false assurance — the anchor correctly reads `pending`
+throughout. V-18 is a gap in what is written down, not in what is computed. Both are reporting and
+delivery defects, so §5's placement of V-12 before CP-C is the right precedent for both. The gate now
+prints which checkpoint each open case blocks and still exits non-zero while any case is open.
+
+### T-038 is not a feature on the list
+
+`TM-001` §"NOT COVERED" names two adversaries this design does not defend against: records omitted before
+chaining, and an entire final anchor withheld. A party holding the database and the signing key can
+present a truncated history that is internally perfect and freshly timestamped — an RFC 3161 token proves
+an anchor existed by time T, never that no other anchor exists. A retained inclusion proof is the only
+mechanism in the design that lets a third party prove a record **must** be in a chain it does not
+control. That makes T-038 the answer to the largest remaining hole in the hostile-party story, and the
+work order says so.
+
+**Limitations of this pass.** The 12 live-PostgreSQL tests were again accepted from CODEX's report rather
+than re-run. Case 7 models `ON CONFLICT DO NOTHING` by hand from the migration, because the gate must run
+without a database; T-057 is therefore required to cover the real rowcount behaviour against a live table.
+
+**Hostile-party answer: still no** — and the reason has moved. The cryptographic boundary holds for
+finalized anchors under an independently controlled trust root. What remains is wiring (T-052), custody
+disclosure (T-053), and omission (T-038).
+
+Work order: `docs/handoff/CODEX-CP-C-RUN.md` — eleven tasks in four waves, no mandatory stop before CP-C.

@@ -7,8 +7,8 @@ design. Run it by hand:
 
     uv run python docs/reviews/reproductions/R-007-cpb-attestation.py
 
-Six cases. Two are regression guards that must never break; four are the open
-findings and are the acceptance gate for T-049, T-050, T-051 and T-055.
+Seven cases. Two are regression guards that must never break; five are findings and
+are the acceptance gate for T-049, T-050, T-051, T-055 and T-057.
 
 | Case | Finding | Expected once fixed                                        | At 94bb25e |
 |------|---------|------------------------------------------------------------|------------|
@@ -18,11 +18,24 @@ findings and are the acceptance gate for T-049, T-050, T-051 and T-055.
 | 4    | V-14    | `obtain()` refuses to record `attested` on unvalidated bytes | RED  T-050 |
 | 5    | V-12    | a missing OpenSSL fails cleanly, distinguishably, no traceback| RED  T-051 |
 | 6    | V-16    | a transient TSA failure is retried, not written as terminal  | RED  T-055 |
+| 7    | V-17    | an append the store refuses is never counted as a completion | RED  T-057 |
+
+**CP-B is gated on cases 1, 2, 3, 4 and 6 only.** Cases 5 and 7 are real findings
+whose failure mode is reporting and operations, not a false claim of external
+anchoring, so R-007 §5 places them before CP-C. Exit is non-zero while any case is
+open; read the summary block for which checkpoint each one blocks.
 
 Case 6 was added by the CP-B re-run on 2026-08-26. It is a regression *introduced*
 by T-050 and is invisible to case 4, which stops at the provider and never reaches
 the sidecar store. Cases 4 and 6 must be read together: 4 says a bad token must not
 become `attested`, 6 says it must not become permanent either.
+
+Case 7 was added by the CP-B closeout re-run on 2026-08-26, by following T-055's fix
+one call site further than case 6 reaches. T-055 is correct and case 6 is genuinely
+green — but its correctness now rests on the `(anchor, authority, type)` slot being
+empty, and `record_anchor_attestation` cannot tell an append from a silent refusal.
+Cases 6 and 7 are the same pairing as 4 and 6: 6 says a failure must stay retryable,
+7 says the retry must be able to land.
 
 Case 1 matters beyond its verdict: it is the only place in the tree that executes
 *both* halves of the digest agreement. Every committed test stubs one side —
@@ -31,8 +44,8 @@ mixed-anchor test monkeypatches `verify_rfc3161` with `anchor_digest: "placehold
 If case 1 ever goes red, the signer and the verifier have stopped agreeing on what
 they hash, and no other test in the repository will tell you.
 
-Exit code is 0 only when all six cases meet their post-fix expectation, so this
-doubles as the CP-B re-run gate.
+Exit code is 0 only when all seven cases meet their post-fix expectation, so this
+doubles as the CP-B and CP-C re-run gate.
 """
 
 from __future__ import annotations
@@ -312,13 +325,88 @@ def main(work: Path) -> int:
         f"non-terminal state permanent",
     )
 
+    # --- CASE 7 · V-17 · an append the store refuses is counted as a completion ---
+    # T-055 fixed case 6 by never writing a non-terminal sidecar, and it is correct. But
+    # `record_anchor_attestation` is `INSERT ... ON CONFLICT DO NOTHING` and returns
+    # nothing, so the worker cannot tell an append from a silent refusal — it increments
+    # `completed` either way. T-055's correctness therefore rests on the slot being empty,
+    # and nothing checks that it is. Any anchor carrying a sidecar row written by pre-fix
+    # code is now hit against the TSA on EVERY pass, forever: the retry is no longer
+    # skipped (T-055 removed the skip), a valid token is obtained and discarded by the
+    # conflict clause, and the worker reports a completion each time.
+    class Healthy(http.server.BaseHTTPRequestHandler):
+        """An ordinary, entirely well-behaved TSA. Nothing is failing here but the store."""
+
+        attempts = 0
+
+        def do_POST(self) -> None:  # noqa: N802
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            Healthy.attempts += 1
+            query = work / f"healthy-{Healthy.attempts}.tsq"
+            reply = work / f"healthy-{Healthy.attempts}.tsr"
+            query.write_bytes(body)
+            sh("openssl", "ts", "-reply", "-queryfile", str(query),
+               "-config", str(config), "-out", str(reply))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/timestamp-reply")
+            self.end_headers()
+            self.wfile.write(reply.read_bytes())
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    healthy_server = http.server.HTTPServer(("127.0.0.1", 0), Healthy)
+    threading.Thread(target=healthy_server.serve_forever, daemon=True).start()
+    healthy_endpoint = f"http://127.0.0.1:{healthy_server.server_address[1]}/tsr"
+    legacy = SidecarStore()
+    legacy_provider = Rfc3161AnchorProvider([healthy_endpoint], trust_anchors=[trusted])
+    legacy_core = {"anchor_id": "anchor-legacy", "head_hash": "c" * 64, "to_sequence": 3}
+    # Exactly the row a pre-fix (d4d57c7) deployment left behind. Immutable, unrepairable.
+    legacy.rows[("anchor-legacy", healthy_endpoint, "rfc3161")] = {
+        "type": "rfc3161", "status": "pending", "authority": healthy_endpoint,
+        "failure_reason": "RFC 3161 token validation failed: one transient fault, months ago",
+    }
+    legacy_worker = AnchorAttestationWorker(
+        legacy, legacy_provider, type("B", (), {"open": lambda *a: None})()
+    )
+    try:
+        reported = 0
+        for _ in range(3):
+            row = {"payload": legacy_core | {"attestations": legacy_provider.attest(legacy_core)},
+                   "attestations": list(legacy.rows.values())}
+            reported += legacy_worker.process("tnt_bank-a", [row], 900)
+        final = legacy.rows.get(("anchor-legacy", healthy_endpoint, "rfc3161"), {})
+        state, why = final.get("status"), (
+            f"after 3 passes against a healthy TSA the sidecar still reads "
+            f"{final.get('status')!r}; {Healthy.attempts} token(s) minted and discarded; "
+            f"the worker reported {reported} completion(s)"
+        )
+    except Exception as error:  # noqa: BLE001
+        state, reported, why = "error", 0, f"{type(error).__name__}: {error}"
+    finally:
+        healthy_server.shutdown()
+    record(
+        "CASE 7  V-17  a sidecar slot already occupied by a pre-fix pending row",
+        not (reported > 0 and state != "attested"),
+        f"{why}; expected the worker never to count a completion the store refused — "
+        f"either the append lands or the refusal is a named integrity event, but "
+        f"`INSERT ... ON CONFLICT DO NOTHING` returning nothing means neither happens",
+    )
+
     failed = [case for case, passed, _ in results if not passed]
+    cpb_blockers = [case for case in failed
+                    if case.split("  ")[0] in {"CASE 1", "CASE 2", "CASE 3", "CASE 4", "CASE 6"}]
     print("=" * 78)
     print(f"{len(results) - len(failed)}/{len(results)} cases at their post-fix expectation.")
     if failed:
         print("Open: " + ", ".join(case.split("  ")[0] + " " + case.split("  ")[1]
                                    for case in failed))
-        print("CP-B does not pass while cases 3, 4 or 6 are red (R-007 §5, amended by the re-run).")
+    print(
+        "CP-B does not pass while cases 1, 2, 3, 4 or 6 are red "
+        "(R-007 §5, amended by the re-runs): " + ("HELD" if cpb_blockers else "PASSED")
+    )
+    if failed and not cpb_blockers:
+        print("Remaining cases are pre-CP-C findings, not CP-B blockers.")
     return 1 if failed else 0
 
 
