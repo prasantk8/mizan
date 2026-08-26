@@ -612,10 +612,10 @@ class EvidenceRepository:
 
     def record_anchor_attestation(
         self, tenant_id: str, anchor_id: str, attestation: dict[str, Any]
-    ) -> None:
+    ) -> str:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
-            connection.execute(
+            cursor = connection.execute(
                 "INSERT INTO mizan.anchor_attestations(tenant_id,anchor_id,authority,attestation_type,document) "
                 "VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                 (
@@ -626,6 +626,16 @@ class EvidenceRepository:
                     json.dumps(attestation),
                 ),
             )
+            if cursor.rowcount == 1:
+                return "appended"
+            existing = connection.execute(
+                "SELECT document FROM mizan.anchor_attestations "
+                "WHERE tenant_id=%s AND anchor_id=%s AND authority=%s AND attestation_type=%s",
+                (tenant_id, anchor_id, attestation["authority"], attestation["type"]),
+            ).fetchone()
+            if existing and existing[0] == attestation:
+                return "unchanged"
+            return "conflict"
 
     @staticmethod
     def _page_cursor(created_at: datetime, identifier: str) -> str:

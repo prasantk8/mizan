@@ -398,3 +398,12 @@ leaving the outcome slot empty preserves retryability and keeps the anchor visib
 The worker treats only `attested` sidecars as finalized, persists only an `attested` provider result, and counts
 only that append as a completion. Diagnostic attempt persistence is deliberately deferred rather than made
 mistakable for assurance evidence; adding it later requires a separately keyed append-only relation.
+
+### G.13 Implementation delta — refused attestation appends (T-057)
+
+The append operation reports whether the immutable outcome row was inserted. A uniqueness conflict is
+read back and compared: an identical document is a benign idempotent race; a different document is a
+named `anchor_attestation_integrity` event and is never counted as completion. A pre-existing
+non-terminal sidecar occupies the immutable outcome slot, is escalated for operator attention, and is
+not retried against the TSA. Recovery remains additive; implementations must not update, delete, or
+upsert the occupied evidence row.

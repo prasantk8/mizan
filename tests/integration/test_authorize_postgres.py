@@ -594,6 +594,34 @@ def _publish_focused_evidence(repository, tmp_path: Path):
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_anchor_attestation_append_reports_insert_idempotence_and_conflict(tmp_path: Path) -> None:
+    repository, _ = _focused_authorization("018f47a6-7b42-7c00-8000-000000000299")
+    evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    publisher = OutboxPublisher(
+        evidence,
+        LocalImmutableObjectStore(tmp_path),
+        Ed25519EvidenceSigner.development("evidence-receipt"),
+        Ed25519EvidenceSigner.development("evidence-anchor"),
+    )
+    publisher.drain("tnt_bank-a")
+    anchor = publisher.anchor("tnt_bank-a", "tnt_bank-a:adr:0")
+    document = {
+        "type": "rfc3161", "status": "attested", "authority": "tsa-test",
+        "anchor_digest": "a" * 64, "evidence": "AA==",
+    }
+
+    assert evidence.record_anchor_attestation(
+        "tnt_bank-a", anchor["anchor_id"], document
+    ) == "appended"
+    assert evidence.record_anchor_attestation(
+        "tnt_bank-a", anchor["anchor_id"], document
+    ) == "unchanged"
+    assert evidence.record_anchor_attestation(
+        "tnt_bank-a", anchor["anchor_id"], document | {"evidence": "AQ=="}
+    ) == "conflict"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
 def test_i1_authorization_commits_one_adr_and_outbox() -> None:
     repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000201")
     with repository.pool.connection() as connection, connection.transaction():

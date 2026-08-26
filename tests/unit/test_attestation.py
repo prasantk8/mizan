@@ -279,7 +279,9 @@ def test_worker_does_not_persist_validation_failure_and_retries_to_attested() ->
     calls = []
     provider = SimpleNamespace(obtain=lambda item: (calls.append(item), next(results))[1])
     worker = AnchorAttestationWorker(
-        SimpleNamespace(record_anchor_attestation=lambda *args: writes.append(args)),
+        SimpleNamespace(
+            record_anchor_attestation=lambda *args: writes.append(args) or "appended"
+        ),
         provider,
         SimpleNamespace(open=lambda *args: None),
     )
@@ -318,7 +320,9 @@ def test_worker_appends_final_attestation_without_mutating_anchor_payload() -> N
     payload = {"anchor_id": "anchor-1", "attestations": [pending.copy()]}
     writes = []
     repository = SimpleNamespace(
-        record_anchor_attestation=lambda tenant, anchor, item: writes.append((tenant, anchor, item))
+        record_anchor_attestation=lambda tenant, anchor, item: (
+            writes.append((tenant, anchor, item)) or "appended"
+        )
     )
     provider = SimpleNamespace(obtain=lambda item: item | {"status": "attested", "evidence": "AA=="})
     breaker = SimpleNamespace(open=lambda *args: None)
@@ -329,18 +333,19 @@ def test_worker_appends_final_attestation_without_mutating_anchor_payload() -> N
     assert payload["attestations"][0]["status"] == "pending"
 
 
-def test_worker_does_not_treat_pending_sidecar_as_finalized() -> None:
+def test_worker_escalates_occupied_pending_sidecar_without_retrying_forever() -> None:
     pending = {
         "type": "rfc3161", "status": "pending", "authority": "tsa",
         "anchor_digest": "a" * 64,
     }
     calls = []
+    opened = []
     worker = AnchorAttestationWorker(
-        SimpleNamespace(record_anchor_attestation=lambda *args: None),
+        SimpleNamespace(record_anchor_attestation=lambda *args: "conflict"),
         SimpleNamespace(obtain=lambda item: calls.append(item) or item | {
             "status": "attested", "evidence": "AA==",
         }),
-        SimpleNamespace(open=lambda *args: None),
+        SimpleNamespace(open=lambda *args: opened.append(args)),
     )
 
     assert worker.process(
@@ -350,8 +355,29 @@ def test_worker_does_not_treat_pending_sidecar_as_finalized() -> None:
             "attestations": [pending | {"failure_reason": "prior transient failure"}],
         }],
         900,
-    ) == 1
-    assert calls == [pending]
+    ) == 0
+    assert calls == []
+    assert opened == [("anchor_attestation_integrity", "tnt_bank-a", "anchor-1")]
+
+
+def test_worker_does_not_count_store_refusal_and_names_conflict() -> None:
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": "a" * 64,
+    }
+    opened = []
+    worker = AnchorAttestationWorker(
+        SimpleNamespace(record_anchor_attestation=lambda *args: "conflict"),
+        SimpleNamespace(obtain=lambda item: item | {"status": "attested", "evidence": "AA=="}),
+        SimpleNamespace(open=lambda *args: opened.append(args)),
+    )
+
+    assert worker.process(
+        "tnt_bank-a",
+        [{"payload": {"anchor_id": "anchor-1", "attestations": [pending]}, "attestations": []}],
+        900,
+    ) == 0
+    assert opened == [("anchor_attestation_integrity", "tnt_bank-a", "anchor-1")]
 
 
 def test_customer_countersignature_binds_anchor_digest() -> None:

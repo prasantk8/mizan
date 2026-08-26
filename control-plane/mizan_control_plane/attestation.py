@@ -155,9 +155,13 @@ class AnchorAttestationWorker:
     ) -> int:
         completed = 0
         for row in anchor_rows:
-            finalized = {
-                (item.get("type"), item.get("authority"))
+            occupied = {
+                (item.get("type"), item.get("authority")): item
                 for item in row.get("attestations", [])
+            }
+            finalized = {
+                key
+                for key, item in occupied.items()
                 if item.get("status") == "attested"
             }
             payload = row["payload"]
@@ -165,6 +169,11 @@ class AnchorAttestationWorker:
                 if pending.get("type") != "rfc3161" or pending.get("status") != "pending":
                     continue
                 if (pending.get("type"), pending.get("authority")) in finalized:
+                    continue
+                if (pending.get("type"), pending.get("authority")) in occupied:
+                    self.breaker.open(
+                        "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
+                    )
                     continue
                 try:
                     result = self.provider.obtain(pending)
@@ -180,8 +189,13 @@ class AnchorAttestationWorker:
                             "anchor_attestation_slo", tenant_id, payload["anchor_id"]
                         )
                     continue
-                self.repository.record_anchor_attestation(
+                outcome = self.repository.record_anchor_attestation(
                     tenant_id, payload["anchor_id"], result
                 )
-                completed += 1
+                if outcome == "appended":
+                    completed += 1
+                elif outcome == "conflict":
+                    self.breaker.open(
+                        "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
+                    )
         return completed
