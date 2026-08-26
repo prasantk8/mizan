@@ -5,6 +5,7 @@ import hashlib
 import subprocess
 import tempfile
 import urllib.request
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,29 @@ class Rfc3161AnchorProvider:
             return f"RFC 3161 token validation failed: {reason}"
         return None
 
+    def attestation_validation_failure(
+        self,
+        attestation: dict[str, Any],
+        expected_digest: str,
+        expected_authority: str,
+    ) -> str | None:
+        if attestation.get("type") != "rfc3161":
+            return "stored attestation type does not match the RFC 3161 slot"
+        if attestation.get("authority") != expected_authority:
+            return "stored attestation authority does not match its immutable slot"
+        if attestation.get("status") != "attested":
+            return "stored attestation is not a validated outcome"
+        if attestation.get("anchor_digest") != expected_digest:
+            return "stored attestation commits to a different anchor digest"
+        try:
+            token = base64.b64decode(attestation.get("evidence", ""), validate=True)
+        except (TypeError, ValueError):
+            return "stored RFC 3161 evidence is malformed"
+        if not token:
+            return "stored RFC 3161 evidence is missing"
+        with tempfile.TemporaryDirectory(prefix="mizan-tsa-recheck-") as directory:
+            return self._validation_failure(token, expected_digest, Path(directory))
+
 
 def pending_attestation_breaker_open(
     attestations: list[dict[str, Any]], max_pending_seconds: int, now: datetime | None = None
@@ -155,43 +179,84 @@ class AnchorAttestationWorker:
     ) -> int:
         completed = 0
         for row in anchor_rows:
-            occupied = {
-                (item.get("type"), item.get("authority")): item
-                for item in row.get("attestations", [])
-            }
-            finalized = {
-                key
-                for key, item in occupied.items()
-                if item.get("status") == "attested"
-            }
             payload = row["payload"]
-            for pending in payload.get("attestations", []):
-                if pending.get("type") != "rfc3161" or pending.get("status") != "pending":
+            lease_factory = getattr(self.repository, "lease_anchor_attestation", None)
+            lease = (
+                lease_factory(tenant_id, payload["anchor_id"])
+                if lease_factory is not None
+                else nullcontext(row.get("attestations", []))
+            )
+            with lease as leased_attestations:
+                if leased_attestations is None:
                     continue
-                if (pending.get("type"), pending.get("authority")) in finalized:
-                    continue
-                if (pending.get("type"), pending.get("authority")) in occupied:
-                    self.breaker.open(
-                        "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
+                occupied = {
+                    (item.get("type"), item.get("authority")): item
+                    for item in leased_attestations
+                }
+                core = {
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"attestations", "object_key", "object_version"}
+                }
+                expected_digest = hashlib.sha256(rfc8785.dumps(core)).hexdigest()
+                for pending in payload.get("attestations", []):
+                    if pending.get("type") != "rfc3161" or pending.get("status") != "pending":
+                        continue
+                    identity = (pending.get("type"), pending.get("authority"))
+                    existing = occupied.get(identity)
+                    if existing is not None:
+                        if self._stored_attestation_is_valid(
+                            existing, expected_digest, str(pending.get("authority"))
+                        ):
+                            continue
+                        self.breaker.open(
+                            "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
+                        )
+                        continue
+                    if pending_attestation_breaker_open([pending], max_pending_seconds, now):
+                        self.breaker.open(
+                            "anchor_attestation_slo", tenant_id, payload["anchor_id"]
+                        )
+                    try:
+                        result = self.provider.obtain(pending)
+                    except OSError:
+                        continue
+                    if result.get("status") != "attested":
+                        continue
+                    outcome = self.repository.record_anchor_attestation(
+                        tenant_id, payload["anchor_id"], result
                     )
-                    continue
-                if pending_attestation_breaker_open([pending], max_pending_seconds, now):
-                    self.breaker.open(
-                        "anchor_attestation_slo", tenant_id, payload["anchor_id"]
-                    )
-                try:
-                    result = self.provider.obtain(pending)
-                except OSError:
-                    continue
-                if result.get("status") != "attested":
-                    continue
-                outcome = self.repository.record_anchor_attestation(
-                    tenant_id, payload["anchor_id"], result
-                )
-                if outcome == "appended":
-                    completed += 1
-                elif outcome == "conflict":
-                    self.breaker.open(
-                        "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
-                    )
+                    if outcome == "appended":
+                        completed += 1
+                    elif outcome == "conflict":
+                        stored = self._stored_attestation(
+                            tenant_id, payload["anchor_id"], result
+                        )
+                        if not self._stored_attestation_is_valid(
+                            stored, expected_digest, str(pending.get("authority"))
+                        ):
+                            self.breaker.open(
+                                "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
+                            )
         return completed
+
+    def _stored_attestation(
+        self, tenant_id: str, anchor_id: str, candidate: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        reader = getattr(self.repository, "anchor_attestation", None)
+        if reader is None:
+            return None
+        return reader(tenant_id, anchor_id, candidate["authority"], candidate["type"])
+
+    def _stored_attestation_is_valid(
+        self,
+        attestation: dict[str, Any] | None,
+        expected_digest: str,
+        expected_authority: str,
+    ) -> bool:
+        validator = getattr(self.provider, "attestation_validation_failure", None)
+        return (
+            attestation is not None
+            and validator is not None
+            and validator(attestation, expected_digest, expected_authority) is None
+        )

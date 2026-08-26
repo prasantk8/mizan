@@ -4,6 +4,7 @@ import base64
 import hashlib
 import re
 import subprocess
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -381,6 +382,122 @@ def test_worker_does_not_count_store_refusal_and_names_conflict() -> None:
         900,
     ) == 0
     assert opened == [("anchor_attestation_integrity", "tnt_bank-a", "anchor-1")]
+
+
+def test_worker_takes_anchor_lease_before_spending_token() -> None:
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": "a" * 64, "requested_at": datetime.now(UTC).isoformat(),
+    }
+    events = []
+
+    class Repository:
+        @contextmanager
+        def lease_anchor_attestation(self, tenant_id, anchor_id):
+            events.append("lease-enter")
+            yield []
+            events.append("lease-exit")
+
+        def record_anchor_attestation(self, *args):
+            events.append("append")
+            return "appended"
+
+    provider = SimpleNamespace(
+        obtain=lambda item: events.append("obtain") or item | {
+            "status": "attested", "evidence": "AA=="
+        }
+    )
+    worker = AnchorAttestationWorker(
+        Repository(), provider, SimpleNamespace(open=lambda *args: None)
+    )
+
+    assert worker.process(
+        "tnt_bank-a",
+        [{"payload": {"anchor_id": "anchor-1", "attestations": [pending]}}],
+        900,
+    ) == 1
+    assert events == ["lease-enter", "obtain", "append", "lease-exit"]
+
+
+def test_worker_skips_locked_anchor_without_spending_token() -> None:
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": "a" * 64, "requested_at": datetime.now(UTC).isoformat(),
+    }
+    calls = []
+
+    class Repository:
+        @contextmanager
+        def lease_anchor_attestation(self, tenant_id, anchor_id):
+            yield None
+
+    worker = AnchorAttestationWorker(
+        Repository(),
+        SimpleNamespace(obtain=lambda item: calls.append(item)),
+        SimpleNamespace(open=lambda *args: None),
+    )
+
+    assert worker.process(
+        "tnt_bank-a",
+        [{"payload": {"anchor_id": "anchor-1", "attestations": [pending]}}],
+        900,
+    ) == 0
+    assert calls == []
+
+
+def test_worker_treats_different_valid_token_for_same_anchor_as_benign() -> None:
+    payload = {
+        "anchor_id": "anchor-1", "head_hash": "b" * 64,
+        "object_key": "ignored", "object_version": "ignored",
+    }
+    digest = hashlib.sha256(rfc8785.dumps({
+        "anchor_id": payload["anchor_id"], "head_hash": payload["head_hash"]
+    })).hexdigest()
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": digest, "requested_at": datetime.now(UTC).isoformat(),
+    }
+    stored = pending | {"status": "attested", "evidence": "token-one"}
+    candidate = pending | {"status": "attested", "evidence": "token-two"}
+    opened = []
+    provider = SimpleNamespace(
+        obtain=lambda item: candidate,
+        attestation_validation_failure=lambda item, expected, authority: (
+            None
+            if item == stored and expected == digest and authority == "tsa"
+            else "invalid"
+        ),
+    )
+    repository = SimpleNamespace(
+        record_anchor_attestation=lambda *args: "conflict",
+        anchor_attestation=lambda *args: stored,
+    )
+
+    assert AnchorAttestationWorker(
+        repository, provider, SimpleNamespace(open=lambda *args: opened.append(args))
+    ).process(
+        "tnt_bank-a", [{"payload": payload | {"attestations": [pending]}, "attestations": []}], 900
+    ) == 0
+    assert opened == []
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"type": "rfc3161", "status": "attested", "authority": "other", "anchor_digest": "a" * 64, "evidence": "AA=="},
+        {"type": "rfc3161", "status": "attested", "authority": "tsa", "anchor_digest": "b" * 64, "evidence": "AA=="},
+        {"type": "rfc3161", "status": "attested", "authority": "tsa", "anchor_digest": "a" * 64, "evidence": "bad"},
+    ],
+)
+def test_stored_attestation_semantic_validation_rejects_tampering(
+    tmp_path: Path, monkeypatch, stored: dict
+) -> None:
+    root = tmp_path / "root.pem"
+    root.write_text("root")
+    provider = Rfc3161AnchorProvider(["https://tsa.example"], [root])
+    monkeypatch.setattr(provider, "_validation_failure", lambda *args: "invalid token")
+
+    assert provider.attestation_validation_failure(stored, "a" * 64, "tsa") is not None
 
 
 def test_customer_countersignature_binds_anchor_digest() -> None:

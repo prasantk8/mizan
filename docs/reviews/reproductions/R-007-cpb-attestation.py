@@ -311,6 +311,11 @@ def main(work: Path) -> int:
                 return "appended"
             return "unchanged" if self.rows[key] == item else "conflict"
 
+        def anchor_attestation(
+            self, tenant_id: str, anchor_id: str, authority: str, attestation_type: str
+        ) -> dict | None:
+            return self.rows.get((anchor_id, authority, attestation_type))
+
     flaky_server = http.server.HTTPServer(("127.0.0.1", 0), Flaky)
     threading.Thread(target=flaky_server.serve_forever, daemon=True).start()
     flaky_endpoint = f"http://127.0.0.1:{flaky_server.server_address[1]}/tsr"

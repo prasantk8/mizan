@@ -4,12 +4,14 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
 from mizan_control_plane.approval_repository import ApprovalRepository
+from mizan_control_plane.attestation import AnchorAttestationWorker
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -619,6 +621,44 @@ def test_anchor_attestation_append_reports_insert_idempotence_and_conflict(tmp_p
     assert evidence.record_anchor_attestation(
         "tnt_bank-a", anchor["anchor_id"], document | {"evidence": "AQ=="}
     ) == "conflict"
+    stored = evidence.anchor_attestation(
+        "tnt_bank-a", anchor["anchor_id"], "tsa-test", "rfc3161"
+    )
+    assert isinstance(stored, dict)
+    assert stored == document
+
+    def competing_lease():
+        with evidence.lease_anchor_attestation("tnt_bank-a", anchor["anchor_id"]) as value:
+            return value
+
+    with evidence.lease_anchor_attestation("tnt_bank-a", anchor["anchor_id"]) as first_lease:
+        assert first_lease == [document]
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            assert executor.submit(competing_lease).result(timeout=2) is None
+
+    pending = document | {
+        "status": "pending", "evidence": None,
+        "requested_at": datetime.now(UTC).isoformat(),
+    }
+    observed = []
+    provider = SimpleNamespace(
+        obtain=lambda item: pytest.fail("a finalized leased sidecar must prevent TSA access"),
+        attestation_validation_failure=lambda item, digest, authority: (
+            observed.append((item, digest, authority)) or None
+        ),
+    )
+    opened = []
+    worker = AnchorAttestationWorker(
+        evidence, provider, SimpleNamespace(open=lambda *args: opened.append(args))
+    )
+    row = evidence.anchors("tnt_bank-a", anchor["stream_id"])[-1]
+    row["payload"]["attestations"] = [pending]
+
+    assert worker.process("tnt_bank-a", [row], 900) == 0
+    assert isinstance(observed[0][0], dict)
+    assert observed[0][0] == document
+    assert observed[0][2] == "tsa-test"
+    assert opened == []
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")

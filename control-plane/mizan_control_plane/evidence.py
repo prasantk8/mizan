@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -609,6 +611,43 @@ class EvidenceRepository:
                     "attestations": [item[0] for item in attestations],
                 })
             return result
+
+    @contextmanager
+    def lease_anchor_attestation(
+        self, tenant_id: str, anchor_id: str
+    ) -> Iterator[list[dict[str, Any]] | None]:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            leased = connection.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0)) "
+                "FROM mizan.evidence_anchors WHERE tenant_id=%s AND anchor_id=%s",
+                (f"{tenant_id}:{anchor_id}:attestation", tenant_id, anchor_id),
+            ).fetchone()
+            if leased is None or not leased[0]:
+                yield None
+                return
+            rows = connection.execute(
+                "SELECT document FROM mizan.anchor_attestations "
+                "WHERE tenant_id=%s AND anchor_id=%s ORDER BY authority,attestation_type",
+                (tenant_id, anchor_id),
+            ).fetchall()
+            yield [row[0] for row in rows]
+
+    def anchor_attestation(
+        self,
+        tenant_id: str,
+        anchor_id: str,
+        authority: str,
+        attestation_type: str,
+    ) -> dict[str, Any] | None:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT document FROM mizan.anchor_attestations "
+                "WHERE tenant_id=%s AND anchor_id=%s AND authority=%s AND attestation_type=%s",
+                (tenant_id, anchor_id, authority, attestation_type),
+            ).fetchone()
+            return None if row is None else row[0]
 
     def record_anchor_attestation(
         self, tenant_id: str, anchor_id: str, attestation: dict[str, Any]

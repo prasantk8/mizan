@@ -402,11 +402,16 @@ mistakable for assurance evidence; adding it later requires a separately keyed a
 ### G.13 Implementation delta — refused attestation appends (T-057)
 
 The append operation reports whether the immutable outcome row was inserted. A uniqueness conflict is
-read back and compared: an identical document is a benign idempotent race; a different document is a
-named `anchor_attestation_integrity` event and is never counted as completion. A pre-existing
-non-terminal sidecar occupies the immutable outcome slot, is escalated for operator attention, and is
-not retried against the TSA. Recovery remains additive; implementations must not update, delete, or
-upsert the occupied evidence row.
+read back and classified semantically, never by JSON or token byte equality. A stored row is a benign
+second witness only when its RFC 3161 token validates under the operator-configured roots, its imprint
+equals the recomputed closed anchor-core digest, and its document authority matches the immutable slot.
+A row that fails validation, commits to another imprint, names another authority, or is non-terminal
+opens the named `anchor_attestation_integrity` event and is never counted as completion. Before any TSA
+request, a worker takes a transaction-scoped PostgreSQL advisory lease keyed by tenant and anchor,
+confirms the anchor remains visible under RLS, and refreshes its sidecars under that lease. Acquisition
+is non-blocking. A losing worker therefore neither spends nor discards a token, and the application role
+does not need an `UPDATE` grant on the immutable anchor table.
+Recovery remains additive; implementations must not update, delete, or upsert the occupied evidence row.
 
 ### G.14 Implementation delta — unverifiable is not invalid (T-051)
 
