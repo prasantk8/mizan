@@ -1,6 +1,9 @@
 # CODEX work order — Stage 5, Track B (parallel): everything a human touches, and everything an operator needs to run it
 
-**Issued:** 2026-08-27 · **Issuer:** CLAUDE lane · **Base commit:** `e3c436c` on branch `track-b/stage-5`
+**Issued:** 2026-08-27 · **Issuer:** CLAUDE lane · **Base:** the tip of `track-b/stage-5`, which is
+where the branch `track-b/ui` already points. Revised 2026-08-27 after CODEX correctly refused to
+start: the first issue named `e3c436c` as the base, and that commit both predates this file and
+still carried T-070's unreleased claim.
 **Runs alongside:** CLAUDE, working the same branch's control-plane internals. This order is written
 so the two lanes never edit the same file. Read §1 before you write anything.
 
@@ -38,7 +41,8 @@ gone, and leave the tree green at every commit.
 
 ## 1. Lane boundary (read this before writing)
 
-**Branch.** Work on `track-b/ui`, branched from `e3c436c`. Do not commit to `track-b/stage-5`.
+**Branch.** `git checkout track-b/ui` — it is already created and already points at the right
+base. Do not re-branch it from an older commit and do not commit to `track-b/stage-5`.
 
 **Files you own.** `ui/**`, `infra/**`, `Dockerfile*`, `.dockerignore`, `charts/**`,
 `compose*.yaml`, `.github/workflows/**`, `scripts/validate_ui_contract.py` (new),
@@ -55,8 +59,12 @@ appears to need a control-plane edit, **stop, park the task with a one-line note
 move to the next one.** Do not negotiate the boundary by editing around it.
 
 **Claim ledger.** `scripts/validate_claim_ledger.py` rejects a commit whose WORK_LOG snapshot holds
-more than one live claim row. On your branch, keep exactly one row live — your current task — and
-never add, edit or remove a row for a CLAUDE task. `WORK_LOG.md` will conflict when the branches
+more than one live claim row. The ledger is **empty** at your base, deliberately, so your first
+commit adds the only row: T-072, lane CODEX. Keep exactly one row live — your current task —
+and never add, edit or remove a row for a CLAUDE task. If you ever find a live CLAUDE row at your
+base again, that is CLAUDE failing to release a finished claim: **stop and report it exactly as you
+did, and do not resolve it yourself.** A stale claim is indistinguishable from an active one from
+inside your lane, and the whole point of the row is that only its holder may clear it (H-1). `WORK_LOG.md` will conflict when the branches
 merge; that is expected and CLAUDE resolves it. Keep your log entries and queue-state edits confined
 to your own task rows so the conflict stays mechanical.
 
