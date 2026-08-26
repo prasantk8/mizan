@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -18,3 +19,12 @@ def test_standalone_verifier_matches_normative_conformance_corpus() -> None:
         check=False, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_conformance_corpus_distinguishes_malformed_from_invalid() -> None:
+    cases = json.loads(Path("tests/fixtures/conformance/verdicts.json").read_bytes())
+    verdicts = {case["bundle"]: case["verdict"] for case in cases}
+    assert verdicts["invalid-record-checksum"] == "INVALID"
+    assert verdicts["malformed-failed-status"] == "MALFORMED"
+    assert verdicts["malformed-attested-signed-payload"] == "MALFORMED"
+    assert verdicts["malformed-unattested-rfc3161"] == "MALFORMED"

@@ -71,18 +71,18 @@ future payload keys are included unless a later bundle version changes this norm
 
 The signed payload contains the authoritative roster, uniquely keyed by `(type, authority)`. An
 append-only sidecar in the row may replace the state only for an identity already in that roster; an
-undeclared or duplicate identity is invalid. Legal combinations are:
+undeclared or duplicate identity is invalid. Status grammar is scoped by persistence location:
 
-| `type` | legal `status` | required verification |
-|---|---|---|
-| `none_development` | `unattested` | authority is `development`; no external assurance |
-| `rfc3161` | `pending` | no token is credited |
-| `rfc3161` | `attested` | `anchor_digest` equals the core digest and the token verifies under an operator trust root |
-| `customer_countersignature` | `pending` | no signature is credited |
-| `customer_countersignature` | `attested` | Ed25519 signature over the 32 digest bytes under the named customer key |
-| `rfc3161` or `customer_countersignature` | `failed` | named terminal failure; no assurance is credited |
+| Location | Written when | Mutable after | Legal `status` |
+|---|---|---|---|
+| `attestations[]` inside the signed anchor `payload` | at anchor time, before contacting any external authority | never; the roster is inside the signature | `pending` for `rfc3161` or `customer_countersignature`; `unattested` only for `none_development` with authority `development` |
+| append-only `attestations[]` sidecars on the anchor row | after an external outcome validates | never; outcomes are append-only | `attested` for `rfc3161` or `customer_countersignature` |
 
-No other type/status combination is legal. Trust roots are supplied independently by the verifier's
+`failed` is reserved vocabulary and MUST NOT occur anywhere in a bundle version 1.0. Failed attempts
+are transient and are not persisted: leaving the sidecar slot empty keeps the signed `pending` entry
+retryable. `attested` cannot occur in the signed payload because it is written before external work,
+and `pending` cannot occur in a sidecar because sidecars store validated outcomes rather than attempts.
+No other type/status/location combination is legal. Trust roots are supplied independently by the verifier's
 operator. They MUST NOT be obtained from the bundle. `keys.json` is evidence needed for Mizan and
 customer signatures, not a trust-root assertion for RFC 3161.
 
@@ -102,11 +102,17 @@ but it supplies no independent evidence and MUST NOT increase assurance.
 
 ## 5. Terminal acceptance
 
-A verifier accepts only after file inventory/digests, record hashes/linkage/range, one-to-one receipt
+A verifier returns one of four terminal verdicts. `MALFORMED` means the input violates the bundle 1.0
+grammar and therefore is not a Mizan bundle. `CANNOT CHECK` means the input is structurally eligible
+but the verifier environment cannot evaluate a required claim. `INVALID` means the bundle is
+well-formed but one or more evidence checks failed. `VALID` means every required check passed. These
+classes are mutually exclusive; neither `MALFORMED` nor `CANNOT CHECK` is an assurance result.
+
+A verifier returns `VALID` only after file inventory/digests, record hashes/linkage/range, one-to-one receipt
 coverage and signatures, anchor numbering/linkage/density/signatures/head bindings, left and right
 edges, attestation roster/cryptography, key roles, checkpoints, and claimed-versus-derived assurance
-all pass. Inability to execute RFC 3161 verification is `CANNOT CHECK`, not acceptance and not an
-accusation that evidence is invalid.
+all pass. The reference CLI maps `VALID`, `INVALID`, `CANNOT CHECK`, and `MALFORMED` to exit statuses
+0, 1, 2, and 3 respectively.
 
 ## 6. What this format does not prove
 
@@ -123,7 +129,10 @@ Code had left these points implicit: future anchor keys are included by default 
 is a closed exclusion set; file checksums cover stored bytes while semantic hashes cover JCS; sidecars
 overlay only a signed identity rather than extending the roster; partial exports need a preceding
 signed anchor; checkpoints never contribute assurance; and a missing verifier dependency is neither
-PASS nor evidence failure. Writing the format exposed one contract/implementation discrepancy:
-ADR-004 permits `failed` status, while the current verifier rejects it and T-055 deliberately persists
-only successful outcomes. B-14 records that unresolved version-1.0 grammar question; this task does
-not silently choose a new state-machine rule.
+`VALID` nor evidence failure.
+
+The location-scoped grammar resolves the earlier flat enum without adding a durable state. This
+discrepancy is harmless today only because there is exactly one implementation — which is the precise
+condition T-059 exists to end. An independent implementer reading G.2's flat enum would legitimately
+accept `failed` and report it as an assurance level. Two conformant verifiers would then return
+different verdicts on the same bundle, and the format would have failed at the only job it has.

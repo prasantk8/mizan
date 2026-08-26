@@ -25,6 +25,10 @@ class VerificationFailure(ValueError):
     pass
 
 
+class MalformedBundle(VerificationFailure):
+    """The input does not conform to the Mizan bundle 1.0 grammar."""
+
+
 class CannotCheck(RuntimeError):
     """The verifier environment cannot evaluate a claim; evidence is not condemned."""
 
@@ -90,6 +94,57 @@ def verify_rfc3161(
             else:
                 reason = "timestamp token is malformed or its signature is invalid"
             raise VerificationFailure(f"RFC 3161 {reason}")
+
+
+def validate_signed_attestation(attestation: Any, anchor_number: int) -> None:
+    if not isinstance(attestation, dict):
+        raise MalformedBundle(
+            f"anchor {anchor_number} signed payload attestation is not an object"
+        )
+    attestation_type = attestation.get("type")
+    status = attestation.get("status")
+    if status == "failed":
+        raise MalformedBundle(
+            f"anchor {anchor_number} signed payload attestation status 'failed' "
+            "is reserved in bundle 1.0"
+        )
+    if attestation_type == "none_development":
+        if status != "unattested" or attestation.get("authority") != "development":
+            raise MalformedBundle(
+                f"anchor {anchor_number} signed payload none_development attestation "
+                "must be unattested with authority 'development'"
+            )
+        return
+    if attestation_type in {"rfc3161", "customer_countersignature"}:
+        if status != "pending":
+            raise MalformedBundle(
+                f"anchor {anchor_number} signed payload attestation status {status!r} "
+                f"is illegal for type {attestation_type!r}"
+            )
+        return
+    raise MalformedBundle(
+        f"anchor {anchor_number} signed payload attestation type {attestation_type!r} is unknown"
+    )
+
+
+def validate_sidecar_attestation(attestation: Any, anchor_number: int) -> None:
+    if not isinstance(attestation, dict):
+        raise MalformedBundle(f"anchor {anchor_number} attestation sidecar is not an object")
+    status = attestation.get("status")
+    if status == "failed":
+        raise MalformedBundle(
+            f"anchor {anchor_number} sidecar attestation status 'failed' "
+            "is reserved in bundle 1.0"
+        )
+    if status != "attested":
+        raise MalformedBundle(
+            f"anchor {anchor_number} sidecar attestation status {status!r} is illegal"
+        )
+    if attestation.get("type") not in {"rfc3161", "customer_countersignature"}:
+        raise MalformedBundle(
+            f"anchor {anchor_number} sidecar attestation type "
+            f"{attestation.get('type')!r} is illegal"
+        )
 
 
 def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> dict[str, Any]:
@@ -197,6 +252,11 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
         declared = payload.get("covered_record_count")
         if declared != payload.get("to_sequence") - payload.get("from_sequence") + 1:
             raise VerificationFailure(f"anchor covered-record count is inconsistent at anchor {number}")
+        declared_attestations = payload.get("attestations")
+        if not isinstance(declared_attestations, list) or not declared_attestations:
+            raise MalformedBundle(f"anchor {number} signed attestation roster is missing")
+        for item in declared_attestations:
+            validate_signed_attestation(item, number)
         key = keys.get(payload.get("key_id"))
         if key is None:
             raise VerificationFailure(f"anchor key is unavailable at anchor {number}")
@@ -205,22 +265,20 @@ def verify_bundle(bundle: Path, tsa_trust_anchors: list[Path] | None = None) -> 
         verify_signature(payload, row.get("signature", ""), key, f"anchor {number}")
         # Final attestations are append-only sidecars. The signed payload retains the
         # original pending marker so completing asynchronous work never rewrites history.
-        declared_attestations = payload.get("attestations")
-        if not isinstance(declared_attestations, list) or not declared_attestations:
-            raise VerificationFailure(f"anchor {number} attestation status is missing")
         declared_by_authority = {
             (item.get("type"), item.get("authority")): item
             for item in declared_attestations
         }
         if len(declared_by_authority) != len(declared_attestations):
-            raise VerificationFailure(
+            raise MalformedBundle(
                 f"anchor {number} signed attestation roster contains duplicate authorities"
             )
         effective_attestations = dict(declared_by_authority)
         sidecars = row.get("attestations", [])
         if not isinstance(sidecars, list):
-            raise VerificationFailure(f"anchor {number} attestation sidecars are malformed")
+            raise MalformedBundle(f"anchor {number} attestation sidecars are malformed")
         for sidecar in sidecars:
+            validate_sidecar_attestation(sidecar, number)
             identity = (sidecar.get("type"), sidecar.get("authority"))
             if identity not in declared_by_authority:
                 raise VerificationFailure(
@@ -365,6 +423,9 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    except MalformedBundle as exc:
+        print(f"MALFORMED: {exc}", file=sys.stderr)
+        return 3
     except VerificationFailure as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

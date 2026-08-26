@@ -1,5 +1,8 @@
 [
-  {"bundle":"valid-unattested","valid":true,"trust_roots":[]},
-  {"bundle":"valid-public","valid":true,"trust_roots":["../evidence_export/public-tsa/freetsa-root.pem","../evidence_export/public-tsa/usertrust-rsa-root.pem"]},
-  {"bundle":"invalid-record-checksum","valid":false,"message":"records.json checksum mismatch","trust_roots":[]}
+  {"bundle":"valid-unattested","verdict":"VALID","trust_roots":[]},
+  {"bundle":"valid-public","verdict":"VALID","trust_roots":["../evidence_export/public-tsa/freetsa-root.pem","../evidence_export/public-tsa/usertrust-rsa-root.pem"]},
+  {"bundle":"invalid-record-checksum","verdict":"INVALID","message":"records.json checksum mismatch","trust_roots":[]},
+  {"bundle":"malformed-failed-status","verdict":"MALFORMED","message":"sidecar attestation status 'failed' is reserved","trust_roots":[]},
+  {"bundle":"malformed-attested-signed-payload","verdict":"MALFORMED","message":"signed payload attestation status 'attested' is illegal","trust_roots":[]},
+  {"bundle":"malformed-unattested-rfc3161","verdict":"MALFORMED","message":"signed payload attestation status 'unattested' is illegal for type 'rfc3161'","trust_roots":[]}
 ]

@@ -416,7 +416,18 @@ that condition. Bad signatures/tokens, imprint mismatch, an untrusted signer, an
 certificate remain evidence failures and are reported as distinct causes. Successful external
 assurance is never printed when the RFC 3161 check did not run.
 
-### G.15 Implementation delta — attestation enforcement runner (T-052)
+### G.15 Pending ratification (B-14) — location-scoped attestation grammar (T-059)
+
+G.2's flat status enum is narrowed descriptively by persistence location. The signed anchor payload is
+created before external contact and admits `pending` for `rfc3161` and `customer_countersignature`, or
+`unattested` only for `none_development` under authority `development`. The append-only sidecar stores
+validated outcomes and admits only `attested` for an external type. `failed` is reserved vocabulary and
+MUST NOT occur in a bundle version 1.0; failed attempts leave the sidecar slot empty and retryable. A
+location/type/status violation is `MALFORMED`, distinct from invalid evidence and from `CANNOT CHECK`.
+This forbids no state emitted by the implementation. The narrowing remains pending HUMAN ratification
+under B-14 and silence does not ratify it.
+
+### G.16 Implementation delta — attestation enforcement runner (T-052)
 
 `mizan-attest-anchors` polls a named tenant stream every 30 seconds by default (or once under an
 external scheduler), completes pending RFC 3161 sidecars, and evaluates pending age on every pass
@@ -426,7 +437,7 @@ limited to `OSError`; programming and contract errors terminate the runner inste
 availability faults. A week-long outage therefore produces an explicit breaker-open operational
 signal while exports continue to state `pending`, never externally anchored.
 
-### G.16 Normative evidence-bundle format (T-059)
+### G.17 Normative evidence-bundle format (T-059)
 
 `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` is the normative, implementation-independent definition of
 bundle version 1.0. In particular it fixes the anchor core as the closed projection excluding exactly

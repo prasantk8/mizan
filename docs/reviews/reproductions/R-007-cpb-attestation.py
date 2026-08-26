@@ -159,10 +159,14 @@ def main(work: Path) -> int:
         "requested_at": "2026-08-26T04:59:00Z", "obtained_at": "2026-08-26T05:00:00Z",
         "anchor_digest": digest, "evidence": mint(work, config, digest),
     }
+    pending_a = attested | {"status": "pending", "obtained_at": None, "evidence": None}
 
     # --- CASE 1 · regression guard: signer and verifier agree on what they hash ---
     bundle = build_bundle(work / "case1", count=2, anchor_interval=2,
-                          attestation_by_anchor={0: [attested]})
+                          attestation_by_anchor={0: [pending_a]})
+    rows = json.loads((bundle / "anchors.json").read_bytes())
+    rows[0]["attestations"] = [attested]
+    reseal(bundle, rows, {"anchor_attestation": "rfc3161", "external_timestamp": True})
     out = run_verifier(bundle, "--tsa-trust-anchor", str(trusted))
     record(
         "CASE 1  real token, real bundle, operator trust root",
@@ -192,8 +196,7 @@ def main(work: Path) -> int:
     }
     mixed = build_bundle(
         work / "case3", count=2, anchor_interval=2,
-        attestation_by_anchor={0: [attested | {"status": "pending", "evidence": None,
-                                               "obtained_at": None}, pending_b]},
+        attestation_by_anchor={0: [pending_a, pending_b]},
     )
     rows = json.loads((mixed / "anchors.json").read_bytes())
     rows[0]["attestations"] = [attested]  # authority A completes; payload untouched
@@ -247,8 +250,8 @@ def main(work: Path) -> int:
     # --- CASE 5 · V-12 · `cannot check` must not read as `check failed` -------
     out = run_verifier(bundle, "--tsa-trust-anchor", str(trusted),
                        env=dict(os.environ, PATH="/nonexistent"))
-    clean = "Traceback" not in out.stderr and out.returncode != 0
-    distinguishable = "token verification failed" not in (out.stdout + out.stderr).lower()
+    clean = "Traceback" not in out.stderr and out.returncode == 2
+    distinguishable = "CANNOT CHECK:" in out.stderr
     record(
         "CASE 5  V-12  OpenSSL absent from PATH",
         clean and distinguishable,

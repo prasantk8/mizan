@@ -299,8 +299,26 @@ def test_non_genesis_range_is_pinned_by_preceding_anchor(tmp_path: Path) -> None
 def test_pre_provider_anchor_cannot_be_mistaken_for_attested(tmp_path: Path) -> None:
     bundle = build_bundle(tmp_path, include_attestations=False)
     result = run_verifier(bundle)
-    assert result.returncode == 1
-    assert "anchor 0 attestation status is missing" in result.stderr
+    assert result.returncode == 3
+    assert "MALFORMED: anchor 0 signed attestation roster is missing" in result.stderr
+
+
+def test_failed_attestation_is_malformed_not_unattested(tmp_path: Path) -> None:
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "test-tsa",
+        "anchor_digest": "placeholder", "obtained_at": None, "evidence": None,
+    }
+    bundle = build_bundle(tmp_path, attestation_by_anchor={0: [pending]})
+    anchors = json.loads((bundle / "anchors.json").read_bytes())
+    anchors[0]["attestations"] = [pending | {"status": "failed"}]
+    (bundle / "anchors.json").write_bytes(rfc8785.dumps(anchors))
+    refresh_manifest(bundle, "anchors.json")
+
+    result = run_verifier(bundle)
+
+    assert result.returncode == 3
+    assert "MALFORMED:" in result.stderr
+    assert "status 'failed' is reserved" in result.stderr
 
 
 def test_rotated_revoked_key_signature_is_valid_but_distinctly_reported(tmp_path: Path) -> None:
@@ -332,12 +350,19 @@ def test_mixed_anchor_assurance_is_reported_per_anchor_and_uses_weakest(
         anchor_interval=2,
         attestation_by_anchor={
             0: [{
-                "type": "rfc3161", "status": "attested", "authority": "test-tsa",
-                "anchor_digest": "placeholder", "obtained_at": "2026-08-25T00:01:00Z",
-                "evidence": "AA==",
+                "type": "rfc3161", "status": "pending", "authority": "test-tsa",
+                "anchor_digest": "placeholder", "obtained_at": None, "evidence": None,
             }],
         },
     )
+    anchors = json.loads((bundle / "anchors.json").read_bytes())
+    anchors[0]["attestations"] = [{
+        "type": "rfc3161", "status": "attested", "authority": "test-tsa",
+        "anchor_digest": "placeholder", "obtained_at": "2026-08-25T00:01:00Z",
+        "evidence": "AA==",
+    }]
+    (bundle / "anchors.json").write_bytes(rfc8785.dumps(anchors))
+    refresh_manifest(bundle, "anchors.json")
     monkeypatch.setattr("scripts.verify_evidence_export.verify_rfc3161", lambda *args: None)
     result = verify_bundle(bundle, [tmp_path / "operator-root.pem"])
     assert result["anchor_assurance"] == [(0, "rfc3161", []), (1, "unattested", [])]
@@ -385,7 +410,9 @@ def test_undeclared_sidecar_authority_is_rejected(tmp_path: Path) -> None:
     }
     bundle = build_bundle(tmp_path, attestation_by_anchor={0: [pending]})
     anchors = json.loads((bundle / "anchors.json").read_bytes())
-    anchors[0]["attestations"] = [pending | {"authority": "tsa-injected"}]
+    anchors[0]["attestations"] = [pending | {
+        "authority": "tsa-injected", "status": "attested", "evidence": "AA=="
+    }]
     (bundle / "anchors.json").write_bytes(rfc8785.dumps(anchors))
     refresh_manifest(bundle, "anchors.json")
 

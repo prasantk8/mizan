@@ -16,10 +16,14 @@ def main() -> int:
         for trust_root in case["trust_roots"]:
             command.extend(["--tsa-trust-anchor", str(root / trust_root)])
         result = subprocess.run(command, check=False, capture_output=True, text=True)
-        accepted = result.returncode == 0
-        message_matches = case["valid"] or case["message"] in result.stderr
-        if accepted is not case["valid"] or not message_matches:
-            failures.append(case["bundle"])
+        actual_verdict = {0: "VALID", 1: "INVALID", 2: "CANNOT_CHECK", 3: "MALFORMED"}.get(
+            result.returncode, "VERIFIER_ERROR"
+        )
+        message_matches = case.get("message") is None or case["message"] in result.stderr
+        if actual_verdict != case["verdict"] or not message_matches:
+            failures.append(
+                f"{case['bundle']} (expected {case['verdict']}, got {actual_verdict})"
+            )
     if failures:
         print("conformance mismatch: " + ", ".join(failures), file=sys.stderr)
         return 1
