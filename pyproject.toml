@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 mizan-export-evidence = "mizan_control_plane.evidence_export:main"
+mizan-attest-anchors = "mizan_control_plane.attestation_runner:main"
 
 [dependency-groups]
 dev = [

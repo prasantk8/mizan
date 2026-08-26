@@ -56,7 +56,7 @@ def test_offline_rfc3161_verification_uses_operator_trust_root(tmp_path, monkeyp
 
     def successful(command, **kwargs):
         observed["command"] = command
-        return SimpleNamespace(returncode=0, stderr="")
+        return SimpleNamespace(returncode=0, stdout="-verify", stderr="")
 
     monkeypatch.setattr("scripts.verify_evidence_export.subprocess.run", successful)
     verify_rfc3161(
@@ -148,7 +148,7 @@ def test_real_rfc3161_response_verifies_offline_and_before_recording(tmp_path, m
         check=True,
         capture_output=True,
     )
-    with pytest.raises(VerificationFailure, match="RFC 3161 token verification failed"):
+    with pytest.raises(VerificationFailure, match="timestamp signer is not trusted"):
         verify_rfc3161(
             {"anchor_digest": digest, "evidence": base64.b64encode(response.read_bytes()).decode()},
             digest,
@@ -316,7 +316,10 @@ def test_tsa_outage_opens_only_evidence_breaker_and_authorization_remains_availa
 
 
 def test_worker_appends_final_attestation_without_mutating_anchor_payload() -> None:
-    pending = {"type": "rfc3161", "status": "pending", "authority": "tsa", "anchor_digest": "a" * 64}
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": "a" * 64, "requested_at": datetime.now(UTC).isoformat(),
+    }
     payload = {"anchor_id": "anchor-1", "attestations": [pending.copy()]}
     writes = []
     repository = SimpleNamespace(
@@ -336,7 +339,7 @@ def test_worker_appends_final_attestation_without_mutating_anchor_payload() -> N
 def test_worker_escalates_occupied_pending_sidecar_without_retrying_forever() -> None:
     pending = {
         "type": "rfc3161", "status": "pending", "authority": "tsa",
-        "anchor_digest": "a" * 64,
+        "anchor_digest": "a" * 64, "requested_at": datetime.now(UTC).isoformat(),
     }
     calls = []
     opened = []
@@ -363,7 +366,7 @@ def test_worker_escalates_occupied_pending_sidecar_without_retrying_forever() ->
 def test_worker_does_not_count_store_refusal_and_names_conflict() -> None:
     pending = {
         "type": "rfc3161", "status": "pending", "authority": "tsa",
-        "anchor_digest": "a" * 64,
+        "anchor_digest": "a" * 64, "requested_at": datetime.now(UTC).isoformat(),
     }
     opened = []
     worker = AnchorAttestationWorker(
@@ -411,4 +414,27 @@ def test_worker_opens_breaker_after_tsa_outage_exceeds_slo() -> None:
         900,
         now,
     ) == 0
+    assert opened == [("anchor_attestation_slo", "tnt_bank-a", "anchor-1")]
+
+
+def test_worker_opens_breaker_for_stale_pending_even_when_tsa_recovers() -> None:
+    now = datetime.now(UTC)
+    pending = {
+        "type": "rfc3161", "status": "pending", "authority": "tsa",
+        "anchor_digest": "a" * 64,
+        "requested_at": (now - timedelta(seconds=901)).isoformat().replace("+00:00", "Z"),
+    }
+    opened = []
+    worker = AnchorAttestationWorker(
+        SimpleNamespace(record_anchor_attestation=lambda *args: "appended"),
+        SimpleNamespace(obtain=lambda item: item | {"status": "attested", "evidence": "AA=="}),
+        SimpleNamespace(open=lambda *args: opened.append(args)),
+    )
+
+    assert worker.process(
+        "tnt_bank-a",
+        [{"payload": {"anchor_id": "anchor-1", "attestations": [pending]}, "attestations": []}],
+        900,
+        now,
+    ) == 1
     assert opened == [("anchor_attestation_slo", "tnt_bank-a", "anchor-1")]

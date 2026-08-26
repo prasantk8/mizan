@@ -415,3 +415,13 @@ runtime is missing, cannot execute, or lacks RFC 3161 support. It must not label
 that condition. Bad signatures/tokens, imprint mismatch, an untrusted signer, and an expired TSA
 certificate remain evidence failures and are reported as distinct causes. Successful external
 assurance is never printed when the RFC 3161 check did not run.
+
+### G.15 Implementation delta — attestation enforcement runner (T-052)
+
+`mizan-attest-anchors` polls a named tenant stream every 30 seconds by default (or once under an
+external scheduler), completes pending RFC 3161 sidecars, and evaluates pending age on every pass
+before attempting the TSA. A breach opens a named evidence breaker even if the TSA has recovered;
+authorization remains available because attestation stays off its hot path. Transport failures are
+limited to `OSError`; programming and contract errors terminate the runner instead of being hidden as
+availability faults. A week-long outage therefore produces an explicit breaker-open operational
+signal while exports continue to state `pending`, never externally anchored.

@@ -175,19 +175,15 @@ class AnchorAttestationWorker:
                         "anchor_attestation_integrity", tenant_id, payload["anchor_id"]
                     )
                     continue
+                if pending_attestation_breaker_open([pending], max_pending_seconds, now):
+                    self.breaker.open(
+                        "anchor_attestation_slo", tenant_id, payload["anchor_id"]
+                    )
                 try:
                     result = self.provider.obtain(pending)
-                except Exception:
-                    if pending_attestation_breaker_open([pending], max_pending_seconds, now):
-                        self.breaker.open(
-                            "anchor_attestation_slo", tenant_id, payload["anchor_id"]
-                        )
+                except OSError:
                     continue
                 if result.get("status") != "attested":
-                    if pending_attestation_breaker_open([pending], max_pending_seconds, now):
-                        self.breaker.open(
-                            "anchor_attestation_slo", tenant_id, payload["anchor_id"]
-                        )
                     continue
                 outcome = self.repository.record_anchor_attestation(
                     tenant_id, payload["anchor_id"], result
