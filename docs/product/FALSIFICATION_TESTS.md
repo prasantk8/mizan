@@ -64,6 +64,23 @@ assumptions and calling the shortfall a sales problem.
 
 ---
 
+## F-T-5 · Nobody replays *(adopted 2026-08-25 with the Stage 4 proposal, before the work)*
+
+**Claim under test.** Recomputing the decision — not merely proving the record is intact — is a buying
+criterion.
+
+**Observable.** Across the first ten bundles delivered to auditors, risk officers, or external counsel, at
+least **two** parties run `--replay` on a bundle Mizan did not hand-pick for them.
+
+**If it fails.** Recomputation is an engineering aesthetic, not a buying criterion. The trusted-input ledger
+(T-047) may still carry value on its own — it is the half that names what you are trusting us about — and in
+that case the replay engine should be **cut rather than maintained**, since a replay nobody runs is a
+correctness liability with no offsetting demand.
+
+**Note.** This is written before T-044 begins, per the rule at the top of this file. `docs/product/STAGE-4-DECISION-REPLAY.md` §4 states the primary risk in the same spirit: a replay that flakes is worse than no replay, because a false `DIVERGED` is a machine-generated accusation delivered to an auditor.
+
+---
+
 ## The second founder test
 
 PRD §81 asks whether a feature makes agents safer, more controllable, more observable, or more provable.
@@ -83,7 +100,8 @@ answer here even when it is unflattering.
 |---|---|---|
 | 2026-08-25 | **No** | `OutboxPublisher.anchor()` signs with `Ed25519PrivateKey.generate()`; no external attestation exists (R-005 F-13/F-14) |
 | 2026-08-25 (CP-A) | **No** | Unchanged, and now stated by the tool itself: `verify_evidence_export.py` prints *"a party holding Mizan's database and signing key could rebuild and re-sign this history."* Anchors chain, order, and verify offline (T-030/T-032), which makes omission and replay visible — but the signer is still inside the boundary. Saying it out loud is better than silent falsity; it is not a yes (R-006 §4) |
-| _pending T-036_ | — | Re-apply once RFC 3161 attestation and offline verification are live |
+| 2026-08-26 (CP-B) | **No — but for a different reason than yesterday** | The mechanism now provably works: R-007 minted a real RFC 3161 token from a standards-compliant TSA over the digest the verifier independently reconstructs, and the standalone verifier PASSed a real bundle with nothing stubbed, withdrawing its own hostile-party limitation line. That is the first evidence in this repository that the answer *can* be yes. It is still no for two non-cryptographic reasons: R-007 **V-11** — a stream with one authority still pending is reported as externally anchored, so the tool does not reliably establish the coverage it claims — and **V-13** — no deployed Mizan can finalize an attested anchor at all, because nothing runs the attestation worker. A better *no*: the gap moved from cryptography to wiring and reporting. Do not round it up (R-007 §4) |
+| _pending T-049/T-050_ | — | Re-apply after the two CP-B blockers close and CP-B is re-run |
 
 ---
 

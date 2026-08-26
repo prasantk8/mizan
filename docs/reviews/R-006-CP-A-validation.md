@@ -169,3 +169,60 @@ T-024 → T-040 → T-037 (CP-D) → T-026 → T-023`
 Twenty tasks. The three corrections come first because each hardens the layer everything above it stands on,
 and all three are small. T-043 leads: proving the export path is real costs one test and is the difference
 between a verifier that checks Mizan's evidence and a verifier that checks a fixture.
+
+---
+
+## 6. Interim disposition — T-043, T-042, T-041, T-033, T-025 (2026-08-25, pre-CP-B)
+
+Reviewed at `2e4e81e` in a detached worktree, because CODEX holds a **live claim on T-036** and the working
+tree carries its uncommitted work (`attestation.py`, `0003_anchor_attestations.sql`, `test_attestation.py`).
+Nothing in the live tree was touched. `make check` → five drift gates; **149 unit/property tests pass**.
+
+**All five accepted DONE.** Every R-006 finding is closed as specified:
+
+| Finding | Closed by | Verified |
+|---|---|---|
+| V-1 config keys unregistered | T-041 | Both `MIZAN_BENCHMARK_*` keys registered in SPEC §8 under the amended H-3 config rule |
+| V-2 forgeable benchmark SHA | T-041 | `commit_sha()` now derives HEAD itself and permits the env var **only as an exact HEAD assertion**; `worktree_clean` recorded pre-write; validation rejects dirty artifacts and SHAs that do not resolve to a commit |
+| V-4 unbound intermediate anchors | T-042 | Every in-range anchor's `head_hash` bound to its record; left edge pinned, and a missing left-edge anchor is a named failure |
+| V-5 checkpoints credited as evidence | T-042 | PASS line now reads *"signed receipts… signed anchor chain… unsigned checkpoints were used only as a parallel-verification performance aid"* |
+| V-6 export never run against the real pipeline | T-043 | `mizan-export-evidence` console script exists; `test_operator_export_runs_real_pipeline_then_standalone_verifier` runs export **and** the verifier as separate subprocesses over live PostgreSQL |
+
+**The R-005 F-13 defect is closed at the call-site level.** `git grep 'PrivateKey.generate'` across
+`control-plane/`, `scripts/`, and `benchmarks/` at `2e4e81e` returns **nothing**. The ephemeral in-process
+key that started this entire stage no longer exists anywhere in the tree.
+
+Two things exceed spec and should survive later refactors. The verifier now enforces **key-role separation**
+— a receipt signed with the anchor key is rejected at `verify_evidence_export.py:113`, and vice versa at
+`:150` — which Amendment G.1 implied but did not require. And the revoked-key acceptance criterion is met
+literally: the tool prints `KEY STATUS: valid signature, key <id> revoked at <T>`, which was specified
+precisely because both flat answers are wrong.
+
+### Findings carried into CP-B
+
+**V-8 · `LocalKeyProvider` enforces its own docstring by string prefix.** `keys.py:63` refuses production
+only when a key reference `startswith("local://")`. `config.py` carries the stronger two-condition check
+(custody mode *or* scheme), but the class does not, so a caller constructing
+`LocalKeyProvider(versions, environment="production")` with references named `kms://…` gets deterministic
+development keys and no refusal. Amendment G.1's rule is about **custody**, not about a URI scheme. One line:
+refuse whenever `environment == "production"`, regardless of naming.
+
+**V-9 · Development private keys are `sha256(key_id)`, and `key_id` ships inside every bundle.** `keys.py:74`
+derives the private key deterministically from the key identifier, and `keys.json` publishes that identifier
+in the export. Anyone holding a development or staging bundle can reconstruct the signing key and forge
+records, receipts, and the whole anchor chain. Determinism is the right call for fixtures; publishing the
+seed is not. The verifier prints `ATTESTATION: UNATTESTED`, which is true but is a statement about the
+*anchor authority* — a different failure from *this key is publicly derivable*, and a pilot customer handed a
+staging bundle will not distinguish them. Add `custody` (`development-derived` | `kms` | `hsm`) to the keyset,
+require it in the verifier's `required_key_fields`, and print
+`KEY CUSTODY: publicly derivable development key — this bundle is forgeable by anyone who reads it.`
+
+**V-10 · Partial attestation currently reads as attestation.** `verify_evidence_export.py:214` computes
+`unattested` with `all(...)` across every anchor's attestations, so a bundle where one anchor is attested and
+one is not yields `unattested = False` and the `ATTESTATION:` line is simply not printed — the bundle reads
+as attested by omission. ADR-004 G.2 already governs this: *while any anchor is pending, no API, report, or
+verifier may describe the stream as externally anchored.* Make it a T-036 acceptance test with a mixed-anchor
+fixture, and report attestation **per anchor** with the stream verdict taken from the weakest one.
+
+V-8 and V-9 are H-7 territory and belong in the CP-B report. V-10 is a T-036 acceptance criterion.
+The standing hostile-party answer is **still no** and does not change until T-036 lands.
