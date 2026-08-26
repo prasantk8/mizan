@@ -130,6 +130,7 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
                     "key_id": item.key_id,
                     "algorithm": "Ed25519",
                     "role": role,
+                    "custody": "development-derived",
                     "public_key": base64.urlsafe_b64encode(
                         item.public_key.public_bytes(
                             serialization.Encoding.Raw, serialization.PublicFormat.Raw
