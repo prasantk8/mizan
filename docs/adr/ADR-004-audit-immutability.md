@@ -425,3 +425,11 @@ authorization remains available because attestation stays off its hot path. Tran
 limited to `OSError`; programming and contract errors terminate the runner instead of being hidden as
 availability faults. A week-long outage therefore produces an explicit breaker-open operational
 signal while exports continue to state `pending`, never externally anchored.
+
+### G.16 Normative evidence-bundle format (T-059)
+
+`docs/spec/EVIDENCE-BUNDLE-FORMAT.md` is the normative, implementation-independent definition of
+bundle version 1.0. In particular it fixes the anchor core as the closed projection excluding exactly
+`attestations`, `object_key`, and `object_version`, followed by RFC 8785 JCS and SHA-256. The committed
+conformance corpus is the machine-readable compatibility contract; producer and verifier code are
+implementations of this format rather than its source of truth.

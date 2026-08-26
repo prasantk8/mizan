@@ -1,0 +1,5 @@
+[
+  {"bundle":"valid-unattested","valid":true,"trust_roots":[]},
+  {"bundle":"valid-public","valid":true,"trust_roots":["../evidence_export/public-tsa/freetsa-root.pem","../evidence_export/public-tsa/usertrust-rsa-root.pem"]},
+  {"bundle":"invalid-record-checksum","valid":false,"message":"records.json checksum mismatch","trust_roots":[]}
+]
