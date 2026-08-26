@@ -77,6 +77,15 @@ for. Union the sidecar over the payload keyed by `(type, authority)`; any author
 payload without a verified sidecar token is `pending`. Ship the mixed-**authority** fixture alongside the
 existing mixed-anchor one.
 
+> **Addendum, 2026-08-26, while writing the T-049 work order — V-11 is two defects, and the union alone does
+> not close it.** `verify_evidence_export.py:224-230` ranks `verified_external` **above** `pending` within a
+> single anchor. Union the two lists and the anchor carries `[attested_A, pending_B]`, so both flags are true
+> and `rfc3161` still wins. `evidence_export.py:109-117` has the same ordering. The precedence must invert at
+> the anchor level, matching the rule the stream already applies across anchors: the weakest state wins. One
+> verified token does not cover an anchor whose signed payload demanded two. Recorded here rather than
+> silently folded into the fix, because a reviewer who reports a finding less precisely than they later
+> understand it has moved work onto the implementer and called it a review.
+
 ### V-14 · The control plane records `attested` without validating the token — **blocks CP-B**
 
 `attestation.py:40-63`. `obtain()` POSTs the query, reads the response, and returns
@@ -197,6 +206,13 @@ is the exact defect class this checkpoint exists to stop.
 T-049 and T-050 first, then re-run this checkpoint. T-053 is not CP-B-blocking but it gates delivery: until it
 ships, any staging bundle handed to a design partner is forgeable by its recipient, and the bundle does not
 say so.
+
+The work order is `docs/handoff/CODEX-CP-B-REMEDIATION.md`. The findings above are executable as
+`docs/reviews/reproductions/R-007-cpb-attestation.py` — five cases, two green regression guards and three red
+findings, which is the acceptance gate for T-049, T-050 and T-051. It lives outside `tests/` so `pytest` does
+not collect it and CI does not go red on findings that are open by design. Case 1 is the only place in the
+tree that executes both halves of the digest agreement; if it ever goes red, the signer and the verifier have
+stopped agreeing on what they hash and nothing in `tests/` will say so.
 
 ## 6. Disposition of findings carried into CP-B
 
