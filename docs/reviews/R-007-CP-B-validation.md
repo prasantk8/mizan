@@ -226,3 +226,55 @@ stopped agreeing on what they hash and nothing in `tests/` will say so.
 V-8 and V-9 were filed as H-7 territory. On review they are **not** human decisions: Amendment G.1 already
 ratified that custody, not naming, is the rule, and V-9's fix is disclosure rather than policy. Both are
 engineering tasks. Nothing in CP-B is waiting on a human.
+
+---
+
+## 7. CP-B re-run — 2026-08-26, head `d4d57c7`
+
+**CP-B does not pass.** One blocker remains where there were two.
+
+**T-049 and T-050 are accepted DONE.** V-11 and V-14 no longer reproduce. The signed roster is
+authoritative in both implementations, the union is keyed by `(type, authority)`, an undeclared sidecar
+authority is a verification failure, and `pending` now outranks `verified_external` within an anchor. The
+worker verifies a token against an operator-supplied root before writing `attested`. Two improvements were
+delivered beyond the order: production refuses plaintext TSA endpoints, and the verifier names pending
+authorities in its per-anchor line. The two implementations were kept independent — rule 12 held.
+
+**V-16 · a transient TSA failure is written as a terminal fact — introduced by T-050, blocks CP-B.**
+
+`obtain()` correctly stopped raising and now returns a `pending` dict with a named `failure_reason`. The
+worker at `attestation.py:175` records **every** return value. The store is `mizan.anchor_attestations`:
+PK `(tenant_id, anchor_id, authority, attestation_type)`, `INSERT ... ON CONFLICT DO NOTHING`, `UPDATE` and
+`DELETE` revoked *and* rejected by trigger. Therefore one bad response writes a permanent `pending` row, and
+from that point:
+
+- the retry is skipped — `attestation.py:164-166` finds the pair in `finalized` and continues;
+- a successful token, if one were ever obtained, is silently swallowed by the conflict clause;
+- there is no repair path, because the table is correctly immutable;
+- `completed += 1` counts the failure as a completion;
+- the anchor stops looking pending to the pending-SLO breaker — the single mechanism that exists to notice
+  a stalled attestation is the one this state hides it from.
+
+**A single network blip permanently bars an anchor from ever satisfying I-11.** Not degrades — bars.
+
+Reproduced as **case 6** of the gate: two ordinary worker passes against a TSA that returns garbage once and
+then mints real tokens, with a store reproducing the migration's exact key and conflict semantics, and
+nothing monkeypatched on either side. The counter reports **one** TSA call. The retry did not fail; it did
+not happen.
+
+Cases 4 and 6 are a pair. Case 4 says a bad token must not become `attested`; case 6 says it must not become
+permanent either. A change that greens 6 by reverting T-050 reddens 4, and that is a trade rather than a fix.
+
+`test_worker_records_validation_failure_as_named_pending_sidecar` (`tests/unit/test_attestation.py:264`) is
+not a bad test. It describes what the code does, accurately. Its claim is true and too small: it never asked
+what the second pass does. Rule 11 governs the fix — the test changes with the behaviour, visibly.
+
+**Limitations of this re-run.** `make check` and the live-PostgreSQL gates were not re-run; CODEX's report of
+them is accepted, not reproduced. The V-16 store semantics are reproduced by hand from
+`0003_anchor_attestations.sql` rather than against a live table — the right shape for a gate that must run
+without Postgres, and one step removed from the real `ON CONFLICT`. The T-049/T-050 pre-fix SHAs were not
+sampled; the gate's own case 3 and case 4 transitions were taken as the demonstration.
+
+**Hostile-party answer: still no.** For one wiring reason now, rather than two reporting ones.
+
+Work order: `docs/handoff/CODEX-CP-B-CLOSEOUT.md` — T-055 (blocker), T-051, T-052, T-056.

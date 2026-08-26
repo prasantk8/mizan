@@ -7,8 +7,8 @@ design. Run it by hand:
 
     uv run python docs/reviews/reproductions/R-007-cpb-attestation.py
 
-Five cases. Two are regression guards that must never break; three are the open
-findings and are the acceptance gate for T-049, T-050 and T-051.
+Six cases. Two are regression guards that must never break; four are the open
+findings and are the acceptance gate for T-049, T-050, T-051 and T-055.
 
 | Case | Finding | Expected once fixed                                        | At 94bb25e |
 |------|---------|------------------------------------------------------------|------------|
@@ -17,6 +17,12 @@ findings and are the acceptance gate for T-049, T-050 and T-051.
 | 3    | V-11    | a pending co-authority is NOT reported externally anchored   | RED  T-049 |
 | 4    | V-14    | `obtain()` refuses to record `attested` on unvalidated bytes | RED  T-050 |
 | 5    | V-12    | a missing OpenSSL fails cleanly, distinguishably, no traceback| RED  T-051 |
+| 6    | V-16    | a transient TSA failure is retried, not written as terminal  | RED  T-055 |
+
+Case 6 was added by the CP-B re-run on 2026-08-26. It is a regression *introduced*
+by T-050 and is invisible to case 4, which stops at the provider and never reaches
+the sidecar store. Cases 4 and 6 must be read together: 4 says a bad token must not
+become `attested`, 6 says it must not become permanent either.
 
 Case 1 matters beyond its verdict: it is the only place in the tree that executes
 *both* halves of the digest agreement. Every committed test stubs one side —
@@ -25,7 +31,7 @@ mixed-anchor test monkeypatches `verify_rfc3161` with `anchor_digest: "placehold
 If case 1 ever goes red, the signer and the verifier have stopped agreeing on what
 they hash, and no other test in the repository will tell you.
 
-Exit code is 0 only when all five cases meet their post-fix expectation, so this
+Exit code is 0 only when all six cases meet their post-fix expectation, so this
 doubles as the CP-B re-run gate.
 """
 
@@ -225,13 +231,94 @@ def main(work: Path) -> int:
         f"must be able to tell a missing tool from bad evidence",
     )
 
+    # --- CASE 6 · V-16 · a transient failure is written as a terminal fact -----
+    # T-050 made `obtain()` return a `pending` dict instead of raising. The worker at
+    # attestation.py:175 records every return value unconditionally, so one bad response
+    # writes a pending sidecar into an append-only table whose primary key is
+    # (tenant_id, anchor_id, authority, attestation_type) and whose INSERT is
+    # ON CONFLICT DO NOTHING. The anchor can then never be attested: the worker skips it
+    # as `finalized`, and the row that would replace it is silently swallowed. A network
+    # blip permanently bars an anchor from satisfying I-11.
+    from mizan_control_plane.attestation import AnchorAttestationWorker  # noqa: PLC0415
+
+    class Flaky(http.server.BaseHTTPRequestHandler):
+        """Garbage once, then a genuine token — an ordinary transient TSA fault."""
+
+        attempts = 0
+
+        def do_POST(self) -> None:  # noqa: N802
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            Flaky.attempts += 1
+            if Flaky.attempts == 1:
+                payload = b"not-a-timestamp-token"
+            else:
+                query = work / f"flaky-{Flaky.attempts}.tsq"
+                reply = work / f"flaky-{Flaky.attempts}.tsr"
+                query.write_bytes(body)
+                sh("openssl", "ts", "-reply", "-queryfile", str(query),
+                   "-config", str(config), "-out", str(reply))
+                payload = reply.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/timestamp-reply")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    class SidecarStore:
+        """The real table's semantics: PK (anchor, authority, type), INSERT ... DO NOTHING,
+        UPDATE and DELETE revoked and rejected by trigger. See 0003_anchor_attestations.sql."""
+
+        def __init__(self) -> None:
+            self.rows: dict[tuple[str, str, str], dict] = {}
+
+        def record_anchor_attestation(self, tenant_id: str, anchor_id: str, item: dict) -> None:
+            self.rows.setdefault(
+                (anchor_id, item["authority"], item["type"]), item
+            )  # ON CONFLICT DO NOTHING
+
+    flaky_server = http.server.HTTPServer(("127.0.0.1", 0), Flaky)
+    threading.Thread(target=flaky_server.serve_forever, daemon=True).start()
+    flaky_endpoint = f"http://127.0.0.1:{flaky_server.server_address[1]}/tsr"
+    store = SidecarStore()
+    retry_provider = Rfc3161AnchorProvider([flaky_endpoint], trust_anchors=[trusted])
+    core = {"anchor_id": "anchor-retry", "head_hash": "b" * 64, "to_sequence": 2}
+    worker = AnchorAttestationWorker(
+        store, retry_provider, type("B", (), {"open": lambda *a: None})()
+    )
+    try:
+        # Two ordinary worker passes. The first meets the transient fault; the second is
+        # the retry that must succeed. Nothing here is monkeypatched on either side.
+        for _ in range(2):
+            row = {"payload": core | {"attestations": retry_provider.attest(core)},
+                   "attestations": list(store.rows.values())}
+            worker.process("tnt_bank-a", [row], 900)
+        final = store.rows.get(("anchor-retry", flaky_endpoint, "rfc3161"), {})
+        state, why = final.get("status"), (
+            f"after a transient failure and one retry the sidecar reads "
+            f"{final.get('status')!r} ({final.get('failure_reason') or 'no reason'}); "
+            f"{Flaky.attempts} TSA call(s) made"
+        )
+    except Exception as error:  # noqa: BLE001
+        state, why = "error", f"{type(error).__name__}: {error}"
+    finally:
+        flaky_server.shutdown()
+    record(
+        "CASE 6  V-16  transient TSA failure, then a retry that should attest",
+        state == "attested",
+        f"{why}; expected the retry to attest — a failed attempt must stay retryable, "
+        f"and an append-only store with ON CONFLICT DO NOTHING makes any recorded "
+        f"non-terminal state permanent",
+    )
+
     failed = [case for case, passed, _ in results if not passed]
     print("=" * 78)
     print(f"{len(results) - len(failed)}/{len(results)} cases at their post-fix expectation.")
     if failed:
         print("Open: " + ", ".join(case.split("  ")[0] + " " + case.split("  ")[1]
                                    for case in failed))
-        print("CP-B does not pass while cases 3 or 4 are red (R-007 §5).")
+        print("CP-B does not pass while cases 3, 4 or 6 are red (R-007 §5, amended by the re-run).")
     return 1 if failed else 0
 
 
