@@ -87,6 +87,11 @@ class Settings:
         evaluator_build = environ.get("MIZAN_EVALUATOR_BUILD", "development")
         configuration_hash = environ.get("MIZAN_EVALUATOR_CONFIGURATION_HASH", "0" * 64)
         if environment == "production":
+            if environ["MIZAN_JWT_ISSUER"].startswith("urn:mizan:development:"):
+                raise RuntimeError(
+                    "production refuses the mizan-dev-token issuer; a demo credential minter is "
+                    "not an identity provider"
+                )
             if not execution_token_issuer:
                 raise RuntimeError(
                     "production requires MIZAN_EXECUTION_TOKEN_ISSUER; tokens may not select "

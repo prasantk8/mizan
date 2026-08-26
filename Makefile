@@ -1,4 +1,4 @@
-.PHONY: check validate-baseline test-postgres benchmark-policy benchmark-sequencer benchmark-chain
+.PHONY: check validate-baseline test-postgres demo demo-down benchmark-policy benchmark-sequencer benchmark-chain
 
 check: validate-baseline
 
@@ -7,6 +7,12 @@ validate-baseline:
 
 test-postgres:
 	bash scripts/test_postgres_schema.sh
+
+demo:
+	bash scripts/demo.sh up
+
+demo-down:
+	bash scripts/demo.sh down
 
 benchmark-policy:
 	uv run python -m benchmarks.policy_engine

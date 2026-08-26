@@ -21,3 +21,6 @@ coverage/
 *.log
 
 .claude/scheduled_tasks.lock
+
+# Local demo state: generated keys, pids, logs, evidence object store.
+var/
