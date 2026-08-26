@@ -1,0 +1,26 @@
+{
+  "fetched_at": "2026-08-26T16:32:00Z",
+  "request": {
+    "digest_algorithm": "sha256",
+    "digest": "0042dc29e2169826901f390daa538545b293dfa83e560c5c16d43c9fcc6ab3a0",
+    "included_certificate_requested": true
+  },
+  "authorities": [
+    {
+      "name": "FreeTSA",
+      "url": "https://freetsa.org/tsr",
+      "token": "freetsa.tsr",
+      "root": "freetsa-root.pem",
+      "root_source": "https://freetsa.org/files/cacert.pem",
+      "root_sha256_fingerprint": "A6:37:9E:7C:EC:C0:5F:AA:3C:BF:07:60:13:D7:45:E3:27:BB:BA:A3:8C:0B:9A:F2:24:69:D4:70:1D:18:AA:BC"
+    },
+    {
+      "name": "Sectigo",
+      "url": "https://timestamp.sectigo.com",
+      "token": "sectigo.tsr",
+      "root": "usertrust-rsa-root.pem",
+      "root_source": "macOS /etc/ssl/cert.pem system trust store (USERTrust RSA Certification Authority)",
+      "root_sha256_fingerprint": "E7:93:C9:B0:2F:D8:AA:13:E2:1C:31:22:8A:CC:B0:81:19:64:3B:74:9C:89:89:64:B1:74:6D:46:C3:D4:CB:D2"
+    }
+  ]
+}

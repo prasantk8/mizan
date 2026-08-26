@@ -92,6 +92,10 @@ jobs:
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/verify_evidence_export.py tests/fixtures/evidence_export/attested/bundle \
             --tsa-trust-anchor tests/fixtures/evidence_export/attested/tsa-root.pem
+          sudo unshare --net -- .offline-verifier/bin/python \
+            scripts/verify_evidence_export.py tests/fixtures/evidence_export/public-tsa/bundle \
+            --tsa-trust-anchor tests/fixtures/evidence_export/public-tsa/freetsa-root.pem \
+            --tsa-trust-anchor tests/fixtures/evidence_export/public-tsa/usertrust-rsa-root.pem
 
   implementation-gates:
     runs-on: ubuntu-latest
