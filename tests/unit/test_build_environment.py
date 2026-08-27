@@ -23,12 +23,23 @@ WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
 TARGET = re.compile(r"^([A-Za-z0-9_.-]+):\s*(.*)$")
 JOB = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
 
+# CODEX, reviewing PR #4: "the hand-written graph is not GNU Make's graph." Two edges the
+# first version followed nowhere -- a recipe that re-enters make, and a recipe that shells
+# out to a script which then reaches the interpreter. Both hide a bare `python3` one hop
+# past where the walk stopped. R-008 F-14.
+SUB_MAKE = re.compile(r"(?:\$[({]MAKE[)}]|(?<![\w./-])make)\s+([A-Za-z0-9_.-]+)")
+SHELL_SCRIPT = re.compile(r"(?<![\w=/-])((?:\./)?[\w][\w./-]*\.sh)")
 
-def make_targets() -> dict[str, tuple[list[str], list[str]]]:
+# Constructs this parser does not model. It is honest about them by refusing to sit in a
+# Makefile that uses one, rather than by walking past it silently.
+UNMODELLED = re.compile(r"^\s*(?:-?include|ifeq|ifneq|ifdef|ifndef|else|endif)\b")
+
+
+def make_targets(makefile: Path = MAKEFILE) -> dict[str, tuple[list[str], list[str]]]:
     """Map each target to its (prerequisites, recipe lines)."""
     targets: dict[str, tuple[list[str], list[str]]] = {}
     current: str | None = None
-    for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
+    for line in makefile.read_text(encoding="utf-8").splitlines():
         if line.startswith("\t"):
             if current is not None:
                 targets[current][1].append(line.strip())
@@ -42,11 +53,32 @@ def make_targets() -> dict[str, tuple[list[str], list[str]]]:
     return targets
 
 
-def recipes_reachable_from(target: str) -> list[tuple[str, str]]:
-    """Every (target, recipe line) `make <target>` would execute, prerequisites included."""
-    targets = make_targets()
+def recipes_reachable_from(
+    target: str, makefile: Path = MAKEFILE, root: Path = REPO
+) -> list[tuple[str, str]]:
+    """Every (source, line) `make <target>` would execute, one hop past make included.
+
+    Prerequisites, recursive `$(MAKE) other` invocations, and the text of any `.sh` script a
+    reachable recipe runs. A script is reported under its own path, because that is where
+    the offending line has to be fixed.
+    """
+    targets = make_targets(makefile)
     seen: set[str] = set()
     collected: list[tuple[str, str]] = []
+
+    def walk_script(path: str) -> None:
+        resolved = root / path.removeprefix("./")
+        key = f"script:{resolved}"
+        if key in seen or not resolved.is_file():
+            return
+        seen.add(key)
+        for line in resolved.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            collected.append((path, stripped))
+            for nested in SHELL_SCRIPT.findall(stripped):
+                walk_script(nested)
 
     def walk(name: str) -> None:
         if name in seen or name not in targets:
@@ -55,7 +87,12 @@ def recipes_reachable_from(target: str) -> list[tuple[str, str]]:
         prerequisites, recipe = targets[name]
         for prerequisite in prerequisites:
             walk(prerequisite)
-        collected.extend((name, line) for line in recipe)
+        for line in recipe:
+            collected.append((name, line))
+            for sub_target in SUB_MAKE.findall(line):
+                walk(sub_target)
+            for script in SHELL_SCRIPT.findall(line):
+                walk_script(script)
 
     walk(target)
     return collected
@@ -83,6 +120,61 @@ def test_no_make_check_recipe_runs_python_outside_the_locked_environment() -> No
     assert offenders == [], (
         "these `make check` recipes bypass the locked environment, so they pass only on a "
         f"machine that already has the dependencies installed: {offenders}"
+    )
+
+
+def test_a_bare_interpreter_hidden_behind_a_sub_make_or_a_shell_script_is_still_found(
+    tmp_path: Path,
+) -> None:
+    """CODEX's counterexample from the PR #4 review, made executable.
+
+    `check -> wrapper`, where `wrapper` runs `$(MAKE) hidden` and `hidden` runs a shell
+    script that reaches the interpreter. The first walker followed prerequisites only, so it
+    stopped at `wrapper` and reported the tree clean. Both hops are red here.
+    """
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check.sh").write_text("#!/bin/sh\npython3 scripts/thing.py\n")
+    makefile = tmp_path / "Makefile"
+    makefile.write_text(
+        "check: wrapper\n"
+        "\t@echo done\n"
+        "\n"
+        "wrapper:\n"
+        "\t$(MAKE) hidden\n"
+        "\n"
+        "hidden:\n"
+        "\tbash scripts/check.sh\n"
+    )
+    found = [line for _, line in recipes_reachable_from("check", makefile, tmp_path)]
+    assert "$(MAKE) hidden" in found, "a recipe that re-enters make is an edge in the graph"
+    assert "python3 scripts/thing.py" in found, (
+        "the interpreter was one hop past where the walk stopped, which is exactly how F-8 "
+        "survived being looked at"
+    )
+
+
+def test_the_makefile_stays_inside_the_subset_this_parser_understands() -> None:
+    """The guard above is only as true as the parser under it, so pin the parser's premise.
+
+    `include`, conditionals, pattern rules and multi-target rules are all things GNU Make
+    does and this parser does not. Rather than claim to handle them, fail loudly the day one
+    appears, so the next person fixes the walker instead of trusting a walk that skipped a
+    third of the file.
+    """
+    unmodelled: list[str] = []
+    for number, line in enumerate(MAKEFILE.read_text(encoding="utf-8").splitlines(), start=1):
+        if line.startswith("\t") or not line.strip() or line.lstrip().startswith("#"):
+            continue
+        # A directive we do not read, or a rule head we do not parse -- a pattern rule, a
+        # multi-target rule, a variable-expanded prerequisite list.
+        if UNMODELLED.match(line) or (
+            ":" in line.split("=")[0] and not TARGET.match(line)
+        ):
+            unmodelled.append(f"{number}: {line}")
+    assert unmodelled == [], (
+        "the Makefile now uses constructs this parser walks past in silence, so "
+        f"test_no_make_check_recipe_runs_python_outside_the_locked_environment is no longer "
+        f"the guarantee its name claims: {unmodelled}"
     )
 
 
