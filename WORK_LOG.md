@@ -80,12 +80,15 @@
 
 States: `READY → IN_PROGRESS(claim) → REVIEW → DONE` | `BLOCKED(dep)` | `PARKED(reason)`
 
+| T-094 | **New, found by CI** — `postgres-contract` goes red at random: compose declares `pg_isready -U mizan_owner -d mizan`, which the entrypoint's *temporary* socket-only server answers during `/docker-entrypoint-initdb.d`, so the container is marked healthy while the real server is still restarting and the next `psql` fails on a missing socket. Observed 125 ms after `Healthy` on a tree whose only changes were JavaScript and markdown. Require a TCP connection in the healthcheck. A gate that fails for reasons unrelated to the change teaches everyone to disbelieve red, which is exactly the authority H-8 assigns to CI | CLAUDE | — | REVIEW |
+
 ## Claim Ledger
 
 One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here. Empty = nothing claimed.
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-094 | claude | clm_t094_pg_healthcheck_race | 1 | 2026-08-28T00:10:00Z | 2026-08-28T00:10:00Z | 2026-08-28T04:10:00Z | f4f90a2 |
 
 ## Blockers & Dependencies
 
