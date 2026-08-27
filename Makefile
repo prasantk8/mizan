@@ -3,7 +3,7 @@
 check: validate-baseline
 
 validate-baseline:
-	python3 scripts/validate_baseline.py
+	uv run --frozen python scripts/validate_baseline.py
 
 test-postgres:
 	bash scripts/test_postgres_schema.sh
