@@ -4,8 +4,7 @@ A second, from-scratch implementation of the Mizan evidence bundle verifier, wri
 from `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` and the conformance fixtures alone.
 
 **Read [FINDINGS.md](FINDINGS.md) first.** The verifier is the instrument; the findings are the
-result. Four implementation disagreements and nine specification gaps came out of building it, two are
-still open against the reference, and one of them found a bug in this verifier.
+result. Four implementation disagreements and nine specification gaps came out of building it. One was ratified by the founder while the PR was open (ADR-004 G.19) and is fixed here; one is still open against the reference; one found a bug in this verifier.
 
 ## Why a second verifier exists
 
@@ -59,6 +58,7 @@ Trust roots come from you, never from the bundle (spec §4). Exit status is the 
 | 1    | INVALID      | well-formed, but an evidence check failed                            |
 | 2    | CANNOT CHECK | structurally eligible; this environment cannot evaluate a claim      |
 | 3    | MALFORMED    | not a bundle 1.0 document                                            |
+| 4    | EXPIRED      | every required check passed; the independent timestamp horizon has passed |
 | 64   | —            | usage error                                                          |
 
 A clean verdict always prints what it does **not** prove (spec §6) at the same prominence as the
@@ -83,15 +83,15 @@ tools/fault-injection.mjs breaks lib/ on purpose to prove the suite can go red
 ## Checking it
 
 ```
-npm test                          # 66 tests
-npm run differential              # both verifiers, 300 cases
-npm run fault-injection           # 13 faults, all must go red
+npm test                          # 69 tests
+npm run differential              # both verifiers, 304 cases
+npm run fault-injection           # 15 faults, all must go red
 ```
 
 `differential.mjs` compares **exit status only**. Prose is not the contract; two verifiers are
 entitled to phrase the same finding differently and are not entitled to disagree about the verdict.
 
-`fault-injection.mjs` reverts thirteen real guards in `lib/` — one at a time, restoring in a
+`fault-injection.mjs` reverts fifteen real guards in `lib/` — one at a time, restoring in a
 `finally` — and requires the suite to go red for each, naming the test that caught it. Every fault
 is a regression in product code, not a stub in the harness: a fault injected into a test double
 proves only that a test asserting X fails when nothing does X, which was never in doubt. A fault

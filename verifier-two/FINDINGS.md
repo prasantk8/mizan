@@ -32,6 +32,10 @@ is neither `VALID` nor evidence failure." A trust root that the operator has not
 property of the operator's environment, not of the bundle. The bundle is unchanged; only our
 ability to judge it changed.
 
+It reproduces on four separate bundles — `valid-public`, `expired-tsa`, `attested/bundle`, and
+`public-tsa/bundle` — so it is the reference's general handling of a missing trust root, not a
+quirk of one fixture.
+
 The practical harm is the reason this is filed rather than shrugged at. An auditor's first
 contact with a good bundle, before they have wired up their own roots, is a red FAIL. That teaches
 them the bundle is bad. It is the exact failure mode T-063 exists to prevent, produced by the
@@ -88,35 +92,52 @@ Verifier-two now type-checks `files` values as strings and lets the comparison d
 say which sentences in it are grammar and which are evidence** — the distinction decides the
 verdict and is currently left to the reader.
 
-## D-4 — a timestamp whose certificate has since expired is reported as an evidence failure. **Open, escalated.**
+## D-4 — a timestamp past its horizon was reported as an evidence failure. **Ratified by the founder (ADR-004 G.19, T-091); fixed here.**
 
-`scripts/verify_evidence_export.py tests/fixtures/evidence_export/attested/bundle --tsa-trust-anchor .../tsa-root.pem`
-exits **1** with `FAIL: RFC 3161 TSA certificate is expired`. verifier-two exits **0** and prints a
-`TIMESTAMP LIFETIME:` warning above the verdict.
+Found by CI, not by me, and worth recording that way: `tests/fixtures/evidence_export/attested/bundle`
+verified on 2026-08-27 and failed on 2026-08-28 with no byte of it changed, because the committed test
+TSA certificate had a one-day lifetime. Neither implementation had a considered position on what a
+verification result that decays on a calendar should mean.
 
-**This was found by CI, not by me**, and it is the most interesting finding in this file for that
-reason. The committed test TSA certificate has a one-day lifetime. The bundle verified on 2026-08-27
-and stopped verifying on 2026-08-28 with no byte of it changed. A verification result that decays on
-a calendar is a real property of evidence and neither implementation had a considered position on it.
+This was escalated as B-21 rather than decided, on the grounds that both behaviours were defensible —
+validating at `genTime` is the property a timestamp is bought for, but an expired certificate also
+publishes no revocation information, so a key compromised after expiry could mint a token bearing any
+`genTime`. **The founder ruled while this PR was open** (ADR-004 G.19, 2026-08-27): bundle 1.0 claims
+offline verifiability for the lifetime of the timestamp authority's certificate and no longer; RFC 4998
+archive timestamping is out of scope; `EXPIRED` (exit 4) is a distinct terminal verdict, not a weaker
+`INVALID`; and past the horizon a verifier re-checks the chain at an instant inside the certification
+path's own validity window — never at the token's `genTime`, which would ask the token to date the
+certificate that signs it.
 
-Both behaviours are defensible and both are incomplete:
+`verifier-two` now implements this in full:
 
-* Validating the chain at `genTime` — what verifier-two does — is the property a timestamp exists to
-  provide. A timestamp that stopped meaning anything when the TSA's certificate lapsed would be
-  worthless for exactly the archival case it is bought for.
-* But an expired certificate publishes no revocation information, so a key compromised *after*
-  expiry can mint a token bearing any `genTime` and nothing in either verifier would see it. The
-  reference's caution has real content. What is wrong is the **report**, not the concern: `FAIL`
-  says the evidence is bad, when the bundle is unchanged and the timestamp attests exactly what it
-  always attested.
+* `lib/verdict.js` — a fifth verdict, `EXPIRED`, exit 4, ranked below `CANNOT CHECK` and above `VALID`.
+  `CANNOT CHECK` outranks it because `EXPIRED` still asserts "every required check passed"; an
+  indeterminate claim means that assertion cannot honestly be made regardless of the horizon.
+* `lib/rfc3161.js` — the certificate chain is now built in two phases: `walkChainToRoot` establishes
+  the path by signature/issuer structure alone, with no temporal check, so the horizon
+  (`certificationPathHorizon`, the earliest `notAfter` on the path) can be computed *before* deciding
+  whether checking at `genTime` is even the right question. Only when `now <= horizon` is the chain
+  additionally validated at `genTime`. This was load-bearing, not cosmetic: `tests/fixtures/evidence_export/expired/bundle`
+  carries a token whose forged `genTime` (2026) sits outside its own signer's real 2015–2016 window —
+  exactly the trivially-producible case section 6 warns about — and the old unconditional `genTime`
+  check rejected it as `INVALID` before the fix.
+* `lib/verify.js` — an anchor's horizon is the *latest* horizon among the authorities carrying it
+  (countersigning buys time); the stream's derived state is `expired` when every anchor is
+  `rfc3161`-or-`expired` and at least one has passed its horizon; the stream horizon is the *earliest*
+  anchor horizon, because every anchor must hold; the manifest assurance comparison reads `expired` as
+  `rfc3161`, since the manifest recorded what was true at export and a horizon reached since then is a
+  fact about the calendar, not a claim the exporter got wrong. `expires_at` grammar is enforced per
+  section 4: required and RFC-3339-to-the-second on an `rfc3161` sidecar, forbidden in the signed
+  roster and on a `customer_countersignature` sidecar, and the declared value must equal the
+  recomputed horizon or the bundle is `INVALID` — a caption, not evidence, exactly as section 4 states.
 
-verifier-two states both facts and invents no verdict. It is not claiming to be right — the correct
-long-term answer is probably neither of these but archive timestamping (RFC 4998 / CAdES-A), where a
-token is re-timestamped before its chain expires, which is a design decision neither implementation
-is entitled to make alone.
-
-**Escalated as B-21.** H-7 fires on cryptography. T-091 is in flight on the adjacent question ("say
-when a bundle stops being verifiable") and should absorb this.
+Verified against the differential: 304 cases (six conformance and three shipped bundles, each with and
+without declared roots, plus 288 mutations): every remaining disagreement is D-1, the one open
+reference defect, now confirmed on four bundles — `valid-public`, `expired-tsa`, `attested/bundle`,
+and `public-tsa/bundle` — rather than the one this file originally filed it against. `expired-tsa`
+and `tests/fixtures/evidence_export/expired/bundle` both now return exit 4, matching the reference
+and the recorded oracle exactly.
 
 ## The bug this found in verifier-two
 
@@ -209,11 +230,13 @@ The reference's choice here is untested by any fixture, so the two implementatio
 on the most consequential bundle either will ever see and the conformance suite would stay green.
 **§5 should name the verdict.**
 
-## S-7 — the four verdicts are declared mutually exclusive with no rule for producing one
+## S-7 — the five verdicts are declared mutually exclusive with no rule for producing one among MALFORMED/INVALID/CANNOT CHECK
 
 This is D-2 stated as a spec property rather than as a disagreement. §5 says the verdicts are
 mutually exclusive; it does not say that findings are, and a real bundle earns several. Precedence
-is the missing sentence.
+is the missing sentence. **Partially closed by ADR-004 G.19**: `EXPIRED` now has a stated rank
+(below `CANNOT CHECK`, above `VALID`), but the precedence among `MALFORMED`, `INVALID` and
+`CANNOT CHECK` — D-2's actual subject — is still nowhere in the normative text.
 
 ## S-8 — `checkpoints.json` has no defined member set
 
@@ -234,19 +257,18 @@ implementer a day and the spec gave no way to know.
 
 ## What the two implementations agree on
 
-295 differential cases — the 6 conformance bundles run both with and without their declared trust
-roots, plus all 288 single-byte mutation cases:
+304 differential cases — the six conformance bundles and three shipped bundles, each run with and
+without their declared trust roots, plus all 288 single-byte mutation cases:
 
 ```
-cases:                          300
-verifiers disagree:               4     (three instances of D-1, and D-4)
+cases:                          304
+verifiers disagree:               4     (D-1, seen on four different bundles)
 reference vs recorded oracle:     0
 verifier-two vs oracle:           0
 ```
 
-The corpus is the six conformance bundles and the three shipped bundles, each run with and without
-its declared trust roots, plus all 288 single-byte mutation cases. Three of the four disagreements
-are D-1 seen on three different bundles; the fourth is D-4.
+Every remaining disagreement is D-1. `expired-tsa` and `tests/fixtures/evidence_export/expired/bundle`
+both now return exit 4 and agree with the reference and the recorded oracle exactly — D-4 is closed.
 
 The strongest independent confirmation is not in that table. Working from §3 alone, verifier-two
 computes `anchor_core_digest = 0042dc29e2169826901f390daa538545b293dfa83e560c5c16d43c9fcc6ab3a0`
