@@ -21,3 +21,8 @@ coverage/
 *.log
 
 .claude/scheduled_tasks.lock
+
+# Runtime scratch: demo keys, trivy caches, scan artifacts. A development
+# private key lives under var/demo-keys/, so an unqualified `git add -A` on a
+# tree without this line stages it.
+var/

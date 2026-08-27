@@ -16,7 +16,7 @@ argument-revalidation, and semantic-policy-hash coverage.
 | I-8 | `unit/test_authorization.py::test_i8_risk_engine_failure_persists_system_fail_closed_deny` |
 | I-9 | `integration/test_authorize_postgres.py::test_i9_bound_argument_change_is_rejected_at_redemption` |
 | I-10 | `integration/test_authorize_postgres.py::test_i10_redeemed_capability_cannot_create_a_second_lease` |
-| I-11 | `unit/test_evidence.py::test_checkpointed_parallel_verifier_detects_corruption` + `integration/postgres/schema_contract.sql` |
+| I-11 | `unit/test_evidence.py::test_checkpointed_parallel_verifier_detects_corruption` + `unit/test_tsa_lifetime.py::test_expiry_does_not_stop_the_chain_receipts_and_anchors_from_verifying` + `unit/test_tsa_lifetime.py::test_an_altered_bundle_past_the_horizon_is_still_reported_as_altered` + `integration/postgres/schema_contract.sql` |
 | I-12 | `unit/test_redaction.py::test_redaction_hashes_stored_payload_and_commits_to_source` |
 | I-13 | `unit/test_invariant_properties.py::test_i13_property_valid_enriched_context_is_always_recordable` |
 | I-14 | `unit/test_authorization.py::test_i14_volatile_retry_fields_do_not_change_binding_hash` |
