@@ -29,7 +29,7 @@ FILES = (
 
 
 def verdict(returncode: int) -> str:
-    return {0: "VALID", 1: "INVALID", 2: "CANNOT_CHECK", 3: "MALFORMED"}.get(
+    return {0: "VALID", 1: "INVALID", 2: "CANNOT_CHECK", 3: "MALFORMED", 4: "EXPIRED"}.get(
         returncode, "VERIFIER_ERROR"
     )
 

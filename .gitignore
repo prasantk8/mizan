@@ -22,5 +22,7 @@ coverage/
 
 .claude/scheduled_tasks.lock
 
-# Local demo state: generated keys, pids, logs, evidence object store.
+# Runtime scratch: demo keys, trivy caches, scan artifacts. A development
+# private key lives under var/demo-keys/, so an unqualified `git add -A` on a
+# tree without this line stages it.
 var/

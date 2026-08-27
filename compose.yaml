@@ -8,7 +8,15 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mizan_owner -d mizan"]
+      # -h 127.0.0.1 is load-bearing, not decoration. While the entrypoint runs
+      # /docker-entrypoint-initdb.d it starts a TEMPORARY server listening on the
+      # unix socket ONLY, then stops it and restarts on TCP. A socket-local
+      # pg_isready answers "ready" against that temporary server, so the container
+      # can report healthy inside the window where the real server is still coming
+      # up, and the next psql fails with "connection to server on socket ...
+      # failed: No such file or directory". A TCP check cannot be satisfied until
+      # the real server is listening.
+      test: ["CMD-SHELL", "pg_isready -U mizan_owner -d mizan -h 127.0.0.1"]
       interval: 2s
       timeout: 3s
       retries: 20
@@ -25,7 +33,11 @@ services:
     ports:
       - "127.0.0.1:55432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mizan_owner -d mizan"]
+      # See the postgres service above: a socket-local pg_isready can answer
+      # "ready" against the entrypoint's temporary server while the real one is
+      # still restarting on TCP. This service exists only on this branch (T-094
+      # fixed the other occurrence from main, which never had postgres-demo).
+      test: ["CMD-SHELL", "pg_isready -U mizan_owner -d mizan -h 127.0.0.1"]
       interval: 2s
       timeout: 3s
       retries: 20

@@ -3,7 +3,7 @@
 check: validate-baseline validate-ui-contract validate-vulnerability-allowlist
 
 validate-baseline:
-	python3 scripts/validate_baseline.py
+	uv run --frozen python scripts/validate_baseline.py
 
 validate-ui-contract:
 	uv run python scripts/validate_ui_contract.py

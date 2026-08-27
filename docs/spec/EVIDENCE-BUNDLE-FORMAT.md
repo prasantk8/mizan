@@ -78,6 +78,17 @@ undeclared or duplicate identity is invalid. Status grammar is scoped by persist
 | `attestations[]` inside the signed anchor `payload` | at anchor time, before contacting any external authority | never; the roster is inside the signature | `pending` for `rfc3161` or `customer_countersignature`; `unattested` only for `none_development` with authority `development` |
 | append-only `attestations[]` sidecars on the anchor row | after an external outcome validates | never; outcomes are append-only | `attested` for `rfc3161` or `customer_countersignature` |
 
+An `rfc3161` sidecar MUST carry `expires_at`: an RFC 3339 UTC instant to the second, equal to the
+earliest `notAfter` among the certificates on the certification path the token itself carries —
+the signer named by `id-kp-timeStamping` and its issuers. That is the date on which path validation
+starts refusing the token, so it is the date after which the bundle is no longer independently
+verifiable. It MUST NOT appear on a `customer_countersignature` sidecar, which has no such
+certificate, and MUST NOT appear anywhere in the signed roster, which is written before any token
+exists and therefore cannot know one. Bundle 1.0 does not otherwise close the sidecar key set.
+
+`expires_at` is a caption, not evidence: a verifier recomputes the horizon from the token and MUST
+reject a bundle whose declared value disagrees. No verdict rests on the declared value.
+
 `failed` is reserved vocabulary and MUST NOT occur anywhere in a bundle version 1.0. Failed attempts
 are transient and are not persisted: leaving the sidecar slot empty keeps the signed `pending` entry
 retryable. `attested` cannot occur in the signed payload because it is written before external work,
@@ -88,10 +99,19 @@ customer signatures, not a trust-root assertion for RFC 3161.
 
 Per-anchor state is `unattested` if explicitly development-unattested, otherwise `pending` if any
 rostered authority remains pending, otherwise `rfc3161` if at least one RFC 3161 token verifies,
-otherwise `unattested`. Stream assurance is the weakest anchor: `rfc3161` only if all anchors are
-`rfc3161`; else `unattested` if any is unattested; else `pending`. The manifest `assurance` object is
-only a claim under test and MUST equal `{anchor_attestation: derived_state,
-external_timestamp: derived_state == "rfc3161"}`.
+otherwise `expired` if at least one verified at an instant inside its own certification path's
+validity window but that window has closed, otherwise `unattested`. An anchor's horizon is the
+**latest** horizon among the authorities carrying it: countersigning by a second authority buys
+time and MUST be reported as having done so. Stream assurance is the weakest anchor: `rfc3161` only
+if all anchors are `rfc3161`; else `expired` if every anchor is `rfc3161` or `expired` and at least
+one is `expired`; else `unattested` if any is unattested; else `pending`. The stream horizon is the
+**earliest** anchor horizon, because every anchor must hold.
+
+The manifest `assurance` object is only a claim under test and MUST equal
+`{anchor_attestation: derived_state, external_timestamp: derived_state == "rfc3161"}`, with
+`derived_state` read as `rfc3161` when it is `expired`. The manifest records what was true at
+export; a horizon reached since then is a fact about the calendar, and reporting it as a mismatched
+claim would accuse the exporter of the one thing this verdict exists to rule out.
 
 Key documents have exactly `key_id`, `role`, `custody`, `algorithm`, `public_key`, `not_before`,
 `not_after`, and `revoked_at` in version 1.0; `algorithm` is `Ed25519` and `custody` is exactly one of
@@ -106,17 +126,26 @@ but it supplies no independent evidence and MUST NOT increase assurance.
 
 ## 5. Terminal acceptance
 
-A verifier returns one of four terminal verdicts. `MALFORMED` means the input violates the bundle 1.0
+A verifier returns one of five terminal verdicts. `MALFORMED` means the input violates the bundle 1.0
 grammar and therefore is not a Mizan bundle. `CANNOT CHECK` means the input is structurally eligible
 but the verifier environment cannot evaluate a required claim. `INVALID` means the bundle is
-well-formed but one or more evidence checks failed. `VALID` means every required check passed. These
-classes are mutually exclusive; neither `MALFORMED` nor `CANNOT CHECK` is an assurance result.
+well-formed but one or more evidence checks failed. `EXPIRED` means every required check passed and
+the stream's independent timestamp horizon has been reached. `VALID` means every required check
+passed and the horizon has not. These classes are mutually exclusive; neither `MALFORMED` nor
+`CANNOT CHECK` is an assurance result.
+
+`EXPIRED` is not a weaker `INVALID` and MUST NOT be reported as one. `INVALID` means *this evidence
+is not what it claims to be*. `EXPIRED` means it still is, and the independent proof of **when** has
+run out while the proof of **what** has not: the record chain, the receipt signatures and the anchor
+signatures do not depend on the timestamp authority and MUST still verify. An investigator who
+cannot tell "the authority's certificate lapsed in 2029" from "this record was altered" has been
+handed the one ambiguity this format exists to remove.
 
 A verifier returns `VALID` only after file inventory/digests, record hashes/linkage/range, one-to-one receipt
 coverage and signatures, anchor numbering/linkage/density/signatures/head bindings, left and right
 edges, attestation roster/cryptography, key roles, checkpoints, and claimed-versus-derived assurance
-all pass. The reference CLI maps `VALID`, `INVALID`, `CANNOT CHECK`, and `MALFORMED` to exit statuses
-0, 1, 2, and 3 respectively.
+all pass. The reference CLI maps `VALID`, `INVALID`, `CANNOT CHECK`, `MALFORMED`, and `EXPIRED` to
+exit statuses 0, 1, 2, 3, and 4 respectively.
 
 ## 6. What this format does not prove
 
@@ -127,6 +156,16 @@ it does not prove no later anchor exists. These are TM-001's pre-chain-omission 
 anchor classes. A separately retained inclusion proof can prove a named record must occur in an
 anchored history, but cannot by itself prove completeness of events never submitted.
 
+A bundle does **not** prove *when* it was recorded after its declared `expires_at`. Bundle 1.0
+claims offline verifiability for the lifetime of the timestamp authority's certificate and no
+longer; RFC 4998 / CAdES-A archive timestamping, which is how that claim would be extended, is out
+of scope. Past the horizon a verifier may re-check the token at an instant inside the certification
+path's own validity window — read from the certificates, never from the token's `genTime`, which
+would be asking the token to date the certificate that signs it — and what that supports is that
+the signer chains to the operator's trust root and the imprint is this anchor. It does not support
+the time the token asserts. Choose an authority whose signer certificate outlives your retention
+period; the bundle now states the date, so this is checkable on receipt rather than in year three.
+
 ## 7. Decisions made explicit while specifying 1.0
 
 Code had left these points implicit: future anchor keys are included by default because the core rule
@@ -134,6 +173,13 @@ is a closed exclusion set; file checksums cover stored bytes while semantic hash
 overlay only a signed identity rather than extending the roster; partial exports need a preceding
 signed anchor; checkpoints never contribute assurance; and a missing verifier dependency is neither
 `VALID` nor evidence failure.
+
+`expires_at` is computed from the token's own certificates and excludes the verifier's trust roots,
+because the producer writes it when no verifier's roots are known and none can be assumed. An
+operator whose trust root expires sooner reaches the horizon sooner; that is a fact about their
+trust configuration and the verifier reports it, but it is not something the bundle can state. The
+sidecar key set stays open in 1.0: closing it is a defensible separate change, and doing it here
+would have made a grammar decision under cover of a lifetime decision.
 
 The location-scoped grammar resolves the earlier flat enum without adding a durable state. This
 discrepancy is harmless today only because there is exactly one implementation — which is the precise
