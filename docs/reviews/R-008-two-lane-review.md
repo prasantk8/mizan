@@ -57,7 +57,7 @@ files, 12 MB of history, three tracked `.pem` files (all public root certificate
 anywhere in the tree, `.env*` and `var/` ignored. Nothing needs scrubbing. Private repository until T-065
 makes custody a gate.
 
-## F-8, F-9, F-10, F-11 — what the first CI run found, one hour after F-7 was written
+## F-8 through F-12 — what the first CI run found, one hour after F-7 was written
 
 The remote was created and `main` @ `f4f90a2` pushed at 17:24 UTC on 2026-08-27. Run
 [33098206236](https://github.com/prasantk8/mizan/actions/runs/33098206236) is the first execution of
@@ -179,6 +179,45 @@ category: F-2 and F-3 are assertions that cannot go red, and F-11 is an assertio
 Both are the same defect seen from opposite sides — a check whose outcome was never observed in the
 environment that runs it. There is no local invocation that would have shown it, because no engineer
 sets `CI=true` on their own machine.
+
+### F-12 — the coverage gate on the execution module counts the wrong thing, and F-11 was hiding it
+
+Fixing F-11 did not turn `python-contract` green on `track-b/stage-5`. It moved the failure four steps
+later, to a gate that had never been reached before because the job died in front of it:
+
+```
+control-plane/mizan_control_plane/execution.py     325    168    48%
+FAIL Required test coverage of 50% not reached. Total coverage: 48.31%
+27 passed in 1.60s
+```
+
+`execution.py` is the module that mints and redeems execution capabilities. The gate is
+`pytest tests/unit/test_execution.py --cov=mizan_control_plane.execution --cov-fail-under=50`.
+
+The first thing to say is that `main` passes this by **0.92 of a percentage point** — 50.92%, 271
+statements. The CLAUDE lane added 54 statements to the module and four tests, and crossed the line. A
+gate with under one point of headroom is not a floor, it is a coin toss that had never been tossed.
+
+The second thing is what the number actually measures, and this is the finding. The uncovered ranges
+are `_issue_tx` (260–342), `redeem` (370–506) and `_transition_lease` (609–685) — the transactional
+paths. Those are not untested. They are tested by `tests/integration/`, against a live PostgreSQL, in
+`postgres-contract`, which is **green**. The gate measures the unit suite alone, so what it reports is
+not how well `execution.py` is tested; it is *what proportion of `execution.py` happens not to need a
+database*. That proportion falls every time the module does more of its real work inside a
+transaction. **The number goes down as the module gets better,** and it would reach zero on a module
+that was entirely correct and entirely transactional.
+
+So the repair is not to write unit tests until the number goes back over fifty. That would be
+coverage bought against rule 11 — tests whose names claim things nobody needed proved, written to move
+a percentage. The repair is to measure the gate over the suite that exercises the module: combine the
+unit and integration runs under one coverage report in `postgres-contract`, where the DSN exists, and
+set the threshold from what that measures. That changes what the gate claims, so it is a decision and
+it gets its own change-set.
+
+Note the shape, because it is now the third time in one day: F-11 hid F-12 exactly as a red job hides
+every job behind it. Fixing a check does not tell you the check was the only thing wrong — it tells
+you what the next thing is. That is the argument for one PR per failing job rather than one branch
+that goes green.
 
 ## F-1 — Two lanes, nineteen commits, and a `main` that has seen none of it
 
