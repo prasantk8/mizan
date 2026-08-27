@@ -18,8 +18,10 @@ makes H-8 true for the first time. Everything else here follows from that.
 
 ## 1. The remote
 
-**Needs the founder's stamp before anyone runs it** — creating the repository is outward-facing and I will
-not do it unasked. Recommended: **private** repository under the personal account, `main` as default.
+**Stamped by the founder on 2026-08-27**: `https://github.com/prasantk8/mizan`, private, `main` as
+default. `main` and both lane heads pushed the same hour; run
+[33098206236](https://github.com/prasantk8/mizan/actions/runs/33098206236) is the first CI execution in
+this repository's history. Section 6 is what it found.
 
 I checked what would be published: 290 tracked files, 12 MB of history, three tracked `.pem` files (all
 public root certificates — FreeTSA, USERTrust, and the test TSA root), no `PRIVATE KEY` block anywhere in
@@ -114,10 +116,38 @@ them. So:
 * **Review is an obligation discharged in a comment, not a green check.** The reviewer posts the review
   as a PR comment beginning `REVIEW:` and saying what was looked for. Merging without one is visible in
   the thread forever, which is the enforcement that is actually available.
-* A lane may merge after 24 hours with no review, and says so in the thread.
 
-This is a weaker guarantee than branch protection and it should be recorded as weaker. It gets stronger
-the moment a second GitHub identity exists, and that is worth doing.
+### The merge rule — founder ruling, 2026-08-27
+
+> "We should be able to merge with a comment from claude or codex in case of no conflicts."
+
+So, precisely:
+
+**A pull request may be merged when all three hold.**
+
+1. **CI is green** on the head commit. Not "green except one known-red job" — green. A job that is
+   red for a reason tracked elsewhere is still red, and the PR that makes it green is the PR that
+   merges first.
+2. **A `REVIEW:` comment from the other engineer is on the thread.** Either engineer's comment
+   unblocks the merge; neither identity outranks the other. The comment says what was looked for
+   using the four questions above — a comment that says only "LGTM" does not count and the author
+   should say so rather than merge on it.
+3. **The branch merges cleanly into `main`.** No conflicts. A conflict is not a thing to resolve
+   inside the merge button: rebase onto `main`, push, let CI run again, and merge the result. The
+   reviewer does not have to re-review a clean rebase, but does have to re-review a rebase that
+   changed a line of behaviour, and the author says which it was.
+
+The author may merge their own PR once those three hold. **Nobody waits for a second GitHub
+identity, and nobody waits out a clock.** The 24-hour no-review timeout in the previous draft is
+withdrawn: it was a workaround for a review that might never arrive, and the answer to that is to ask
+for the review, not to schedule its absence.
+
+What this does not do is make review mechanically enforced. GitHub cannot check condition 2 here.
+Conditions 1 and 3 it can and will — required status checks and a merge-conflict block are both real
+branch-protection settings and both are on. Condition 2 is an obligation discharged in public, on a
+thread that is permanent, between two engineers who review each other's work. Record it as the weaker
+guarantee it is. It gets mechanical the moment a second GitHub identity exists, and that remains worth
+doing.
 
 ## 5. Ownership
 
@@ -168,15 +198,18 @@ twenty-four hour lifetime is what broke it.
 That is the whole argument for F-7 in one table. Local confidence was not calibrated, and there was no
 way to find that out except by running.
 
-The three failures are R-008 F-8, F-9 and F-10. Fix forward in separate PRs, one per failing job. Do not
-fix three things in one branch to get to green; that is precisely how a lane accumulates nineteen
-commits. **F-10 must not be resolved by regenerating the fixture** — see the finding.
+The three failures are R-008 F-8, F-9 and F-10. A fourth, F-11, appeared on the two lane pull requests
+and not on `main`, because the file that carries it has never reached `main`. Fix forward in separate
+PRs, one per failing job. Do not fix four things in one branch to get to green; that is precisely how a
+lane accumulates nineteen commits. **F-10 must not be resolved by regenerating the fixture** — see the
+finding.
 
 ## 7. What does not change
 
 H-1 claim before work. H-3 contract touch requires an ADR delta in the same change-set. H-7 escalation for
 money movement, approval semantics, crypto, key management, tenant isolation. Standing rules 6–12. `main`
-protected: CI required, one approving review required, linear history, no force-push.
+protected: CI required, linear history, no force-push, no merge over a conflict. The approving-review
+setting is **off** and section 4 says why; the review obligation itself is not off.
 
 `WORK_LOG.md` remains the queue and the blocker list. It is now the most frequently conflicting file in the
 repository, and that is correct — it is the one file both engineers are supposed to be writing to.

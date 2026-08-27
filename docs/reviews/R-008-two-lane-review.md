@@ -57,7 +57,7 @@ files, 12 MB of history, three tracked `.pem` files (all public root certificate
 anywhere in the tree, `.env*` and `var/` ignored. Nothing needs scrubbing. Private repository until T-065
 makes custody a gate.
 
-## F-8, F-9, F-10 — what the first CI run found, one hour after F-7 was written
+## F-8, F-9, F-10, F-11 — what the first CI run found, one hour after F-7 was written
 
 The remote was created and `main` @ `f4f90a2` pushed at 17:24 UTC on 2026-08-27. Run
 [33098206236](https://github.com/prasantk8/mizan/actions/runs/33098206236) is the first execution of
@@ -141,6 +141,44 @@ is crypto, and it decides whether Mizan's central promise is true after year thr
 
 Until it is answered, the honest position is that a bundle is verifiable offline *for the lifetime of
 the timestamp authority's certificate*, and the verifier's LIMITATION block does not currently say so.
+
+### F-11 — a correct guard, wired so that it cannot be satisfied
+
+Found on the lane pull requests
+([#2](https://github.com/prasantk8/mizan/pull/2) run
+[33098924304](https://github.com/prasantk8/mizan/actions/runs/33098924304),
+[#3](https://github.com/prasantk8/mizan/pull/3) run
+[33098943863](https://github.com/prasantk8/mizan/actions/runs/33098943863)). This one is not on `main`
+— `tests/conftest.py` exists only on the two lane heads, where it is the same blob
+`b876d85` in both:
+
+```
+322 tests collected in 1.73s
+ERROR: CI=true collected 25 PostgreSQL-gated tests with no MIZAN_TEST_DATABASE_URL.
+They would be reported as skipped, which is not a pass.
+First: tests/integration/test_authorize_postgres.py::test_live_control_plane_end_to_end
+Process completed with exit code 4
+```
+
+The guard itself is right, and it is rule 9 applied to the test suite: `skipif(not
+MIZAN_TEST_DATABASE_URL)` is correct on a laptop and dishonest on a build machine, where it turns "the
+database was never provisioned" into a green run. Whoever wrote it was thinking about the right
+failure.
+
+It is the wiring that is wrong. The step that trips it is `validate_contract_coverage.py`, which shells
+out to `pytest --collect-only -q` to take an inventory of node IDs. **A collection is not a test run.**
+Nothing is going to execute, so nothing can be falsely reported as skipped, and the guard's own
+premise does not hold. It fires anyway, inside `python-contract` — a job that has no PostgreSQL service
+and is never going to have one, because the job that runs the gated tests is `postgres-contract`, which
+sets the DSN and does satisfy the guard. So the effect of the guard as wired is that a job which is
+already doing the right thing kills a different job for not doing it.
+
+The fix is one condition — exempt `config.option.collectonly` — and it narrows the guard to exactly the
+claim its docstring makes. What makes this finding worth writing down rather than just fixing is the
+category: F-2 and F-3 are assertions that cannot go red, and F-11 is an assertion that cannot go green.
+Both are the same defect seen from opposite sides — a check whose outcome was never observed in the
+environment that runs it. There is no local invocation that would have shown it, because no engineer
+sets `CI=true` on their own machine.
 
 ## F-1 — Two lanes, nineteen commits, and a `main` that has seen none of it
 
