@@ -1,0 +1,42 @@
+{{- if .Values.drainer.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mizan.fullname" . }}-drainer
+  labels:
+    {{- include "mizan.labels" . | nindent 4 }}
+    app.kubernetes.io/component: drainer
+spec:
+  replicas: {{ .Values.drainer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mizan.labels" . | nindent 6 }}
+      app.kubernetes.io/component: drainer
+  template:
+    metadata:
+      labels:
+        {{- include "mizan.labels" . | nindent 8 }}
+        app.kubernetes.io/component: drainer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: drainer
+          image: {{ include "mizan.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["mizan-drain-outbox"]
+          env:
+            - {name: MIZAN_ENV, value: production}
+            - name: MIZAN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.runtime }}
+                  key: {{ .Values.secrets.appDatabaseUrlKey }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+{{- end }}

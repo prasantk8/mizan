@@ -1,0 +1,72 @@
+{
+  "vulnerabilities": [
+    {
+      "id": "CVE-2025-69720",
+      "statement": "Debian 13.6 publishes no fixed ncurses version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-41992",
+      "statement": "Debian 13.6 publishes no fixed gzip version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-54369",
+      "statement": "Debian 13.6 publishes no fixed libacl version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-11822",
+      "statement": "Debian 13.6 publishes no fixed SQLite version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-11824",
+      "statement": "Debian 13.6 publishes no fixed SQLite version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-13221",
+      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-42496",
+      "statement": "Debian marks the perl-base fix deferred; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-8376",
+      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-42497",
+      "statement": "Debian marks the perl-base fix deferred; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-48962",
+      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-57432",
+      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-57433",
+      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    },
+    {
+      "id": "CVE-2026-9538",
+      "statement": "Debian marks the perl-base fix deferred; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
+      "expired_at": "2026-09-03T00:00:00Z"
+    }
+  ],
+  "misconfigurations": [],
+  "secrets": [],
+  "licenses": []
+}

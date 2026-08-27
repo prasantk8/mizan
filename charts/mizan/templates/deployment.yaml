@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mizan.fullname" . }}
+  labels:
+    {{- include "mizan.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mizan.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mizan.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: control-plane
+          image: {{ include "mizan.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - {name: https, containerPort: 8443}
+          env:
+            - {name: MIZAN_ENV, value: production}
+            - name: MIZAN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.runtime }}
+                  key: {{ .Values.secrets.appDatabaseUrlKey }}
+            - {name: MIZAN_JWT_ISSUER, value: {{ .Values.config.jwtIssuer | quote }}}
+            - {name: MIZAN_JWT_AUDIENCE, value: {{ .Values.config.jwtAudience | quote }}}
+            - name: MIZAN_JWT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.runtime }}
+                  key: {{ .Values.secrets.jwtPublicKeyKey }}
+            - {name: MIZAN_KEY_CUSTODY_MODE, value: {{ .Values.config.keyCustodyMode | quote }}}
+            - {name: MIZAN_EVIDENCE_RECEIPT_KEY_REF, value: {{ .Values.config.evidenceReceiptKeyRef | quote }}}
+            - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
+            - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}
+            - {name: MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF, value: {{ .Values.config.degradedGrantKeyRef | quote }}}
+            - {name: MIZAN_ANCHOR_PROVIDER, value: rfc3161}
+            - {name: MIZAN_ANCHOR_TSA_ENDPOINTS, value: {{ .Values.config.tsaEndpoints | quote }}}
+            - {name: MIZAN_ANCHOR_TSA_TRUST_ANCHORS, value: /run/mizan/tls/tsa-root.pem}
+            - {name: MIZAN_EXECUTION_TOKEN_ISSUER, value: {{ .Values.config.executionTokenIssuer | quote }}}
+            - {name: MIZAN_EVALUATOR_BUILD, value: {{ .Values.config.evaluatorBuild | quote }}}
+            - {name: MIZAN_EVALUATOR_CONFIGURATION_HASH, value: {{ .Values.config.evaluatorConfigurationHash | quote }}}
+            - {name: MIZAN_TLS_CERTIFICATE_FILE, value: /run/mizan/tls/server.pem}
+            - {name: MIZAN_TLS_PRIVATE_KEY_FILE, value: /run/mizan/tls/server-key.pem}
+            - {name: MIZAN_TLS_CLIENT_CA_FILE, value: /run/mizan/tls/client-ca.pem}
+            - {name: MIZAN_HEALTH_SERVER_CA_FILE, value: /run/mizan/tls/server-ca.pem}
+            - {name: MIZAN_HEALTH_CLIENT_CERTIFICATE_FILE, value: /run/mizan/tls/health-client.pem}
+            - {name: MIZAN_HEALTH_CLIENT_PRIVATE_KEY_FILE, value: /run/mizan/tls/health-client-key.pem}
+            - {name: MIZAN_HTTP_HOST, value: 0.0.0.0}
+            - {name: MIZAN_HTTP_PORT, value: "8443"}
+          volumeMounts:
+            - {name: tls, mountPath: /run/mizan/tls, readOnly: true}
+            - {name: evidence, mountPath: /app/var/evidence}
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import ssl,urllib.request; c=ssl.create_default_context(cafile='/run/mizan/tls/server-ca.pem'); c.load_cert_chain('/run/mizan/tls/health-client.pem','/run/mizan/tls/health-client-key.pem'); urllib.request.urlopen('https://127.0.0.1:8443/health/ready',context=c,timeout=4).read()"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 4
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import ssl,urllib.request; c=ssl.create_default_context(cafile='/run/mizan/tls/server-ca.pem'); c.load_cert_chain('/run/mizan/tls/health-client.pem','/run/mizan/tls/health-client-key.pem'); urllib.request.urlopen('https://127.0.0.1:8443/health/live',context=c,timeout=4).read()"]
+            periodSeconds: 20
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Values.secrets.tls }}
+        - name: evidence
+          emptyDir: {}
