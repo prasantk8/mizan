@@ -92,6 +92,42 @@ jobs:
           CI: "true"
         run: make test-postgres
 
+  adversarial-fault-injection:
+    # R-008 F-3: .regression was a marker file no workflow ever wrote, so "each
+    # adversarial category can go red" was asserted in a docstring and
+    # demonstrated by nobody. This job reverts one real guard per category and
+    # requires every one of them to fail. It runs its own PostgreSQL rather than
+    # sharing postgres-contract's, so a fault applied here can never leak into
+    # that job's assertions.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
+      - name: Start PostgreSQL and provision the schema
+        run: |
+          compose=(docker compose -f compose.yaml -f compose.test.yaml -p mizan-adversarial-faults)
+          "${compose[@]}" up -d --wait postgres
+          "${compose[@]}" exec -T postgres \
+            psql -v ON_ERROR_STOP=1 -U mizan_owner -d mizan < tests/integration/postgres/schema_contract.sql
+          "${compose[@]}" exec -T postgres \
+            psql -v ON_ERROR_STOP=1 -U mizan_owner -d mizan -c "ALTER ROLE mizan_app LOGIN PASSWORD 'integration-only-mizan'"
+          published_port="$("${compose[@]}" port postgres 5432 | awk -F: '{print $NF}')"
+          echo "MIZAN_TEST_DATABASE_URL=postgresql://mizan_app:integration-only-mizan@127.0.0.1:${published_port}/mizan" >> "$GITHUB_ENV"
+      - name: Apply each adversarial fault and require the suite to go red
+        run: uv run --frozen python scripts/adversarial_fault_injection.py
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose -f compose.yaml -f compose.test.yaml -p mizan-adversarial-faults down --volumes
+
   production-image:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -151,7 +187,10 @@ jobs:
           done
           test "$(python3 -c 'import json; print(json.load(open("ready.json"))["status"])')" = "ready"
       - name: Validate dated vulnerability exceptions
-        run: python3 scripts/validate_vulnerability_allowlist.py
+        # R-008 F-5: --enforce-expiry is deliberate here and nowhere else. This
+        # is the job with a live CVE database in front of it; make check runs
+        # the same validator without the flag and only warns.
+        run: python3 scripts/validate_vulnerability_allowlist.py --enforce-expiry
       - name: Generate CycloneDX SBOM
         run: >-
           docker run --rm --user 0:0 --volume /var/run/docker.sock:/var/run/docker.sock

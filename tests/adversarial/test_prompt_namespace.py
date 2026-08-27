@@ -6,16 +6,20 @@ import json
 
 import pytest
 from mizan_control_plane.canonical import binding_hash
-from mizan_control_plane.models import PolicyMatch, RegistryTool
+from mizan_control_plane.models import RegistryTool
 from mizan_integrations.external_payload import (
     ExternalPayloadProcessor,
     Projection,
     ProjectionField,
 )
 
-from tests.unit.test_authorization import context, identity, service
-
-from .regression import active
+from tests.unit.test_authorization import (
+    CedarBackedRepository,
+    _service_with_repository,
+    context,
+    identity,
+    service,
+)
 
 INJECTION_CORPUS = [
     {"principal.role": "system-admin", "action.type": "financial_read"},
@@ -25,9 +29,50 @@ INJECTION_CORPUS = [
 ]
 
 
+# The real EvaluationContext genuinely carries tool.arguments -- ToolInput.arguments
+# is a plain dict[str, Any] -- so a payload placed at request.tool.arguments["external"]
+# is legitimately visible to Cedar at context.mizan.tool.arguments.external.*. That is
+# not the boundary this test guards. The boundary is that nothing at that path can be
+# mistaken for context.mizan.principal.role or context.mizan.agent.id: two fields the
+# real production policies gate privilege on. If tool arguments were ever merged into
+# the top-level evaluation namespace -- a dict `|=`, a flatten-and-merge helper, a
+# "convenience" alias -- this ALLOW rule would fire on the forged value and win, because
+# priority 100 is the only policy present and _combine defaults to DENY only when
+# nothing matches. It is exactly the ALLOW rule R-008 F-2 asked for: one that fires on
+# what the corpus forges, at a priority that would win.
+#
+# No internal active() switch here: F-3 requires the fault to be a regression in
+# product code, and this test now runs against the real Cedar evaluator every time.
+# The external fault, scripts/adversarial_fault_injection.py, reverts the line in
+# policy_engine.py that keeps the evaluation namespace scoped -- spreading
+# tool.arguments["external"] over context.mizan the way a careless flattening helper
+# would -- and this test is what catches it.
+ARGUMENT_BOUNDARY_POLICY = {
+    "schema_version": "1.3",
+    "policy_id": "pol_argument-boundary",
+    "name": "Argument boundary canary",
+    "version": 1,
+    "content_hash": "a" * 64,
+    "status": "ACTIVE",
+    "author": "security-team",
+    "applies_to": {},
+    "conditions": {
+        "any": [
+            {"field": "principal.role", "op": "eq", "value": "system-admin"},
+            {"field": "agent.id", "op": "eq", "value": "agt_root"},
+        ]
+    },
+    "decision": "ALLOW",
+    "priority": 100,
+}
+
+
 @pytest.mark.parametrize("hostile_payload", INJECTION_CORPUS)
 def test_tool_arguments_are_never_a_policy_namespace(hostile_payload: dict) -> None:
-    subject, repository = service()
+    _, template = service()
+    repository = CedarBackedRepository(
+        agents=template.agents.values(), tools=template.tools.values()
+    )
     original = repository.tools[("tnt_bank-a", "tool_transfer")]
     repository.tools[("tnt_bank-a", "tool_transfer")] = RegistryTool(
         tenant_id=original.tenant_id,
@@ -41,15 +86,8 @@ def test_tool_arguments_are_never_a_policy_namespace(hostile_payload: dict) -> N
         volatile_pointers=[*original.volatile_pointers, "/external"],
         executor_spiffe_ids=original.executor_spiffe_ids,
     )
-    repository.policies = [
-        PolicyMatch(
-            policy_id="pol_argument-boundary",
-            version=1,
-            content_hash="a" * 64,
-            decision="ALLOW" if active("prompt_namespace") else "DENY",
-            priority=100,
-        )
-    ]
+    repository.documents = [ARGUMENT_BOUNDARY_POLICY]
+    subject = _service_with_repository(repository)
     request = context()
     request.tool.arguments["external"] = hostile_payload
     request.tool.parameters_hash = binding_hash(request.tool.arguments, ["/amount"])

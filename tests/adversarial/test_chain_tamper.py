@@ -15,12 +15,9 @@ from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     LocalImmutableObjectStore,
     ObjectEvidenceVerifier,
-    VerificationResult,
 )
 
 from scripts.check_evidence_mutations import mutations
-
-from .regression import active
 
 TENANT = "tnt_bank-a"
 STREAM = "tnt_bank-a:adr:0"
@@ -53,19 +50,18 @@ class _EvidenceRows:
         return self.anchor_rows
 
 
-class _AcceptEverythingVerifier:
-    def verify(self, *_args, **_kwargs) -> VerificationResult:
-        return VerificationResult(True, 3)
-
-
 def _low_bit_mutation(value: str) -> str:
     _offset, _operation, changed = next(mutations(value.encode(), [0]))
     return changed.decode()
 
 
 def _verifier(root: Path, mutation: str) -> ObjectEvidenceVerifier:
-    if active("chain_tamper"):
-        return _AcceptEverythingVerifier()
+    # No swap-in verifier: this always constructs and returns the real
+    # ObjectEvidenceVerifier, unconditionally. R-008 F-3 -- a fault injected
+    # into a stub class that only ever accepts proves nothing about the guard
+    # this test exists to demonstrate; the real fault lives externally, in
+    # scripts/adversarial_fault_injection.py, and reverts the actual hash
+    # comparison inside verify_chain (evidence.py).
     signer = Ed25519EvidenceSigner.development("evidence-receipt")
     store = LocalImmutableObjectStore(root)
     records: list[dict] = []

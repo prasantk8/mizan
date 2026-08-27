@@ -51,20 +51,85 @@ def test_vulnerability_allowlist_rejects_permanent_or_unjustified_exceptions(tmp
         ),
         encoding="utf-8",
     )
-    failures = validate(allowlist, today=date(2026, 8, 27))
+    failures, warnings = validate(allowlist, today=date(2026, 8, 27))
     assert failures == [
         "vulnerabilities[0] has no justification statement",
         "vulnerabilities[0] has no RFC 3339 expired_at",
     ]
+    assert warnings == []
 
     document = json.loads(allowlist.read_text(encoding="utf-8"))
     document["vulnerabilities"][0].update(
         {"statement": "temporary exception", "expired_at": "2026-09-03"}
     )
     allowlist.write_text(json.dumps(document), encoding="utf-8")
-    assert validate(allowlist, today=date(2026, 8, 27)) == [
-        "vulnerabilities[0] has no RFC 3339 expired_at"
-    ]
+    assert validate(allowlist, today=date(2026, 8, 27)) == (
+        ["vulnerabilities[0] has no RFC 3339 expired_at"],
+        [],
+    )
+
+
+def test_vulnerability_allowlist_expiry_blast_radius_is_the_image_scan_job(tmp_path) -> None:
+    # R-008 F-5: an expired suppression must not fail make check for a branch
+    # that never touched the allowlist. It fails only where a live CVE database
+    # is actually consulted, gated behind --enforce-expiry.
+    from scripts.validate_vulnerability_allowlist import validate
+
+    allowlist = tmp_path / ".trivyignore.yaml"
+    allowlist.write_text(
+        json.dumps(
+            {
+                "vulnerabilities": [
+                    {
+                        "id": "CVE-2020-0001",
+                        "statement": "temporary exception",
+                        "expired_at": "2026-08-20T00:00:00Z",
+                    }
+                ],
+                "misconfigurations": [],
+                "secrets": [],
+                "licenses": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # make check's invocation: report-only. A lapsed suppression is a warning
+    # a developer can act on, not a build failure they cannot fix.
+    failures, warnings = validate(allowlist, today=date(2026, 8, 27), enforce_expiry=False)
+    assert failures == []
+    assert warnings == ["vulnerabilities[0] expired on 2026-08-20 (7 days ago)"]
+
+    # the image-scan job's invocation: the same lapse is a real failure.
+    failures, warnings = validate(allowlist, today=date(2026, 8, 27), enforce_expiry=True)
+    assert failures == ["vulnerabilities[0] expired on 2026-08-20 (7 days ago)"]
+    assert warnings == []
+
+
+def test_vulnerability_allowlist_warns_inside_the_final_week(tmp_path) -> None:
+    from scripts.validate_vulnerability_allowlist import validate
+
+    allowlist = tmp_path / ".trivyignore.yaml"
+    allowlist.write_text(
+        json.dumps(
+            {
+                "vulnerabilities": [
+                    {
+                        "id": "CVE-2020-0002",
+                        "statement": "temporary exception",
+                        "expired_at": "2026-09-01T00:00:00Z",
+                    }
+                ],
+                "misconfigurations": [],
+                "secrets": [],
+                "licenses": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    failures, warnings = validate(allowlist, today=date(2026, 8, 27), enforce_expiry=True)
+    assert failures == []
+    assert warnings == ["vulnerabilities[0] expires 2026-09-01 (5 days remaining)"]
 
 
 def test_production_packaging_contract_is_complete() -> None:
