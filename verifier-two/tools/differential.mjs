@@ -42,7 +42,7 @@ const SECOND = ['node', [path.join(REPO, 'verifier-two/bin/mizan-verify-two.js')
 
 // Section 5 assigns these statuses; both verifiers are compared on the status,
 // not on message text, because prose is not the contract.
-const VERDICT_BY_STATUS = { 0: 'VALID', 1: 'INVALID', 2: 'CANNOT CHECK', 3: 'MALFORMED' };
+const VERDICT_BY_STATUS = { 0: 'VALID', 1: 'INVALID', 2: 'CANNOT CHECK', 3: 'MALFORMED', 4: 'EXPIRED' };
 
 async function verifyWith([command, baseArguments], bundleDir, trustRoots, extra = []) {
   const args = [...baseArguments, bundleDir, ...extra];

@@ -1,0 +1,23 @@
+{
+  "benchmark": "evidence-sequencer",
+  "commit_sha": "98c5f29a207a171c2f29558da2de293c7709f5c3",
+  "host": {
+    "cpu": "arm",
+    "logical_cores": 16,
+    "os": "macOS-15.1-arm64-arm-64bit",
+    "python": "3.12.12"
+  },
+  "measurements": {
+    "operations": 2000,
+    "operations_per_second": 2506.68,
+    "p50_ms": 1.5275,
+    "p99_ms": 2.0777,
+    "shards": 4
+  },
+  "parameters": {
+    "operations_per_shard": 500,
+    "shards": 4
+  },
+  "timestamp_utc": "2026-08-27T21:27:56.620578+00:00",
+  "worktree_clean": false
+}

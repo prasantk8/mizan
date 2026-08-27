@@ -64,6 +64,10 @@ export const LIMITS_OF_A_CLEAN_VERDICT = Object.freeze([
   'A valid bundle does NOT prove that a record was not omitted before it entered the chain (TM-001 pre-chain omission).',
   'A valid bundle does NOT prove that the exporting party did not withhold an entire final anchor or history suffix.',
   'RFC 3161 proves an included anchor existed by a time. It does not prove that no later anchor exists.',
+  'A bundle does NOT prove when it was recorded after its declared expires_at. Bundle 1.0 claims ' +
+    'offline verifiability for the lifetime of the timestamp authority\'s certificate and no longer ' +
+    '(ADR-004 G.19); past the horizon a re-check supports only that the signer chains to the ' +
+    'operator\'s trust root and the imprint is this anchor, never the time the token asserts.',
 ]);
 
 /**
@@ -528,6 +532,16 @@ function checkAttestationGrammar(anchor, at, report) {
 function checkSignedPayloadStatus(entry, where, report) {
   const { type, authority, status } = entry;
 
+  // Section 4: expires_at MUST NOT appear anywhere in the signed roster, which
+  // is written before any external authority is contacted and therefore cannot
+  // know one yet.
+  if ('expires_at' in entry) {
+    report.malformed(
+      `${where} carries expires_at inside the signed payload; the roster is written before any ` +
+        'external authority is contacted and cannot know a horizon yet',
+    );
+  }
+
   if (status === 'failed') {
     report.malformed(
       `${where} uses status "failed", which section 4 reserves and forbids anywhere in a 1.0 bundle`,
@@ -563,6 +577,22 @@ function checkSignedPayloadStatus(entry, where, report) {
 
 function checkSidecarStatus(entry, where, report) {
   const { type, status } = entry;
+
+  if (type === 'rfc3161') {
+    // Section 4: an rfc3161 sidecar MUST carry expires_at. The malformed-
+    // missing-expiry conformance fixture is exactly this omission.
+    if (!('expires_at' in entry)) {
+      report.malformed(`${where} RFC 3161 sidecar does not declare expires_at`);
+    } else {
+      requireExpiresAt(entry.expires_at, `${where}.expires_at`, report);
+    }
+  } else if ('expires_at' in entry) {
+    // customer_countersignature has no certificate to derive a horizon from.
+    report.malformed(
+      `${where} carries expires_at but is type "${type}"; only an rfc3161 sidecar has a ` +
+        'certificate to derive a horizon from',
+    );
+  }
 
   if (status === 'failed') {
     report.malformed(
@@ -659,7 +689,7 @@ function buildKeyring(bundle, report) {
  * Section 5's list of required checks names key *roles*, not key validity
  * windows, so the lifecycle fact is surfaced as a prominent qualification rather
  * than converted into an evidence failure. The spec does not settle which of the
- * four verdicts it produces; see FINDINGS.md S-6.
+ * five verdicts it produces; see FINDINGS.md S-6.
  */
 function resolveKey(keyring, keyId, requiredRole, subject, report) {
   const key = keyring.get(keyId);
@@ -967,8 +997,14 @@ function deriveAnchorState(anchor, at, trustRoots, report) {
 
   let developmentUnattested = false;
   let anyPending = false;
-  let anyVerifiedTimestamp = false;
+  let anyVerifiedUnexpired = false;
+  let anyVerifiedExpired = false;
   let indeterminate = false;
+  // ADR-004 G.19: an anchor's horizon is the LATEST horizon among the
+  // authorities carrying it -- a second, later-expiring countersignature buys
+  // the anchor more time even if the first authority's window has closed.
+  let anchorHorizon = null;
+  const now = new Date();
 
   for (const entry of effective.values()) {
     if (entry.type === DEVELOPMENT_TYPE && entry.status === 'unattested') {
@@ -1019,19 +1055,31 @@ function deriveAnchorState(anchor, at, trustRoots, report) {
 
     const result = verifyTimestampToken(token, Buffer.from(coreDigest, 'hex'), trustRoots);
     if (result.ok) {
-      anyVerifiedTimestamp = true;
       report.note(`${at} timestamped by ${result.tsa} at ${result.genTime.toISOString()}`);
-      if (result.expiredSince.length > 0) {
-        // Prominent, and deliberately not a verdict. The chain was valid when the
-        // token was issued, which is the property a timestamp exists to provide;
-        // it is also true that an expired certificate publishes no revocation
-        // information. An auditor is entitled to both facts. See FINDINGS.md D-4.
-        report.warn(
-          `TIMESTAMP LIFETIME: ${at} was timestamped by a certificate chain that was valid at ` +
-            `${result.genTime.toISOString()} and has since expired ` +
-            `(${result.expiredSince.join('; ')}). The timestamp still attests what it always ` +
-            `attested. No revocation information is published for an expired certificate, so a ` +
-            `key compromised after expiry cannot be detected here.`,
+
+      // expires_at is a caption, not evidence (section 4): the verifier
+      // recomputes the horizon from the token itself and rejects a bundle whose
+      // declared value disagrees. Grammar already required the field to be
+      // present and well-formed on this sidecar entry before we got here.
+      const declared = entry.expires_at ? Date.parse(entry.expires_at) : null;
+      if (declared !== null && declared !== result.horizon.getTime()) {
+        report.invalid(
+          `${at} attestation from ${entry.authority} declares expires_at ${entry.expires_at}; ` +
+            `the certification path the token carries gives ${result.horizon.toISOString()}`,
+        );
+        continue;
+      }
+
+      if (anchorHorizon === null || result.horizon.getTime() > anchorHorizon.getTime()) {
+        anchorHorizon = result.horizon;
+      }
+      if (result.horizon.getTime() > now.getTime()) {
+        anyVerifiedUnexpired = true;
+      } else {
+        anyVerifiedExpired = true;
+        report.note(
+          `${at} attestation from ${entry.authority} passed its horizon ${result.horizon.toISOString()}; ` +
+            'the timestamp still attests what it always attested (ADR-004 G.19).',
         );
       }
     } else if (result.canCheck) {
@@ -1042,11 +1090,15 @@ function deriveAnchorState(anchor, at, trustRoots, report) {
     }
   }
 
-  if (developmentUnattested) return 'unattested';
-  if (anyPending) return 'pending';
-  if (anyVerifiedTimestamp) return 'rfc3161';
-  if (indeterminate) return INDETERMINATE;
-  return 'unattested';
+  let state;
+  if (developmentUnattested) state = 'unattested';
+  else if (anyPending) state = 'pending';
+  else if (anyVerifiedUnexpired) state = 'rfc3161';
+  else if (anyVerifiedExpired) state = 'expired';
+  else if (indeterminate) state = INDETERMINATE;
+  else state = 'unattested';
+
+  return { state, horizon: state === 'rfc3161' || state === 'expired' ? anchorHorizon : null };
 }
 
 function decodeBase64Loose(text, label) {
@@ -1062,22 +1114,31 @@ function decodeBase64Loose(text, label) {
 // =============================================================================
 
 function checkAssurance(bundle, anchorStates, report) {
-  if (anchorStates.includes(INDETERMINATE)) {
+  if (anchorStates.some((entry) => entry.state === INDETERMINATE)) {
     report.cannotCheck(
       'stream assurance cannot be derived here, so the manifest assurance claim was not evaluated',
     );
     return;
   }
 
-  // Section 4: the stream is the weakest anchor.
+  // Section 4: the stream is the weakest anchor. rfc3161 only if every anchor
+  // is rfc3161; else expired if every anchor is rfc3161-or-expired and at least
+  // one has passed its horizon; else unattested if any anchor is; else pending.
+  const states = anchorStates.map((entry) => entry.state);
   let derived;
-  if (anchorStates.every((state) => state === 'rfc3161')) derived = 'rfc3161';
-  else if (anchorStates.some((state) => state === 'unattested')) derived = 'unattested';
+  if (states.every((state) => state === 'rfc3161')) derived = 'rfc3161';
+  else if (states.every((state) => state === 'rfc3161' || state === 'expired') && states.includes('expired')) {
+    derived = 'expired';
+  } else if (states.some((state) => state === 'unattested')) derived = 'unattested';
   else derived = 'pending';
 
   report.derivedAssurance = derived;
 
-  const expected = { anchor_attestation: derived, external_timestamp: derived === 'rfc3161' };
+  // The manifest records what was true at export; a horizon reached since then
+  // is a fact about the calendar, not a claim the exporter got wrong, so
+  // "expired" reads as "rfc3161" for this comparison only (ADR-004 G.19).
+  const comparableDerived = derived === 'expired' ? 'rfc3161' : derived;
+  const expected = { anchor_attestation: comparableDerived, external_timestamp: comparableDerived === 'rfc3161' };
   const claimed = bundle.json[MANIFEST].assurance;
 
   // "MUST equal" is deep equality, so an extra member is a mismatch too.
@@ -1085,6 +1146,20 @@ function checkAssurance(bundle, anchorStates, report) {
     report.invalid(
       `manifest assurance claims ${JSON.stringify(claimed)}; the bundle's own evidence derives ` +
         `${JSON.stringify(expected)}`,
+    );
+  }
+
+  if (derived === 'expired') {
+    // The stream horizon is the EARLIEST anchor horizon, because every anchor
+    // must hold: the stream stops being independently verifiable the moment
+    // any one of its anchors does.
+    const horizons = anchorStates.filter((entry) => entry.horizon).map((entry) => entry.horizon);
+    const streamHorizon = new Date(Math.min(...horizons.map((horizon) => horizon.getTime())));
+    report.expire(
+      `the stream's independent timestamp horizon ${streamHorizon.toISOString()} has passed; ` +
+        'the record chain, receipt signatures, and anchor signatures do not depend on the ' +
+        'timestamp authority and still verify (ADR-004 G.19)',
+      streamHorizon,
     );
   }
 }
@@ -1181,6 +1256,21 @@ function requireEquals(value, expected, label, report) {
   if (value !== expected) {
     report.malformed(`${label} is ${JSON.stringify(value)}; version 1.0 requires ${JSON.stringify(expected)}`);
   }
+}
+
+// RFC 3339 UTC to the second: "2036-08-27T19:26:55Z", no fractional seconds, no
+// offset other than Z. expires_at is compared against a value recomputed from
+// certificate notAfter fields, so accepting any looser form here would let a
+// producer's caption disagree with the recomputed value in ways this check
+// would never see.
+const RFC3339_UTC_SECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+function requireExpiresAt(value, label, report) {
+  if (typeof value !== 'string' || !RFC3339_UTC_SECOND.test(value) || Number.isNaN(Date.parse(value))) {
+    report.malformed(`${label} is ${JSON.stringify(value)}; expected an RFC 3339 UTC instant to the second`);
+    return null;
+  }
+  return new Date(value);
 }
 
 function requireDigest(value, label, report) {

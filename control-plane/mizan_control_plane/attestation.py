@@ -5,12 +5,101 @@ import hashlib
 import subprocess
 import tempfile
 import urllib.request
+import warnings
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import rfc8785
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization import pkcs7
+from cryptography.x509.oid import ExtendedKeyUsageOID
+
+INSTANT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def der_element(data: bytes, index: int) -> tuple[int, bytes, int]:
+    """One DER TLV at `index`: its tag, its contents, and where the next one starts."""
+    tag = data[index]
+    length = data[index + 1]
+    index += 2
+    if length & 0x80:
+        count = length & 0x7F
+        length = int.from_bytes(data[index:index + count], "big")
+        index += count
+    return tag, data[index:index + length], index + length
+
+
+def certification_path(response: bytes) -> list[x509.Certificate]:
+    """The signer certificate an RFC 3161 response carries, and its issuers up to a root.
+
+    RFC 3161 3.2 puts a CMS ContentInfo in the second field of TimeStampResp; RFC 3161 2.3 requires
+    the signer to carry `id-kp-timeStamping`, which is what names it here. Nothing in this function
+    decides whether a token is good — OpenSSL keeps that job — so a response that does not parse
+    answers "no certificates" rather than raising.
+
+    This is a second implementation of the rule `scripts/verify_evidence_export.py` applies, which
+    cannot import this package because it is a two-dependency standalone script. The two are kept in
+    step by a test that runs both over every committed token: that is a consistency check between
+    two copies of one rule, not independent confirmation of it, and T-062's sealed second verifier
+    is the thing that would be.
+    """
+    try:
+        tag, body, _ = der_element(response, 0)
+        if tag != 0x30:
+            return []
+        _, _, after_status = der_element(body, 0)
+        with warnings.catch_warnings():
+            # Several public authorities emit BER-encoded SET OF certificates.
+            warnings.simplefilter("ignore")
+            pool = list(pkcs7.load_der_pkcs7_certificates(body[after_status:]))
+    except Exception:
+        return []
+    signer = None
+    for candidate in pool:
+        try:
+            usage = candidate.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+        except x509.ExtensionNotFound:
+            continue
+        if ExtendedKeyUsageOID.TIME_STAMPING in usage:
+            signer = candidate
+            break
+    if signer is None:
+        return []
+    path = [signer]
+    current = signer
+    while current.issuer != current.subject:
+        issuer = next((item for item in pool if item.subject == current.issuer), None)
+        if issuer is None:
+            break
+        path.append(issuer)
+        current = issuer
+    return path
+
+
+def timestamp_horizon(response: bytes) -> datetime | None:
+    """The date this token stops verifying: the earliest notAfter on its own certification path.
+
+    A timestamp proves a digest existed by a time, and RFC 3161 signing certificates are
+    deliberately short-lived because the token carries that time. Nothing renews them, so this date
+    is the end of the bundle's independent verifiability. Mizan states it in the attestation rather
+    than leaving a holder to discover it years later, from a failure.
+    """
+    path = certification_path(response)
+    if not path:
+        return None
+    return min(certificate.not_valid_after_utc for certificate in path)
+
+
+def common_validity(response: bytes) -> tuple[datetime, datetime] | None:
+    """The window in which every certificate on the path was valid at once, or None."""
+    path = certification_path(response)
+    if not path:
+        return None
+    opened = max(certificate.not_valid_before_utc for certificate in path)
+    closes = min(certificate.not_valid_after_utc for certificate in path)
+    return None if opened > closes else (opened, closes)
 
 
 class Rfc3161AnchorProvider:
@@ -63,7 +152,23 @@ class Rfc3161AnchorProvider:
             )
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 token = response.read()
-            failure_reason = self._validation_failure(token, digest, Path(directory))
+            horizon = timestamp_horizon(token)
+            if horizon is not None and horizon <= datetime.now(UTC):
+                # Asked before OpenSSL is, so the refusal names the supplier's fault rather than
+                # quoting a path-validation error that reads as though the evidence were bad.
+                failure_reason = (
+                    "RFC 3161 token was signed with a certificate that expired at "
+                    f"{horizon.strftime(INSTANT)}"
+                )
+            else:
+                failure_reason = self._validation_failure(token, digest, Path(directory))
+        if failure_reason is None and horizon is None:
+            # The query asks for the certificate chain. An authority that answers without one
+            # leaves the bundle unable to state when it stops being verifiable, and a bundle that
+            # cannot state its horizon is not one we are willing to publish.
+            failure_reason = (
+                "RFC 3161 token carries no signer certificate, so its expiry cannot be declared"
+            )
         if failure_reason is not None:
             return pending | {
                 "status": "pending",
@@ -74,10 +179,29 @@ class Rfc3161AnchorProvider:
         return pending | {
             "status": "attested",
             "obtained_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "expires_at": horizon.strftime(INSTANT),
             "evidence": base64.b64encode(token).decode(),
         }
 
-    def _validation_failure(self, token: bytes, digest: str, directory: Path) -> str | None:
+    def _validation_failure(
+        self,
+        token: bytes,
+        digest: str,
+        directory: Path,
+        *,
+        tolerate_expiry: bool = False,
+    ) -> str | None:
+        """OpenSSL's verdict on one token as a reason string, or None if it verified.
+
+        `tolerate_expiry` is set only when re-checking a token that was already validated and
+        stored. Past the horizon that chain cannot validate as of now however intact it is, so it is
+        re-checked at an instant inside the certification path's own validity window — read from the
+        certificates, never from the token's `genTime`, which would be asking the token to date the
+        certificate that signs it. This is not a cosmetic difference in a log line: the caller turns
+        any failure here into `anchor_attestation_integrity`, which R-007 fixed the meaning of —
+        someone reached into the immutable store — and which fails the tenant's financial writes
+        closed under ADR-003.
+        """
         if not self.trust_anchors:
             return "token validation unavailable: no TSA trust anchor configured"
         response = directory / "response.tsr"
@@ -87,15 +211,14 @@ class Rfc3161AnchorProvider:
             trust.write_bytes(b"\n".join(path.read_bytes() for path in self.trust_anchors))
         except OSError as exc:
             return f"token validation input unavailable: {exc}"
-        completed = subprocess.run(
-            [
-                "openssl", "ts", "-verify", "-in", str(response),
-                "-digest", digest, "-CAfile", str(trust),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        command = [
+            "openssl", "ts", "-verify", "-in", str(response),
+            "-digest", digest, "-CAfile", str(trust),
+        ]
+        window = common_validity(token) if tolerate_expiry else None
+        if window is not None and window[1] < datetime.now(UTC):
+            command[2:2] = ["-attime", str(int(window[0].timestamp()))]
+        completed = subprocess.run(command, check=False, capture_output=True, text=True)
         if completed.returncode != 0:
             reason = completed.stderr.strip() or "OpenSSL rejected the timestamp response"
             return f"RFC 3161 token validation failed: {reason}"
@@ -121,8 +244,13 @@ class Rfc3161AnchorProvider:
             return "stored RFC 3161 evidence is malformed"
         if not token:
             return "stored RFC 3161 evidence is missing"
+        horizon = timestamp_horizon(token)
+        if horizon is None or horizon.strftime(INSTANT) != attestation.get("expires_at"):
+            return "stored attestation does not declare the horizon its own token has"
         with tempfile.TemporaryDirectory(prefix="mizan-tsa-recheck-") as directory:
-            return self._validation_failure(token, expected_digest, Path(directory))
+            return self._validation_failure(
+                token, expected_digest, Path(directory), tolerate_expiry=True
+            )
 
 
 def pending_attestation_breaker_open(

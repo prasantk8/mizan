@@ -4,5 +4,7 @@
   {"bundle":"invalid-record-checksum","verdict":"INVALID","message":"records.json checksum mismatch","trust_roots":[]},
   {"bundle":"malformed-failed-status","verdict":"MALFORMED","message":"sidecar attestation status 'failed' is reserved","trust_roots":[]},
   {"bundle":"malformed-attested-signed-payload","verdict":"MALFORMED","message":"signed payload attestation status 'attested' is illegal","trust_roots":[]},
-  {"bundle":"malformed-unattested-rfc3161","verdict":"MALFORMED","message":"signed payload attestation status 'unattested' is illegal for type 'rfc3161'","trust_roots":[]}
+  {"bundle":"malformed-unattested-rfc3161","verdict":"MALFORMED","message":"signed payload attestation status 'unattested' is illegal for type 'rfc3161'","trust_roots":[]},
+  {"bundle":"expired-tsa","verdict":"EXPIRED","trust_roots":["../evidence_export/expired/tsa-root.pem"]},
+  {"bundle":"malformed-missing-expiry","verdict":"MALFORMED","message":"RFC 3161 sidecar does not declare expires_at","trust_roots":["../evidence_export/attested/tsa-root.pem"]}
 ]

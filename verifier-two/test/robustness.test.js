@@ -48,7 +48,7 @@ function corrupt(sourceDir, targetDir, random, damageCount) {
 }
 
 for (const [label, source] of [['unattested', GOLDEN], ['attested', ATTESTED]]) {
-  test(`randomly corrupted ${label} bundles always yield one of the four verdicts`, (t) => {
+  test(`randomly corrupted ${label} bundles always yield one of the five verdicts`, (t) => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mizan-robustness-'));
     t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
@@ -64,8 +64,11 @@ for (const [label, source] of [['unattested', GOLDEN], ['attested', ATTESTED]]) 
       }, `round ${round} crashed the verifier`);
 
       assert.ok(TERMINAL.has(report.verdict), `round ${round} produced ${report.verdict}`);
-      // Nothing that has been damaged may come back clean.
+      // Nothing that has been damaged may come back clean -- EXPIRED asserts
+      // "every required check passed" just as much as VALID does (section 5),
+      // so it is exactly as wrong an outcome for corrupted input.
       assert.notEqual(report.verdict, VERDICT.VALID, `round ${round} accepted a corrupted bundle`);
+      assert.notEqual(report.verdict, VERDICT.EXPIRED, `round ${round} accepted a corrupted bundle as merely expired`);
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

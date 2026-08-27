@@ -401,13 +401,13 @@ def test_mixed_anchor_assurance_is_reported_per_anchor_and_uses_weakest(
     anchors[0]["attestations"] = [{
         "type": "rfc3161", "status": "attested", "authority": "test-tsa",
         "anchor_digest": "placeholder", "obtained_at": "2026-08-25T00:01:00Z",
-        "evidence": "AA==",
+        "expires_at": "2036-08-25T00:01:00Z", "evidence": "AA==",
     }]
     (bundle / "anchors.json").write_bytes(rfc8785.dumps(anchors))
     refresh_manifest(bundle, "anchors.json")
     monkeypatch.setattr("scripts.verify_evidence_export.verify_rfc3161", lambda *args: None)
     result = verify_bundle(bundle, [tmp_path / "operator-root.pem"])
-    assert result["anchor_assurance"] == [(0, "rfc3161", []), (1, "unattested", [])]
+    assert result["anchor_assurance"] == [(0, "rfc3161", [], None), (1, "unattested", [], None)]
     assert result["derived_assurance"] == "unattested"
 
 
@@ -453,7 +453,8 @@ def test_undeclared_sidecar_authority_is_rejected(tmp_path: Path) -> None:
     bundle = build_bundle(tmp_path, attestation_by_anchor={0: [pending]})
     anchors = json.loads((bundle / "anchors.json").read_bytes())
     anchors[0]["attestations"] = [pending | {
-        "authority": "tsa-injected", "status": "attested", "evidence": "AA=="
+        "authority": "tsa-injected", "status": "attested", "evidence": "AA==",
+        "expires_at": "2036-08-25T00:01:00Z",
     }]
     (bundle / "anchors.json").write_bytes(rfc8785.dumps(anchors))
     refresh_manifest(bundle, "anchors.json")

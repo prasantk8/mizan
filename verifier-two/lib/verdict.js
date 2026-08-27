@@ -1,4 +1,4 @@
-// The four terminal verdicts of EVIDENCE-BUNDLE-FORMAT.md section 5, and the
+// The five terminal verdicts of EVIDENCE-BUNDLE-FORMAT.md section 5, and the
 // exit statuses section 5 assigns them.
 //
 // The classes are mutually exclusive and neither MALFORMED nor CANNOT CHECK is
@@ -11,6 +11,7 @@ export const VERDICT = {
   INVALID: 'INVALID',
   CANNOT_CHECK: 'CANNOT CHECK',
   MALFORMED: 'MALFORMED',
+  EXPIRED: 'EXPIRED',
 };
 
 export const EXIT_STATUS = {
@@ -18,17 +19,23 @@ export const EXIT_STATUS = {
   [VERDICT.INVALID]: 1,
   [VERDICT.CANNOT_CHECK]: 2,
   [VERDICT.MALFORMED]: 3,
+  [VERDICT.EXPIRED]: 4,
 };
 
 /**
  * Collects findings and resolves them to one terminal verdict.
  *
- * Precedence is MALFORMED, then INVALID, then CANNOT CHECK. Grammar failures
- * outrank everything because evidence checks over a non-bundle are meaningless.
- * A definite evidence failure outranks an unevaluable claim because a bundle
- * with a broken hash chain is broken whether or not a trust root was supplied.
+ * Precedence is MALFORMED, then INVALID, then CANNOT CHECK, then EXPIRED.
+ * Grammar failures outrank everything because evidence checks over a non-bundle
+ * are meaningless. A definite evidence failure outranks an unevaluable claim
+ * because a bundle with a broken hash chain is broken whether or not a trust
+ * root was supplied. CANNOT CHECK outranks EXPIRED because EXPIRED (section 5,
+ * ratified in ADR-004 G.19) still asserts "every required check passed" -- an
+ * indeterminate claim means that assertion cannot honestly be made yet, whether
+ * or not the horizon has also been reached.
  *
- * Section 5 does not state this precedence; see FINDINGS.md S-7.
+ * Section 5 does not state MALFORMED/INVALID/CANNOT-CHECK precedence among
+ * themselves; see FINDINGS.md S-7.
  */
 export class Report {
   constructor() {
@@ -36,6 +43,7 @@ export class Report {
     this.warnings = [];
     this.notes = [];
     this.derivedAssurance = null;
+    this.expiry = null;
   }
 
   malformed(message) {
@@ -63,6 +71,16 @@ export class Report {
     return this;
   }
 
+  /**
+   * Record that the stream's independent timestamp horizon has been reached.
+   * Not a defect: section 5 is explicit that EXPIRED is not a weaker INVALID.
+   * `horizon` is the earliest anchor horizon (a Date); `message` names it.
+   */
+  expire(message, horizon) {
+    this.expiry = { message, horizon };
+    return this;
+  }
+
   has(verdictClass) {
     return this.findings.some((finding) => finding.class === verdictClass);
   }
@@ -75,6 +93,7 @@ export class Report {
     if (this.has(VERDICT.MALFORMED)) return VERDICT.MALFORMED;
     if (this.has(VERDICT.INVALID)) return VERDICT.INVALID;
     if (this.has(VERDICT.CANNOT_CHECK)) return VERDICT.CANNOT_CHECK;
+    if (this.expiry) return VERDICT.EXPIRED;
     return VERDICT.VALID;
   }
 

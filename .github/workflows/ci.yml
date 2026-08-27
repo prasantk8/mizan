@@ -21,6 +21,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      # `make check` reads a declared dependency (jsonschema) that a bare interpreter does not
+      # have. This job used to have no install step at all and passed only in the imagination
+      # of the people running it on a laptop. R-008 F-8.
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
       - name: Validate repository and frozen contract
         run: make check
 
@@ -195,6 +204,16 @@ jobs:
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/verify_evidence_export.py tests/fixtures/evidence_export/attested/bundle \
             --tsa-trust-anchor tests/fixtures/evidence_export/attested/tsa-root.pem
+          # A bundle past its timestamp horizon is EXPIRED (exit 4), not FAIL (exit 1), and the
+          # rest of it still verifies. This fixture can never be un-expired: see its README.
+          if sudo unshare --net -- .offline-verifier/bin/python \
+              scripts/verify_evidence_export.py tests/fixtures/evidence_export/expired/bundle \
+              --tsa-trust-anchor tests/fixtures/evidence_export/expired/tsa-root.pem
+          then expired_status=0; else expired_status=$?; fi
+          test "$expired_status" -eq 4 || {
+            echo "expected EXPIRED (exit 4) for the expired fixture, got $expired_status" >&2
+            exit 1
+          }
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/verify_evidence_export.py tests/fixtures/evidence_export/public-tsa/bundle \
             --tsa-trust-anchor tests/fixtures/evidence_export/public-tsa/freetsa-root.pem \
@@ -227,3 +246,28 @@ jobs:
           else
             python3 scripts/validate_claim_ledger.py --base "$base" --head HEAD
           fi
+
+  completion-report:
+    # H-2's completion report lives in the pull request body. R-008's process note found
+    # four commit bodies carrying no pre-fix SHA and no what-did-not-work; a rule that
+    # depends on remembering is not a boundary, so the report is checked here instead.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Collect the pull request body and its changed files
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s' "$PR_BODY" > pr-body.md
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > pr-changed-files.txt
+      - name: Require the completion report
+        run: |
+          python3 scripts/validate_pr_body.py \
+            --body-file pr-body.md \
+            --changed-files-file pr-changed-files.txt

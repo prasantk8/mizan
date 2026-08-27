@@ -450,7 +450,64 @@ bundle version 1.0. In particular it fixes the anchor core as the closed project
 conformance corpus is the machine-readable compatibility contract; producer and verifier code are
 implementations of this format rather than its source of truth.
 
-### G.19 Independence proof and the format deltas it forced (T-062)
+### G.18 Implementation delta — explicit key custody (T-053)
+
+Custody, not URI naming, controls production eligibility. `LocalKeyProvider` always has
+`development-derived` custody and refuses every production construction regardless of its key IDs.
+Published key documents carry required `custody` in `{development-derived, kms, hsm}`; KMS/HSM adapters
+receive that value explicitly rather than deriving it from a reference string. Offline verification
+reports publicly derivable development custody as forgeable even when every signature is valid.
+### G.19 Ratified (R-008 F-10) — a bundle's horizon is its timestamp authority's certificate (T-091)
+
+**Founder ruling, 2026-08-27.** A Mizan bundle claims offline verifiability for the lifetime of the
+timestamp authority's signing certificate and no longer. RFC 4998 / CAdES-A archive timestamping is
+out of scope for bundle 1.0. This is the smaller of the two claims available and the one the system
+can keep; it is honest only if the bundle and the verifier both say it, so the ruling is four
+normative properties rather than a decision to do nothing.
+
+**1. The bundle states its own horizon.** An `rfc3161` sidecar carries `expires_at`, the earliest
+`notAfter` on the certification path inside the token. A holder learns on the day they receive the
+bundle when independent verifiability ends. The declared value is a caption and never a premise: a
+verifier recomputes it from the token and refuses a bundle that misstates it.
+
+**2. Expiry is a distinct verdict.** `EXPIRED` (exit 4) is not a weaker `INVALID`. `INVALID` keeps
+meaning *this evidence is not what it claims to be*. Before T-091 both answers were exit 1 with
+`FAIL:`, so "the authority's certificate lapsed" and "this record was altered" were the same
+sentence — the one ambiguity the evidence plane exists to remove.
+
+**3. Expiry does not fail the rest of the bundle.** The record chain, the receipt signatures and
+the anchor signatures do not depend on the timestamp authority. Past the horizon they still verify
+and the verifier still says so. What is lost on that date is the independent proof of *when*, not
+the proof of *what*.
+
+**4. The expired path stays tested.** `tests/fixtures/evidence_export/expired/` is signed by a
+certificate whose window closed on 2016-01-01 and cannot reopen. R-008 F-10 was a twenty-four-hour
+certificate that turned the offline-verifier job red the day after it was generated, and the repair
+for that is not a longer-lived certificate — a longer-lived certificate hides the same defect for
+longer. Regenerating a fixture to get a green board is how the defect would have gone back into
+hiding.
+
+**Scope, stated rather than implied.** Past the horizon a token is re-checked at an instant inside
+its certification path's own common validity window, read from the certificates. It is never
+re-checked at the token's `genTime`: that would ask the token to date the certificate that signs
+it, and a token whose `genTime` falls outside its signer's validity window is trivially producible —
+the committed expired fixture is one. What the re-check supports is that the signer chains to the
+operator's trust root and the imprint is this anchor, and the verifier's LIMITATION block says
+exactly that and no more.
+
+**Consequence for the control plane, not only the verifier.** Attestation revalidation asked
+OpenSSL whether the TSA certificate was valid *today*. On the day it expired, every intact stored
+attestation would have failed revalidation and opened `anchor_attestation_integrity` — which G.13
+and R-007 fixed the meaning of, *someone reached into the immutable store* — failing the tenant's
+financial writes closed under ADR-003 for a certificate reaching its own `notAfter`. Revalidation
+now tolerates the horizon and nothing else; an `expires_at` edited in the store still opens the
+breaker. A token that arrives already expired is refused at acquisition and the pending slot stays
+retryable.
+
+**Not closed here.** Nothing yet warns an operator that a horizon is approaching, so the first
+signal is still the day it passes. That is an alerting change and it is filed as T-092 rather than
+half-built inside a crypto change-set.
+### G.20 Independence proof and the format deltas it forced (T-062)
 
 A second verifier, `verifier-two/`, was written from `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` alone, in
 JavaScript, by an implementer who had read neither `evidence.py` nor `scripts/verify_evidence_export.py`.
@@ -494,10 +551,3 @@ implementation and so must follow this change-set. `verifier-two/FINDINGS.md` is
 gaps held open there — countersignature verification and the verdict for a revoked key — are escalated
 under H-7 rather than decided.
 
-### G.18 Implementation delta — explicit key custody (T-053)
-
-Custody, not URI naming, controls production eligibility. `LocalKeyProvider` always has
-`development-derived` custody and refuses every production construction regardless of its key IDs.
-Published key documents carry required `custody` in `{development-derived, kms, hsm}`; KMS/HSM adapters
-receive that value explicitly rather than deriving it from a reference string. Offline verification
-reports publicly derivable development custody as forgeable even when every signature is valid.

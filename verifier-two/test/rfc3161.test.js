@@ -221,29 +221,49 @@ function findEssCertIdV2(der) {
   return found;
 }
 
-test('an expired timestamp chain is reported in the bundle verdict, not only in the token result', () => {
-  const dir = path.join(ATTESTED, 'bundle');
+test('a timestamp whose chain has permanently closed its horizon is EXPIRED, not INVALID', () => {
+  // tests/fixtures/evidence_export/expired/bundle is signed by a certificate
+  // whose window closed on 2016-01-01 and cannot reopen (ADR-004 G.19): the
+  // deliberate replacement for a fixture that ages into failure on its own,
+  // which is exactly the defect this test used to have (see FINDINGS.md D-4 --
+  // the attested/bundle fixture this test used to check had a one-day
+  // lifetime and the property it exercised is now covered here instead).
+  const EXPIRED = path.join(REPO, 'tests/fixtures/evidence_export/expired');
+  const dir = path.join(EXPIRED, 'bundle');
   const report = verifyBundle(dir, {
-    trustRoots: loadTrustRoots(fs.readFileSync(path.join(ATTESTED, 'tsa-root.pem'), 'utf8')),
+    trustRoots: loadTrustRoots(fs.readFileSync(path.join(EXPIRED, 'tsa-root.pem'), 'utf8')),
   });
 
-  // The committed test TSA certificate has a one-day lifetime and the fixture is
-  // committed, so this precondition holds permanently from the day after it was
-  // generated. Asserting it rather than skipping on it means a regenerated
-  // fixture makes this test fail loudly instead of quietly stopping to test
-  // anything.
-  const lifetime = report.warnings.filter((w) => /^TIMESTAMP LIFETIME:/.test(w));
-  assert.equal(
-    lifetime.length,
-    1,
-    `expected one TIMESTAMP LIFETIME warning, got ${report.warnings.length} warnings: ` +
-      report.warnings.join(' | '),
-  );
-  assert.match(lifetime[0], /valid at .+ and has since expired/);
-  assert.match(lifetime[0], /still attests what it always attested/);
-  assert.match(lifetime[0], /key compromised after expiry cannot be detected/);
+  assert.equal(report.verdict, VERDICT.EXPIRED);
+  assert.equal(report.exitStatus, 4);
+  assert.equal(report.derivedAssurance, 'expired');
 
-  // And the expiry does not retract the timestamp.
-  assert.equal(report.verdict, VERDICT.VALID);
-  assert.equal(report.derivedAssurance, 'rfc3161');
+  // Section 5: EXPIRED is not a weaker INVALID. No finding of any class was
+  // raised -- the chain, receipts, and anchor signatures verified cleanly.
+  assert.equal(report.findings.length, 0, JSON.stringify(report.findings));
+
+  assert.ok(report.expiry, 'expected report.expiry to be set');
+  assert.equal(report.expiry.horizon.toISOString(), '2016-01-01T00:00:00.000Z');
+  assert.match(report.expiry.message, /independent timestamp horizon/);
+  assert.match(report.expiry.message, /still verify/);
+});
+
+test('past its horizon, the chain is re-checked without trusting genTime', () => {
+  // The committed expired fixture forges a genTime of 2026 over a certificate
+  // whose real window was 2015-2016 -- section 6's own example of why genTime
+  // cannot be trusted to validate itself past the horizon. If this verifier
+  // ever went back to checking genTime unconditionally, the fixture would
+  // report INVALID ("not valid at the timestamp's genTime") instead of EXPIRED.
+  const EXPIRED = path.join(REPO, 'tests/fixtures/evidence_export/expired');
+  const anchor = JSON.parse(fs.readFileSync(path.join(EXPIRED, 'bundle/anchors.json'), 'utf8'))[0];
+  const entry = (anchor.attestations ?? anchor.payload.attestations).find(
+    (candidate) => candidate.type === 'rfc3161' && candidate.evidence,
+  );
+  const digest = Buffer.from(anchorCoreDigest(anchor.payload), 'hex');
+  const trustRoots = loadTrustRoots(fs.readFileSync(path.join(EXPIRED, 'tsa-root.pem'), 'utf8'));
+  const result = verifyTimestampToken(Buffer.from(entry.evidence, 'base64'), digest, trustRoots);
+
+  assert.equal(result.ok, true, `expected the expired token to verify past its horizon, got: ${result.reason}`);
+  assert.equal(result.horizon.toISOString(), '2016-01-01T00:00:00.000Z');
+  assert.ok(result.horizon.getTime() < Date.now(), 'the horizon must actually be in the past for this test to mean anything');
 });

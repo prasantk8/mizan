@@ -16,7 +16,7 @@ def main() -> int:
         for trust_root in case["trust_roots"]:
             command.extend(["--tsa-trust-anchor", str(root / trust_root)])
         result = subprocess.run(command, check=False, capture_output=True, text=True)
-        actual_verdict = {0: "VALID", 1: "INVALID", 2: "CANNOT_CHECK", 3: "MALFORMED"}.get(
+        actual_verdict = {0: "VALID", 1: "INVALID", 2: "CANNOT_CHECK", 3: "MALFORMED", 4: "EXPIRED"}.get(
             result.returncode, "VERIFIER_ERROR"
         )
         message_matches = case.get("message") is None or case["message"] in result.stderr

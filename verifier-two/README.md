@@ -74,7 +74,7 @@ lib/der.js                strict DER reader (definite length, minimal, no traili
 lib/oid.js                object identifiers, and which ones this verifier supports
 lib/ed25519.js            raw 32-byte keys wrapped into an RFC 8410 SPKI
 lib/rfc3161.js            timestamp tokens, chain building, EKU policy
-lib/verdict.js            the four verdicts and their precedence
+lib/verdict.js            the five verdicts and their precedence
 lib/verify.js             the bundle checks
 tools/differential.mjs    both verifiers over all three corpora
 tools/fault-injection.mjs breaks lib/ on purpose to prove the suite can go red

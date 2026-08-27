@@ -31,6 +31,7 @@ export function verifyTimestampToken(der, expectedDigest, trustRoots) {
   try {
     return {
       expiredSince: [],
+      horizon: null,
       ...check(der, expectedDigest, trustRoots),
       ok: true,
       canCheck: true,
@@ -38,10 +39,10 @@ export function verifyTimestampToken(der, expectedDigest, trustRoots) {
     };
   } catch (error) {
     if (error instanceof CannotCheck) {
-      return { ok: false, canCheck: false, reason: error.message, genTime: null, tsa: null, expiredSince: [] };
+      return { ok: false, canCheck: false, reason: error.message, genTime: null, tsa: null, expiredSince: [], horizon: null };
     }
     if (error instanceof TokenInvalid || error instanceof DerError) {
-      return { ok: false, canCheck: true, reason: error.message, genTime: null, tsa: null, expiredSince: [] };
+      return { ok: false, canCheck: true, reason: error.message, genTime: null, tsa: null, expiredSince: [], horizon: null };
     }
     // An unexpected failure is a limit of this verifier, not evidence about the
     // bundle. Reporting it as an evidence failure would accuse the bundle of
@@ -53,6 +54,7 @@ export function verifyTimestampToken(der, expectedDigest, trustRoots) {
       genTime: null,
       tsa: null,
       expiredSince: [],
+      horizon: null,
     };
   }
 }
@@ -93,12 +95,30 @@ function check(der, expectedDigest, trustRoots) {
   if (trustRoots.length === 0) {
     throw new CannotCheck('no trust roots supplied; RFC 3161 trust roots come from the operator, never from the bundle');
   }
-  const chain = buildChain(signer, certificates, trustRoots, tst.genTime);
+
+  // Build the path by signature/issuer structure alone -- no temporal check yet
+  // -- so the horizon can be computed before deciding how time gets checked.
+  const chain = walkChainToRoot(signer, certificates, trustRoots);
+  const horizon = certificationPathHorizon(chain);
+
+  if (new Date() <= horizon) {
+    // Ordinary case: still inside the horizon, so genTime is validated against
+    // every certificate on the path exactly as RFC 3161 verification always has.
+    for (const cert of chain) requireValidAt(cert, tst.genTime);
+  }
+  // Past the horizon, section 6 forbids validating at genTime here: doing so
+  // would ask the token to date the certificate that signs it, and a token
+  // whose genTime falls outside its own signer's validity window is trivially
+  // producible -- the committed expired fixture is exactly that. Past the
+  // horizon this re-check supports only that the signer chains to the
+  // operator's trust root and the imprint is this anchor; it does not, and
+  // cannot, support the time the token asserts (ADR-004 G.19).
 
   return {
     genTime: tst.genTime,
     tsa: signer.subject,
     expiredSince: expiredSinceIssue(chain, new Date()),
+    horizon,
   };
 }
 
@@ -440,14 +460,35 @@ function expiredSinceIssue(chain, now) {
     .map((cert) => `${cert.subject} (expired ${cert.validTo})`);
 }
 
-function buildChain(signer, bundled, trustRoots, at) {
+/**
+ * The token's independent-verifiability horizon: the earliest notAfter among
+ * the certificates on the certification path the token carries (ADR-004 G.19,
+ * EVIDENCE-BUNDLE-FORMAT.md section 4). Verified against every real fixture in
+ * this tree -- freetsa, Sectigo, and the committed test TSA -- the horizon a
+ * real TSA declares is always exactly its signing certificate's own notAfter,
+ * because a leaf's validity window is virtually always the shortest link on its
+ * own chain. Taking the minimum over the whole built chain (leaf through
+ * whichever issuer matched a trust root) reproduces every declared value to the
+ * second and costs nothing when a chain is unusual enough for an issuer to be
+ * the binding constraint instead.
+ */
+function certificationPathHorizon(chain) {
+  return new Date(Math.min(...chain.map((cert) => Date.parse(cert.validTo))));
+}
+
+/**
+ * Walk from the signer to a supplied trust root by signature/issuer structure
+ * alone. Deliberately does no temporal check: the horizon has to be computed
+ * from this chain before it is possible to know whether checking at genTime
+ * is even the right question (see `check` above).
+ */
+function walkChainToRoot(signer, bundled, trustRoots) {
   const pool = [...bundled, ...trustRoots];
   const rootSet = new Set(trustRoots.map((cert) => cert.fingerprint256));
   const chain = [];
 
   let current = signer;
   for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
-    requireValidAt(current, at);
     chain.push(current);
 
     if (rootSet.has(current.fingerprint256)) return chain;

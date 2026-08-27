@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import time
 
@@ -9,6 +10,26 @@ from mizan_control_plane.policy_engine import compile_policy
 from benchmarks.artifacts import write_artifact
 from tests.unit.test_authorization import context
 from tests.unit.test_policy_engine import policy
+
+# R-008 F-15. `evaluations_per_second >= 1_000 and p99_ms < 5` was written on a laptop and
+# **has never executed on any other machine**: no CI job invokes `make benchmark-policy`, so
+# unlike F-9 and the sequencer this one has not failed yet, it has merely never been asked.
+# A 5 ms p99 ceiling is the most machine-dependent assertion in this repository -- the
+# sequencer's p99 moved 27x between two runs on the same runner class -- and the first time
+# this runs on a shared runner it will fail for reasons that have nothing to do with the
+# evaluator.
+#
+# Set from the same principle as the others: floors and ceilings that only a collapse trips,
+# with the measured numbers published beside their host. Tighten with the environment
+# variables when there is a machine to tighten against.
+THROUGHPUT_FLOOR = float(os.environ.get("MIZAN_POLICY_THROUGHPUT_FLOOR", "200"))
+P99_CEILING_MS = float(os.environ.get("MIZAN_POLICY_P99_CEILING_MS", "25"))
+BOUNDS_BASIS = (
+    "never measured off a developer laptop -- no CI job runs this benchmark (R-008 F-15) -- "
+    "so the bounds are loose enough that only a collapse trips them. A collapse detector, "
+    "not a performance claim; the claim is evaluations_per_second and p99_ms beside `host` "
+    "in this artifact."
+)
 
 
 def percentile(samples: list[float], fraction: float) -> float:
@@ -32,6 +53,9 @@ def main() -> int:
         "evaluations_per_second": round(len(samples) / elapsed_seconds, 2),
         "p50_ms": round(statistics.median(samples), 4),
         "p99_ms": round(percentile(samples, 0.99), 4),
+        "throughput_floor": THROUGHPUT_FLOOR,
+        "p99_ceiling_ms": P99_CEILING_MS,
+        "bounds_basis": BOUNDS_BASIS,
     }
     print(json.dumps(result, sort_keys=True))
     write_artifact(
@@ -39,7 +63,11 @@ def main() -> int:
         result,
         {"iterations": 5_000, "warmup_iterations": 200},
     )
-    return 0 if result["evaluations_per_second"] >= 1_000 and result["p99_ms"] < 5 else 1
+    within_bounds = (
+        result["evaluations_per_second"] >= THROUGHPUT_FLOOR
+        and result["p99_ms"] < P99_CEILING_MS
+    )
+    return 0 if within_bounds else 1
 
 
 if __name__ == "__main__":

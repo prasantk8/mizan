@@ -5,7 +5,7 @@
 //   mizan-verify-two <bundle-dir> [--trust-root <pem>]... [--json] [--quiet]
 //
 // Exit status follows EVIDENCE-BUNDLE-FORMAT.md section 5:
-//   0 VALID   1 INVALID   2 CANNOT CHECK   3 MALFORMED
+//   0 VALID   1 INVALID   2 CANNOT CHECK   3 MALFORMED   4 EXPIRED
 //
 // Trust roots are supplied by whoever runs this, never read from the bundle.
 // A bundle that could name its own trust root could name one it controls.
@@ -25,7 +25,7 @@ const USAGE = `mizan-verify-two <bundle-dir> [options]
   --quiet               Print the verdict line only.
   -h, --help            This text.
 
-Exit status: 0 VALID, 1 INVALID, 2 CANNOT CHECK, 3 MALFORMED.
+Exit status: 0 VALID, 1 INVALID, 2 CANNOT CHECK, 3 MALFORMED, 4 EXPIRED.
 `;
 
 function parseArguments(argv) {
@@ -114,6 +114,14 @@ function render(report, options) {
   }
 
   out.write(`${report.verdict}  ${options.bundleDir}\n`);
+
+  if (report.expiry) {
+    // Equal prominence with the verdict, and printed even in --quiet mode: an
+    // EXPIRED bundle's whole point is that "the chain still verifies, only the
+    // independent timestamp horizon has closed" is not something a caller
+    // should have to go looking for.
+    out.write(`  TIMESTAMP HORIZON: ${report.expiry.horizon.toISOString()} -- ${report.expiry.message}\n`);
+  }
 
   if (options.quiet) return;
 
