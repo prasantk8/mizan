@@ -17,6 +17,7 @@ from mizan_control_plane.attestation import (
     Rfc3161AnchorProvider,
     customer_countersignature,
     pending_attestation_breaker_open,
+    timestamp_horizon,
 )
 from mizan_control_plane.evidence import Ed25519EvidenceSigner
 
@@ -111,8 +112,15 @@ def test_real_rfc3161_response_verifies_offline_and_before_recording(tmp_path, m
         check=True,
         capture_output=True,
     )
+    horizon = timestamp_horizon(response.read_bytes())
+    assert horizon is not None
+    stated = horizon.strftime("%Y-%m-%dT%H:%M:%SZ")
     verify_rfc3161(
-        {"anchor_digest": digest, "evidence": base64.b64encode(response.read_bytes()).decode()},
+        {
+            "anchor_digest": digest,
+            "evidence": base64.b64encode(response.read_bytes()).decode(),
+            "expires_at": stated,
+        },
         digest,
         [cert],
     )
@@ -138,6 +146,9 @@ def test_real_rfc3161_response_verifies_offline_and_before_recording(tmp_path, m
     })
     assert obtained["status"] == "attested"
     assert base64.b64decode(obtained["evidence"]) == response.read_bytes()
+    # The bundle states its own horizon, and it is the signer certificate's notAfter rather than
+    # anything the token says about itself.
+    assert obtained["expires_at"] == stated
     wrong_key = tmp_path / "wrong.key"
     wrong_cert = tmp_path / "wrong.pem"
     subprocess.run(
@@ -151,7 +162,11 @@ def test_real_rfc3161_response_verifies_offline_and_before_recording(tmp_path, m
     )
     with pytest.raises(VerificationFailure, match="timestamp signer is not trusted"):
         verify_rfc3161(
-            {"anchor_digest": digest, "evidence": base64.b64encode(response.read_bytes()).decode()},
+            {
+                "anchor_digest": digest,
+                "evidence": base64.b64encode(response.read_bytes()).decode(),
+                "expires_at": stated,
+            },
             digest,
             [wrong_cert],
         )
@@ -251,6 +266,13 @@ def test_provider_records_attested_only_after_token_validation(tmp_path, monkeyp
     monkeypatch.setattr(
         "mizan_control_plane.attestation.urllib.request.urlopen",
         lambda request, timeout: Response(),
+    )
+    # This test is about the order of the two OpenSSL calls, not about certificates. The token is
+    # a literal, so the horizon it does not carry is supplied here; reading a real one out of a
+    # real token is what test_real_rfc3161_response_verifies_offline_and_before_recording does.
+    monkeypatch.setattr(
+        "mizan_control_plane.attestation.timestamp_horizon",
+        lambda token: datetime(2036, 1, 1, tzinfo=UTC),
     )
 
     result = provider.obtain(pending)
