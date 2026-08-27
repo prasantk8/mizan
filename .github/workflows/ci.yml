@@ -21,6 +21,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      # `make check` reads a declared dependency (jsonschema) that a bare interpreter does not
+      # have. This job used to have no install step at all and passed only in the imagination
+      # of the people running it on a laptop. R-008 F-8.
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
       - name: Validate repository and frozen contract
         run: make check
 
