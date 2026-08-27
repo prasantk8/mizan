@@ -450,6 +450,34 @@ bundle version 1.0. In particular it fixes the anchor core as the closed project
 conformance corpus is the machine-readable compatibility contract; producer and verifier code are
 implementations of this format rather than its source of truth.
 
+### G.19 Independence proof and the format deltas it forced (T-062)
+
+A second verifier, `verifier-two/`, was written from `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` alone, in
+JavaScript, by an implementer who had read neither `evidence.py` nor `scripts/verify_evidence_export.py`.
+Both verifiers were run over the conformance corpus and the 288-case mutation corpus — 295 cases — and
+every disagreement was treated as a defect to locate rather than a difference to reconcile.
+
+Three of the four spec properties this ADR relies on survived unchanged; the anchor core projection in
+particular was reproduced independently and matches the `messageImprint` two public timestamp authorities
+signed. Three defects were found and are fixed in the same change-set:
+
+* The format did not state **verdict precedence**. Section 5 now fixes the phase order — parseability and
+  manifest grammar are `MALFORMED`, the manifest `files` digests over stored bytes are `INVALID` and stop
+  the run, remaining grammar is `MALFORMED`, evidence is `INVALID`. Digests precede grammar deliberately:
+  once bytes are known not to be the bytes the manifest vouches for, a grammatical complaint describes an
+  artifact nobody signed.
+* Section 1's `files` sentence conflated **grammar with evidence**. The key set is grammar; a value of the
+  wrong shape is an evidence failure, consistent with the `invalid-record-checksum` fixture.
+* Section 1 and section 4 left the **Base64 alphabet, integer magnitude, attestation and checkpoint member
+  sets, and the RFC 3161 evidence encoding** unstated. All are now named.
+
+The remaining disagreement is a defect in the reference verifier, not the format: a missing
+`--tsa-trust-anchor` is reported as an evidence failure when section 7 makes a missing verifier dependency
+"neither `VALID` nor evidence failure". It is fixed separately, because fixing it requires reading the
+implementation and so must follow this change-set. `verifier-two/FINDINGS.md` is the register; the two
+gaps held open there — countersignature verification and the verdict for a revoked key — are escalated
+under H-7 rather than decided.
+
 ### G.18 Implementation delta — explicit key custody (T-053)
 
 Custody, not URI naming, controls production eligibility. `LocalKeyProvider` always has

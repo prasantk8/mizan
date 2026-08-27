@@ -23,10 +23,39 @@ field explicitly carries binary data as Base64. Verifiers SHALL parse JSON, reco
 projection, and canonicalize it; they MUST NOT hash source whitespace except for manifest file
 checksums, which cover the complete stored file bytes.
 
+Base64 fields accept both the standard alphabet of RFC 4648 section 4 and the URL-safe alphabet of
+section 5; producers may emit either and verifiers MUST accept both. Encoded values are padded to a
+whole number of quanta, and a field containing any character outside the chosen alphabet MUST be
+refused rather than salvaged — decoders that silently discard such characters produce a well-sized
+value from corrupted input and reach the right verdict only by luck. The verdict class of that
+refusal follows the phase rule in section 5: `MALFORMED` where the field is part of the grammar
+being checked, `INVALID` where it is a signature or other evidence.
+
+Every integer a producer writes MUST be exactly representable as an IEEE 754 double, that is within
+the closed range -(2^53-1) to 2^53-1. RFC 8785 defines number serialization as ECMAScript
+`Number::toString`, so an integer outside that range canonicalizes differently in a language with
+64-bit integers than in one without, and two conformant verifiers would compute different digests
+over identical bytes. A verifier that encounters an out-of-range integer literal MUST NOT return
+`VALID`; which of the other three verdicts it returns is not yet fixed by this version, because the
+answer depends on whether the condition is read as a producer defect or as a limit on the verifier.
+
 The manifest has `bundle_version="1.0"`, `canonicalization="RFC8785"`,
 `hash_algorithm="SHA-256"`, tenant and stream identifiers, inclusive `range.from_sequence` and
 `range.to_sequence`, an `assurance` claim, and `files`. `files` has exactly the five non-manifest
-filenames above and maps each to `hex(SHA-256(complete stored file bytes))`.
+filenames above, and each value is a string that claims `hex(SHA-256(complete stored file bytes))`.
+
+Two of those requirements are grammar and one is evidence, and the distinction decides the verdict.
+The key set of `files` is grammar: a `files` object that does not have exactly the five non-manifest
+filenames is `MALFORMED`. The value is evidence: a value that is not the file's digest — for any
+reason, including being the wrong length or containing characters outside lowercase hexadecimal — is
+`INVALID`, not `MALFORMED`. A stored file whose bytes do not match what the manifest claims is tamper
+evidence about the bundle, not a defect in how the bundle was written.
+
+A bundle contains exactly the six files above. Content beyond them cannot be covered by `files` and
+is therefore unattested content travelling inside an attested container: a verifier MUST report each
+extra entry it finds, and that report does not change the verdict in bundle 1.0, because the manifest
+makes no claim about what it does not name. Whether an unattested passenger should instead be grounds
+for refusal is an open question for a future version, and is deliberately not decided here.
 
 ## 2. Record chain
 
@@ -104,6 +133,20 @@ to an unqualified pass.
 `checkpoints.json` is an unsigned derived index. Its dense ranges and endpoint hashes are checked,
 but it supplies no independent evidence and MUST NOT increase assurance.
 
+An attestation entry, in a signed payload or a sidecar, has `type`, `authority`, `status`, `evidence`
+and `obtained_at`. Entries of type `rfc3161` may additionally carry `anchor_digest` and
+`requested_at`; no entry carries any other member. `evidence` and `obtained_at` are `null` while a
+`pending` or `unattested` entry has nothing to carry. Unlike the key document in this section, this
+member set is **not** closed against future versions, and a verifier MUST NOT infer meaning from a
+member this document does not name. For an `rfc3161` entry the `evidence` is Base64 and decodes to either an RFC 3161
+section 2.4.2 `TimeStampResp` or the bare RFC 5652 `ContentInfo` token inside one; a verifier MUST
+accept both encodings. Its `TSTInfo.messageImprint` is compared against the anchor core digest of the
+payload the entry attests.
+
+`checkpoints.json` entries have exactly `from_sequence`, `to_sequence`, `head_hash` and
+`expected_previous`, carrying the same meanings as in section 3, with `expected_previous` naming the
+`prev_hash` the record at `from_sequence` must declare.
+
 ## 5. Terminal acceptance
 
 A verifier returns one of four terminal verdicts. `MALFORMED` means the input violates the bundle 1.0
@@ -111,6 +154,22 @@ grammar and therefore is not a Mizan bundle. `CANNOT CHECK` means the input is s
 but the verifier environment cannot evaluate a required claim. `INVALID` means the bundle is
 well-formed but one or more evidence checks failed. `VALID` means every required check passed. These
 classes are mutually exclusive; neither `MALFORMED` nor `CANNOT CHECK` is an assurance result.
+
+The classes are mutually exclusive but the findings are not: a real bundle can earn several at once,
+and the verdict is therefore decided by order of evaluation, not by severity. A verifier MUST
+evaluate in these phases and MUST return as soon as a phase produces a finding:
+
+1. UTF-8 decoding and JSON parseability of the six files — a failure here is `MALFORMED`.
+2. Manifest grammar, including the `files` key set — `MALFORMED`.
+3. The `files` digests, over the complete stored bytes — `INVALID`.
+4. The remaining bundle 1.0 grammar of the other five files — `MALFORMED`.
+5. Every evidence check in the paragraph below — `INVALID`.
+
+Phase 3 precedes phase 4 deliberately. Once a file's bytes are known not to be the bytes the manifest
+vouches for, every grammatical judgement about that file describes an artifact nobody signed, and
+reporting `MALFORMED` would tell an auditor the file is badly written when what happened is that
+someone changed it. A `CANNOT CHECK` finding raised in any phase is returned only if no phase
+produces a `MALFORMED` or `INVALID` finding; `VALID` requires that no phase produced any finding.
 
 A verifier returns `VALID` only after file inventory/digests, record hashes/linkage/range, one-to-one receipt
 coverage and signatures, anchor numbering/linkage/density/signatures/head bindings, left and right
