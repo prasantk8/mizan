@@ -11,6 +11,10 @@ Every test in this module fails on 330a2d5: the module under test does not exist
 
 from __future__ import annotations
 
+import io
+import json
+import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,6 +25,7 @@ from mizan_control_plane.evidence import (
     LocalImmutableObjectStore,
     OutboxPublisher,
 )
+from mizan_control_plane.observability import Metrics, configure_logging, context
 from mizan_control_plane.outbox_worker import DrainPolicy, EvidenceBreaker, OutboxWorker
 from mizan_control_plane.problems import Problem
 
@@ -177,7 +182,23 @@ def worker_for(repository, publisher, **policy: Any) -> OutboxWorker:
         (TENANT,),
         DrainPolicy(**policy),
         clock=lambda: float(next(ticks)),
+        metrics=Metrics(),
     )
+
+
+def series(metrics: Metrics, name: str) -> dict[str, float]:
+    """One metric family, read back out of the exposition a scraper would actually get.
+
+    Deliberately parsed from the rendered text rather than from the objects that produced it —
+    rule 12. A gauge that is set correctly and rendered wrongly is invisible to an operator, and
+    reading the counter attribute back would compare the producer against itself.
+    """
+    found: dict[str, float] = {}
+    for line in metrics.exposition().decode().splitlines():
+        if line.startswith(f"{name}{{") or line == name:
+            labels, _, value = line.rpartition(" ")
+            found[labels.removeprefix(name)] = float(value)
+    return found
 
 
 def test_expire_closes_an_elapsed_open_epoch_as_terminal() -> None:
@@ -424,3 +445,189 @@ def test_the_breaker_reports_open_until_it_is_cleared() -> None:
     assert len(breaker.history) == 1, "an open breaker must not re-fire every tick"
     breaker.clear("evidence_publication_lag", TENANT)
     assert breaker.is_open is False
+
+
+# ---------------------------------------------------------------------------------------------
+# T-073: the worker's voice. Before this, the only way to learn any of the below was to read the
+# process's stderr, and the breaker was a set inside it that no operator could reach at all.
+# ---------------------------------------------------------------------------------------------
+
+
+class ExplodingRepository(StubRepository):
+    """A repository that fails for exactly one tenant, the way a per-tenant fault actually does."""
+
+    def __init__(self, doomed: str) -> None:
+        super().__init__()
+        self.doomed = doomed
+
+    def backlog(self, tenant_id: str, max_attempts: int) -> dict[str, Any]:
+        if tenant_id == self.doomed:
+            raise RuntimeError("relation mizan.outbox does not exist for this tenant")
+        return super().backlog(tenant_id, max_attempts)
+
+
+def test_one_tenant_whose_tick_raises_does_not_stop_the_others(tmp_path) -> None:
+    """The same isolation T-074 gave a stream, one level up — and for a larger reason.
+
+    This process is the only thing publishing evidence for *every* tenant, so a fault scoped to
+    one tenant that takes the loop down converts a local outage into a total one: every other
+    tenant's financial writes then block on receipts nothing is writing. Fails on 793a54a, where
+    `tick` is a list comprehension and the first exception ends the pass.
+    """
+    repository = ExplodingRepository("tnt_broken")
+    metrics = Metrics()
+    worker = OutboxWorker(
+        publisher_for(repository, tmp_path),
+        repository,
+        None,
+        ("tnt_broken", TENANT),
+        DrainPolicy(),
+        metrics=metrics,
+    )
+    ticks = worker.tick()
+    assert [tick.tenant_id for tick in ticks] == [TENANT]
+    assert series(metrics, "mizan_drain_worker_tick_failures_total") == {
+        '{error_type="RuntimeError",tenant_id="tnt_broken"}': 1.0
+    }
+    assert worker.breaker.open == {("drain_tick_failed", "tnt_broken")}
+
+
+def test_a_tick_publishes_the_backlog_it_found_as_gauges_a_scraper_can_read(tmp_path) -> None:
+    repository = StubRepository()
+    repository.add(1, "decision", evidence_payload("tnt_bank-a:adr:0", 1))
+    repository.add(2, "approval", {"approval_id": "apr_1"}, event_type="mizan.approval.requested")
+    metrics = Metrics()
+    worker = OutboxWorker(
+        publisher_for(repository, tmp_path),
+        repository,
+        None,
+        (TENANT,),
+        DrainPolicy(anchor_interval_seconds=0.0),
+        metrics=metrics,
+    )
+    tick = worker.tick_tenant(TENANT)
+    label = f'{{tenant_id="{TENANT}"}}'
+    assert series(metrics, "mizan_evidence_records_published_total")[label] == 1.0
+    assert series(metrics, "mizan_outbox_events_relayed_total")[label] == 1.0
+    assert series(metrics, "mizan_outbox_pending_rows")[label] == 0.0
+    assert series(metrics, "mizan_drain_worker_ticks_total")[label] == 1.0
+    assert series(metrics, "mizan_drain_worker_last_tick_timestamp_seconds")[label] > 0
+    assert tick.published == 1 and tick.relayed == 1
+
+
+def test_a_worker_that_stopped_ticking_is_distinguishable_from_a_quiet_tenant(tmp_path) -> None:
+    """Every counter above reads identically for both, and they call for opposite responses.
+
+    A tenant with nothing to publish and a worker that died three hours ago both show zero
+    published, zero relayed, zero pending. The heartbeat gauge is the only series that separates
+    them, which is why it exists and why it is a timestamp rather than a count.
+    """
+    repository = StubRepository()
+    metrics = Metrics()
+    worker = OutboxWorker(
+        publisher_for(repository, tmp_path), repository, None, (TENANT,), DrainPolicy(),
+        metrics=metrics,
+    )
+    worker.tick_tenant(TENANT)
+    first = series(metrics, "mizan_drain_worker_last_tick_timestamp_seconds")[f'{{tenant_id="{TENANT}"}}']
+    time.sleep(0.01)
+    worker.tick_tenant(TENANT)
+    second = series(metrics, "mizan_drain_worker_last_tick_timestamp_seconds")[f'{{tenant_id="{TENANT}"}}']
+    assert second > first
+
+
+def test_the_lag_gauge_is_read_from_the_database_not_accumulated_in_the_process(tmp_path) -> None:
+    """So a restarted worker reports the real backlog on its first tick instead of zero.
+
+    A process-local accumulator resets on restart, and a backlog metric that reads zero after a
+    crash is indistinguishable from a backlog that cleared. Those two states call for opposite
+    responses, and the crash is the one where being wrong costs the most.
+    """
+    repository = StubRepository()
+    # Undrainable rather than malformed: a malformed row is quarantined on the first pass and
+    # leaves the lag, which is T-074's behaviour and not what is under test here.
+    repository.add(1, "approval", {"approval_id": "apr_1"}, event_type="mizan.approval.requested", age_seconds=42.0)
+    metrics = Metrics()
+    fresh = OutboxWorker(
+        publisher_for(repository, tmp_path, RecordingSink(fail_on={"mizan.approval.requested"})),
+        repository,
+        None,
+        (TENANT,),
+        DrainPolicy(),
+        metrics=metrics,
+    )
+    fresh.tick_tenant(TENANT)
+    label = f'{{tenant_id="{TENANT}"}}'
+    assert series(metrics, "mizan_evidence_publication_lag_seconds")[label] >= 42.0
+    assert series(metrics, "mizan_outbox_pending_rows")[label] == 1.0
+
+
+def test_the_breaker_gauge_keeps_asserting_while_it_is_open() -> None:
+    """A scraper that starts after the edge must still learn the breaker is open.
+
+    The log line fires once because a human reads it. The gauge cannot: Prometheus samples, so a
+    series that is written only on the transition is a series that reads zero to anything that
+    connected afterwards — which is every scraper restart, every rollout, every new alert rule.
+    """
+    metrics = Metrics()
+    breaker = EvidenceBreaker(metrics)
+    breaker.trip("evidence_publication_lag", TENANT, "12.0s old")
+    breaker.trip("evidence_publication_lag", TENANT, "12.5s old")
+    assert len(breaker.history) == 1, "the human-facing log fires once"
+    assert series(metrics, "mizan_breaker_open")[
+        f'{{reason="evidence_publication_lag",tenant_id="{TENANT}"}}'
+    ] == 1.0
+    breaker.clear("evidence_publication_lag", TENANT)
+    assert series(metrics, "mizan_breaker_open")[
+        f'{{reason="evidence_publication_lag",tenant_id="{TENANT}"}}'
+    ] == 0.0
+
+
+def test_every_tick_of_one_tenant_shares_one_trace(tmp_path) -> None:
+    """The worker has no caller, so each tick starts its own trace.
+
+    Without one, a tick's log lines are unrelated records that happen to share a timestamp; with
+    one, `trace_id=` selects everything one tenant's pass did and nothing else's. Read out of the
+    rendered JSON rather than off the `LogRecord`, because what an operator greps is the line that
+    was written, not the object that produced it.
+    """
+    repository = StubRepository()
+    repository.add(1, "decision", {"malformed": True})
+    worker = worker_for(repository, publisher_for(repository, tmp_path))
+    stream = io.StringIO()
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    try:
+        configure_logging("WARNING", json_output=True, stream=stream)
+        worker.tick_tenant(TENANT)
+    finally:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+    lines = [json.loads(line) for line in stream.getvalue().splitlines() if line.strip()]
+    assert lines, "a quarantined row must say so"
+    traces = {line["trace_id"] for line in lines}
+    assert len(traces) == 1
+    assert {line["tenant_id"] for line in lines} == {TENANT}
+
+
+def test_a_log_line_that_names_its_own_tenant_does_not_crash_the_worker(tmp_path) -> None:
+    """The ambient tenant and an explicit `extra={"tenant_id": ...}` must coexist.
+
+    They did not, briefly: stamping ambient fields via `logging.setLogRecordFactory` made
+    `makeRecord` raise `KeyError` whenever a caller passed the same key — and the two call sites
+    that pass a tenant explicitly are the breaker and the dropped-security-event handler. An
+    observability change that crashes on the log line reporting a fault is worse than no line.
+    """
+    stream = io.StringIO()
+    root = logging.getLogger()
+    handlers, level = list(root.handlers), root.level
+    try:
+        configure_logging("WARNING", json_output=True, stream=stream)
+        with context(tenant_id=TENANT, trace_id="a" * 32, span_id="b" * 16):
+            EvidenceBreaker(Metrics()).trip("evidence_publication_lag", TENANT, "12.0s")
+    finally:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+    line = json.loads(stream.getvalue().strip())
+    assert line["tenant_id"] == TENANT and line["trace_id"] == "a" * 32
+    assert line["breaker"] == "evidence_publication_lag"

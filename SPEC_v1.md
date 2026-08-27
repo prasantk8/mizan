@@ -1660,6 +1660,12 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_OUTBOX_MAX_ATTEMPTS` | `5` | deployment | Failed publication attempts before a row is quarantined: excluded from the batch head and from the lag measurement, never deleted, and reported through the evidence breaker. |
 | `MIZAN_EXPIRY_SWEEP_INTERVAL_SECONDS` | `30` | deployment | Cadence of the expiry sweep that reaches `EXPIRED` and `LEASE_EXPIRED` at rest. Each candidate is re-checked under a row lock; a person who acts between scan and lock always wins. |
 | `MIZAN_DRAIN_TENANTS` | *(required for `mizan-drain-outbox`)* | deployment | Comma-separated tenants the drainer serves, or `--tenant-id` repeated. Tenants are **not** discovered: `mizan.tenants` carries FORCE ROW LEVEL SECURITY keyed on the current tenant, so enumeration would require crossing the isolation boundary of ADR-005. A tenant absent from this list is never published and never swept. |
+| `MIZAN_LOG_LEVEL` | `INFO` | deployment | Root log level for `mizan-control-plane` and `mizan-drain-outbox`. |
+| `MIZAN_LOG_FORMAT` | `json` | deployment | `json` or `text`. `json` emits one object per event carrying `request_id`, `tenant_id`, `trace_id`, `span_id` and `decision_id` from the ambient request context. Any other value is refused at startup. |
+| `MIZAN_METRICS_PORT` | `0` (off) | deployment | Port for the private Prometheus listener. Metrics are served on their own listener and never on the API: the API authenticates a *tenant*, and process metrics are cross-tenant, so exposing them behind a tenant credential would either leak across tenants or invent a new authority class. |
+| `MIZAN_METRICS_HOST` | `127.0.0.1` | deployment | Bind address for that listener. It is unauthenticated and publishes per-tenant decision volumes, publication lag and breaker state; binding it off-loopback logs a warning naming exactly that. |
+| `MIZAN_OTEL_EXPORTER_OTLP_ENDPOINT` | *(empty)* | deployment | OTLP/HTTP traces endpoint. Empty means propagate-only: `traceparent` is still continued and still recorded in every ADR_Record (ADR-004 G.20). Set without the `otel` extra installed, startup is **refused** — a process that reports itself ready and exports nothing is the failure found during the incident. |
+| `MIZAN_OTEL_SERVICE_NAME` | `mizan-control-plane` | deployment | `service.name` on exported spans. |
 
 ### 8.1 MCP Governance Gateway (`mizan-mcp-gateway`)
 

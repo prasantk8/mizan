@@ -20,6 +20,7 @@ from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .evidence import append_decision_event_tx
 from .keys import SigningKey
 from .models import EvaluationContext
+from .observability import Metrics
 from .ports import RiskProvider
 from .problems import Problem
 from .risk import RegistryFloorRiskProvider
@@ -136,6 +137,7 @@ class ExecutionService:
         security_event_pool_max_size: int = 2,
         security_event_pool_timeout_seconds: float = 0.25,
         default_token_ttl_seconds: int = 300,
+        metrics: Metrics | None = None,
     ) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
         self.security_event_pool = security_event_pool or ConnectionPool(
@@ -149,6 +151,7 @@ class ExecutionService:
         self.receipt_gate = receipt_gate
         self.risk_provider = risk_provider or RegistryFloorRiskProvider()
         self.security_event_counters: Counter[str] = Counter()
+        self.metrics = metrics or Metrics()
         self.default_token_ttl_seconds = default_token_ttl_seconds
 
     @staticmethod
@@ -510,29 +513,64 @@ class ExecutionService:
         jti: str,
         peer_spiffe: str,
     ) -> None:
+        """Write the SIEM row for a security event, and never let failing to change the answer.
+
+        This runs *inside* the redemption transaction, on a separate bounded pool so it cannot
+        take the redemption's connection. Until T-073 it caught `PoolTimeout` alone, so any other
+        fault of the audit sink — a dropped connection, a serialization failure, a revoked grant —
+        escaped, rolled the redemption back, and turned a detected replay of an execution
+        capability into a 500. That inverts the control: the caller is told to retry, by the
+        mechanism whose entire job was to refuse it. No failure of this sink may reach the
+        decision, so every exception is absorbed here.
+
+        A dropped event is **lost**, not deferred: there is no queue behind this. So the row we
+        could not write is logged in full at ERROR, where the same pipeline that ships logs to the
+        SIEM can recover it, and counted where an alert can see it. The payload carries ids and
+        hashes only — the same fields the outbox row would have carried.
+        """
+        document = {
+            "decision_id": decision_id,
+            "token_jti_hash": _jti_hash(jti),
+            "authenticated_workload": peer_spiffe,
+        }
         try:
             with self.security_event_pool.connection() as connection, connection.transaction():
                 self._scope(connection, tenant_id)
                 connection.execute(
                     "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
                     "VALUES (%s,'security',%s,%s,%s)",
-                    (
-                        tenant_id,
-                        "security-" + uuid4().hex,
-                        event_type,
-                        json.dumps(
-                            {
-                                "decision_id": decision_id,
-                                "token_jti_hash": _jti_hash(jti),
-                                "authenticated_workload": peer_spiffe,
-                            }
-                        ),
-                    ),
+                    (tenant_id, "security-" + uuid4().hex, event_type, json.dumps(document)),
                 )
         except PoolTimeout:
-            metric = "security_event_pool_timeout"
-            self.security_event_counters[metric] += 1
-            LOGGER.error(metric, extra={"tenant_id": tenant_id, "decision_id": decision_id})
+            self._dropped_security_event(tenant_id, event_type, document, "pool_timeout", None)
+        except Exception as exc:  # noqa: BLE001 - see the docstring: the sink may not decide
+            self._dropped_security_event(
+                tenant_id, event_type, document, type(exc).__name__, exc
+            )
+
+    def _dropped_security_event(
+        self,
+        tenant_id: str,
+        event_type: str,
+        document: dict[str, Any],
+        cause: str,
+        error: BaseException | None,
+    ) -> None:
+        metric = "security_event_pool_timeout" if cause == "pool_timeout" else "security_event_write_failed"
+        self.security_event_counters[metric] += 1
+        self.metrics.security_events_dropped.labels(tenant_id, event_type, cause).inc()
+        LOGGER.error(
+            "security event dropped and lost",
+            extra={
+                "tenant_id": tenant_id,
+                "event_type": event_type,
+                "cause": cause,
+                "metric": metric,
+                "dropped_event": json.dumps(document, sort_keys=True),
+                **document,
+            },
+            exc_info=error,
+        )
 
     def heartbeat(
         self, tenant_id: str, decision_id: str, lease_id: str, peer_spiffe: str

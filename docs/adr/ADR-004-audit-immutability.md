@@ -494,3 +494,39 @@ LEVEL SECURITY keyed on the current tenant, so a process able to enumerate tenan
 have crossed the boundary ADR-005 exists to hold. The cost is real and is recorded as blocker
 B-19: a tenant absent from the drainer's configuration is never published and never swept, and
 nothing in the system currently notices.
+
+### G.20 Implementation delta — the trace id is a fact about a trace (T-073)
+
+`ADR_Record.trace_id` is specified in SPEC §2 as *"W3C traceparent trace-id (OpenTelemetry)"*, and
+until T-073 it was populated with `sha256(request_id)[:32]`. That value satisfied every automated
+check the tree can apply: thirty-two lowercase hex characters, present on every record, stable
+across retries of the same request, accepted by the `mizan.trace_id` domain and by the closed
+schema. It was also a member of no trace that has ever existed.
+
+This matters because of what an ADR_Record is *for*. Every other field in it is either a fact the
+control plane observed or a hash committing to one; the record's entire authority rests on the
+reader being able to trust that a populated field means what the schema says it means. A field
+that is well-formed, signed, chained, anchored and false costs more than an absent field, because
+an absent field is a question and a false one is an answer. An investigator holding a record and
+trying to open the request that produced it finds an id their tracing backend has never seen, with
+nothing in the record to say the id was never real.
+
+Two properties are now normative.
+
+**Correlation identifiers are received or minted, never derived.** `trace_id` and `span_id` come
+from the caller's `traceparent` header when there is one, and are generated when this decision
+begins the trace. A correlation identifier computed from a request id — or from anything else that
+is not a trace — is prohibited, including as a fallback: a decision reached with no ambient trace
+mints a real id rather than deriving a plausible one. `span_id` is populated; it was hardcoded
+`null`, so a record named a trace without naming its own position inside it.
+
+**Propagation is unconditional; export is not.** Continuing the caller's `traceparent` and
+recording it needs no dependency and is always on. Whether those spans also reach a collector
+depends on the `otel` extra and on `MIZAN_OTEL_EXPORTER_OTLP_ENDPOINT`. An endpoint configured
+without the exporter installed refuses at startup rather than serving a process that reports
+itself healthy and exports nothing — configured-and-silent is the failure that is found during the
+incident instead of before it.
+
+Both directions of the correction are demonstrated against `793a54a`, where the same authorization
+produces `trace_id=09fef18dd7c0dc66009857d7d4d02a52` — exactly `sha256(request_id)[:32]` — and
+`span_id=null`, and where the T-073 contract rejects that record on both fields.

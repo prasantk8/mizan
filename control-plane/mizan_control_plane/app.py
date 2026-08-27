@@ -37,6 +37,12 @@ from .models import (
     PolicyTransitionRequest,
 )
 from .mtls import VerifiedPeerSpiffeMiddleware, require_workload_spiffe
+from .observability import (
+    Metrics,
+    RequestObservabilityMiddleware,
+    Tracer,
+    annotate,
+)
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -52,8 +58,11 @@ def create_app(
     evidence_verifier: ObjectEvidenceVerifier | None = None,
     execution_service: ExecutionService | None = None,
     key_provider: KeyProvider | None = None,
+    metrics: Metrics | None = None,
+    tracer: Tracer | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
+    metrics = metrics or Metrics()
     verifier = TokenVerifier(settings.jwt_issuer, settings.jwt_audience, settings.jwt_public_key)
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
@@ -65,11 +74,15 @@ def create_app(
         RegistryFloorRiskProvider(),
         settings.evaluator_build,
         settings.evaluator_configuration_hash,
+        metrics=metrics,
     )
 
     @asynccontextmanager
     async def lifespan(instance: FastAPI) -> AsyncIterator[None]:
         yield
+        server = getattr(instance.state, "metrics_server", None)
+        if server is not None:
+            server.close()
         for pool in instance.state.connection_pools:
             try:
                 pool.close()
@@ -86,7 +99,11 @@ def create_app(
         approval_repository.pool,
     ]
     app.state.settings = settings
+    app.state.metrics = metrics
     app.add_middleware(VerifiedPeerSpiffeMiddleware)
+    # Added last, so it runs first: the access line and the latency observation must cover every
+    # other middleware, including the ones that can refuse a request before it reaches a route.
+    app.add_middleware(RequestObservabilityMiddleware, metrics=metrics, tracer=tracer)
     app.add_exception_handler(Problem, problem_response)
 
     @app.post("/v1/authorize", response_model=AuthorizationResponse)
@@ -96,13 +113,19 @@ def create_app(
         return service.authorize(verifier.verify(token), context)
 
     def tenant_from_token(token: str = Depends(bearer_token)) -> str:
-        return verifier.verify_tenant(token)
+        tenant_id = verifier.verify_tenant(token)
+        annotate(tenant_id=tenant_id)
+        return tenant_id
 
     def principal_from_token(token: str = Depends(bearer_token)):
-        return verifier.verify_principal(token)
+        principal = verifier.verify_principal(token)
+        annotate(tenant_id=principal.tenant_id)
+        return principal
 
     def agent_from_token(token: str = Depends(bearer_token)) -> AuthenticatedIdentity:
-        return verifier.verify(token)
+        identity = verifier.verify(token)
+        annotate(tenant_id=identity.tenant_id)
+        return identity
 
     def workload_spiffe(request: Request) -> str:
         return require_workload_spiffe(request.scope)

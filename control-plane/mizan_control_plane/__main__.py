@@ -9,6 +9,7 @@ import sys
 import uvicorn
 
 from .config import Settings
+from .observability import configure_logging
 from .runtime import (
     StartupRefused,
     build_runtime,
@@ -20,9 +21,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Mizan control plane API")
     parser.add_argument("--host", help="overrides MIZAN_HTTP_HOST")
     parser.add_argument("--port", type=int, help="overrides MIZAN_HTTP_PORT")
-    parser.add_argument("--log-level", default="info")
+    parser.add_argument("--log-level", help="overrides MIZAN_LOG_LEVEL")
     arguments = parser.parse_args(argv)
-    logging.basicConfig(level=arguments.log_level.upper())
+    # Structured from the first line: a startup refusal is exactly the log an operator greps, and
+    # `build_runtime` reconfigures with the settings' level once it can read them.
+    configure_logging(arguments.log_level or "info")
     try:
         settings = Settings.from_environment()
         runtime = build_runtime(settings)
@@ -38,8 +41,14 @@ def main(argv: list[str] | None = None) -> int:
         runtime.app,
         host=arguments.host or settings.http_host,
         port=arguments.port or settings.http_port,
-        log_level=arguments.log_level,
+        log_level=(arguments.log_level or settings.log_level).lower(),
         http=spiffe_scope_protocol_class(),
+        # uvicorn otherwise installs its own dictConfig and its own access log, which produces a
+        # process emitting two log formats at once and one access line per request in each. The
+        # duplicate is the worse half: uvicorn's line has the request path rather than the route
+        # template, and knows nothing of the trace, tenant or decision the request belonged to.
+        log_config=None,
+        access_log=False,
         **_tls_arguments(settings),
     )
     return 0

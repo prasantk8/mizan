@@ -44,10 +44,22 @@ from .evidence import (
     append_decision_event_tx,
 )
 from .execution import save_lease_tx
+from .observability import Metrics, MetricsServer, TraceContext, configure_logging, context
 from .problems import Problem
 from .runtime import build_key_provider
 
 LOGGER = logging.getLogger("mizan.drain")
+
+def _trace_fields() -> dict[str, str]:
+    """A fresh trace per tenant per tick.
+
+    The worker has no caller and therefore no inbound `traceparent`, so every tick starts its own
+    trace. That is what makes the eight log lines of one tenant's tick greppable as one unit —
+    without it they are eight unrelated lines that happen to share a timestamp.
+    """
+    started = TraceContext.begin()
+    return {"trace_id": started.trace_id, "span_id": started.span_id}
+
 
 LIVE_LEASE_STATES = ("LEASED", "EXECUTING")
 TERMINAL_APPROVAL_STATES = ("APPROVED", "REJECTED", "EXPIRED", "WITHDRAWN", "OVERRIDDEN")
@@ -68,22 +80,33 @@ class EvidenceBreaker:
     re-fires every 250ms is a breaker nobody reads, and one that never re-fires hides a recurrence.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, metrics: Metrics | None = None) -> None:
         self.open: set[tuple[str, str]] = set()
         self.history: list[tuple[str, str, str]] = []
+        self.metrics = metrics or Metrics()
 
     def trip(self, reason: str, tenant_id: str, detail: str) -> None:
         key = (reason, tenant_id)
+        # The gauge is set on every tick, not only on the edge. The log line fires once because a
+        # human reads it; the gauge must keep asserting `1` because a scraper that starts after the
+        # edge has to be able to learn the breaker is open.
+        self.metrics.breaker.labels(tenant_id, reason).set(1)
         if key in self.open:
             return
         self.open.add(key)
         self.history.append((reason, tenant_id, detail))
-        LOGGER.error("EVIDENCE BREAKER OPEN: %s tenant=%s %s", reason, tenant_id, detail)
+        LOGGER.error(
+            "evidence breaker open",
+            extra={"breaker": reason, "tenant_id": tenant_id, "detail": detail},
+        )
 
     def clear(self, reason: str, tenant_id: str) -> None:
+        self.metrics.breaker.labels(tenant_id, reason).set(0)
         if (reason, tenant_id) in self.open:
             self.open.discard((reason, tenant_id))
-            LOGGER.warning("evidence breaker closed: %s tenant=%s", reason, tenant_id)
+            LOGGER.warning(
+                "evidence breaker closed", extra={"breaker": reason, "tenant_id": tenant_id}
+            )
 
     @property
     def is_open(self) -> bool:
@@ -312,23 +335,48 @@ class OutboxWorker:
         policy: DrainPolicy | None = None,
         breaker: Breaker | None = None,
         clock: Any = time.monotonic,
+        metrics: Metrics | None = None,
     ) -> None:
         if not tenants:
             raise ValueError("a drain worker with no tenants publishes nothing")
+        self.metrics = metrics or Metrics()
         self.publisher = publisher
         self.repository = repository
         self.sweeper = sweeper
         self.tenants = tenants
         self.policy = policy or DrainPolicy()
-        self.breaker = breaker or EvidenceBreaker()
+        self.breaker = breaker or EvidenceBreaker(self.metrics)
         self.clock = clock
         self._records_since_anchor: dict[tuple[str, str], int] = {}
         self._last_sweep: dict[str, float] = {}
 
     def tick(self) -> list[TenantTick]:
-        return [self.tick_tenant(tenant_id) for tenant_id in self.tenants]
+        """One pass over every configured tenant.
+
+        A tenant whose tick raises must not take the others down with it. That is the same shape
+        as T-074's per-stream isolation one level up, and for the same reason: this process is the
+        only thing publishing evidence for *every* tenant, so a fault scoped to one of them that
+        stops all of them converts a local outage into a total one. The failure is counted, logged
+        with its exception type, and the loop continues; the breaker and the lag gauge are what
+        make it visible that this tenant is no longer progressing.
+        """
+        ticks: list[TenantTick] = []
+        for tenant_id in self.tenants:
+            try:
+                ticks.append(self.tick_tenant(tenant_id))
+            except Exception as failure:  # noqa: BLE001 - see the docstring
+                self.metrics.worker_tick_failures.labels(
+                    tenant_id, type(failure).__name__
+                ).inc()
+                self.breaker.trip("drain_tick_failed", tenant_id, repr(failure))
+                LOGGER.exception("drain tick failed", extra={"tenant_id": tenant_id})
+        return ticks
 
     def tick_tenant(self, tenant_id: str) -> TenantTick:
+        with context(tenant_id=tenant_id, **_trace_fields()):
+            return self._tick_tenant(tenant_id)
+
+    def _tick_tenant(self, tenant_id: str) -> TenantTick:
         published, quarantined = self._drain(tenant_id)
         relayed = self._relay(tenant_id)
         swept = self._sweep(tenant_id)
@@ -344,6 +392,7 @@ class OutboxWorker:
                 backlog["pending"],
             )
         breached = self._check_lag(tenant_id, backlog, quarantined)
+        self._record(tenant_id, published, relayed, quarantined, anchored, swept, backlog)
         return TenantTick(
             tenant_id=tenant_id,
             published=published,
@@ -355,6 +404,42 @@ class OutboxWorker:
             oldest_age_seconds=backlog["oldest_age_seconds"],
             lag_breached=breached,
         )
+
+    def _record(
+        self,
+        tenant_id: str,
+        published: int,
+        relayed: int,
+        quarantined: int,
+        anchored: tuple[str, ...],
+        swept: SweepReport,
+        backlog: dict[str, Any],
+    ) -> None:
+        """Everything this tick learned, in the one place an operator can scrape it.
+
+        `publication_lag` and `pending` are gauges read from the database each tick rather than
+        accumulated in this process, so a worker that restarts reports the real backlog on its
+        first tick instead of zero — a counter that resets to zero on restart is indistinguishable
+        from a backlog that cleared, and they call for opposite responses.
+        """
+        metrics = self.metrics
+        if published:
+            metrics.evidence_published.labels(tenant_id).inc(published)
+        if relayed:
+            metrics.events_relayed.labels(tenant_id).inc(relayed)
+        if quarantined:
+            metrics.outbox_quarantined.labels(tenant_id).inc(quarantined)
+        for stream_id in anchored:
+            metrics.anchors_written.labels(tenant_id, stream_id).inc()
+        if swept.approvals:
+            metrics.approvals_expired.labels(tenant_id).inc(len(swept.approvals))
+        if swept.leases:
+            metrics.leases_expired.labels(tenant_id).inc(len(swept.leases))
+        metrics.outbox_pending.labels(tenant_id).set(backlog["pending"])
+        metrics.outbox_quarantined_rows.labels(tenant_id).set(backlog["quarantined"])
+        metrics.publication_lag.labels(tenant_id).set(backlog["oldest_age_seconds"])
+        metrics.worker_ticks.labels(tenant_id).inc()
+        metrics.worker_heartbeat.labels(tenant_id).set(time.time())
 
     def _drain(self, tenant_id: str) -> tuple[int, int]:
         """Keep draining while batches come back full.
@@ -503,7 +588,11 @@ def build_worker(
     )
     sweeper = ExpirySweeper(settings.database_url)
     policy = DrainPolicy.from_settings(settings)
-    return OutboxWorker(publisher, repository, sweeper, tenants, policy), repository, sweeper
+    return (
+        OutboxWorker(publisher, repository, sweeper, tenants, policy, metrics=Metrics()),
+        repository,
+        sweeper,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -518,11 +607,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--once", action="store_true", help="run one tick and exit")
     parser.add_argument("--no-sweep", action="store_true", help="drain only; skip expiry sweeping")
-    args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+    parser.add_argument(
+        "--metrics-port",
+        type=int,
+        help="serve Prometheus metrics on this port; overrides MIZAN_METRICS_PORT",
     )
+    args = parser.parse_args(argv)
     settings = Settings.from_environment()
+    configure_logging(
+        settings.log_level, json_output=settings.log_format == "json", stream=sys.stderr
+    )
     tenants = tuple(args.tenant_id) or settings.drain_tenants
     if not tenants:
         parser.error(
@@ -534,13 +628,26 @@ def main(argv: list[str] | None = None) -> int:
     worker, repository, sweeper = build_worker(settings, tenants)
     if args.no_sweep:
         worker.sweeper = None
+    port = args.metrics_port if args.metrics_port is not None else settings.metrics_port
+    server = (
+        MetricsServer(worker.metrics, settings.metrics_host, port).start() if port > 0 else None
+    )
+    if server is None:
+        # Said once, at INFO, because the alternative is an operator discovering during an
+        # incident that the process they were watching was never publishing anything to watch.
+        LOGGER.info(
+            "no metrics listener: publication lag, quarantine and breaker state are visible in "
+            "logs only. Set MIZAN_METRICS_PORT or --metrics-port to expose them."
+        )
     stop = threading.Event()
     for received in (signal.SIGTERM, signal.SIGINT):
         signal.signal(received, lambda *_: stop.set())
-    LOGGER.info("draining %s tenant(s): %s", len(tenants), ", ".join(tenants))
+    LOGGER.info("drain worker started", extra={"tenants": ",".join(tenants), "count": len(tenants)})
     try:
         worker.run(stop, once=args.once)
     finally:
+        if server is not None:
+            server.close()
         repository.pool.close()
         sweeper.close()
     # A drainer that exits while the breaker is open must not look like a clean shutdown to a
