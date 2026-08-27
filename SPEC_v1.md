@@ -658,6 +658,59 @@ Fields that the evidence record requires are **required here or supplied by mand
 }
 ```
 
+### 2.4a ContextResponse (policy replay read model)
+
+The tenant-scoped read model for replaying a recorded decision through policy simulation. `context`
+is the normalized document committed beside the ADR_Record and hashed as `context_hash`. It is not a
+reconstructed request: transient `tool.arguments` are intentionally absent and MUST NOT be added to
+this response. A simulation client may supply an empty arguments object to the simulation request
+envelope; arguments remain outside the policy namespace and the replay does not recompute binding.
+
+```json
+{
+  "$id": "https://mizan.ai/schemas/context_response/1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContextResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["context_hash", "context"],
+  "properties": {
+    "context_hash": { "$ref": "common#/$defs/Sha256Hex" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_id", "principal", "agent", "intent", "tool",
+                   "action", "resource", "environment", "timestamp"],
+      "properties": {
+        "schema_version": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/schema_version" },
+        "request_id": { "$ref": "common#/$defs/RequestId" },
+        "principal": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/principal" },
+        "agent": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/agent" },
+        "customer": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/customer" },
+        "intent": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/intent" },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "parameters_hash", "binding_profile"],
+          "properties": {
+            "id": { "$ref": "common#/$defs/ToolId" },
+            "parameters_hash": { "$ref": "common#/$defs/Sha256Hex" },
+            "binding_profile": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/tool/properties/binding_profile" }
+          }
+        },
+        "action": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/action" },
+        "resource": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/resource" },
+        "business": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/business" },
+        "security": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/security" },
+        "mapped": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/mapped" },
+        "environment": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/environment" },
+        "timestamp": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/timestamp" }
+      }
+    }
+  }
+}
+```
+
 ### 2.5 AuditTrail
 
 One entry per event (§4). ADR_Records are the *decision* evidence; AuditTrail is the *everything-else* ledger (registrations, policy changes, admin actions, security events). Both are hash-chained per stream (ADR-004).
@@ -1323,6 +1376,16 @@ paths:
 
   /v1/decisions/{decision_id}:
     get: { summary: Fetch immutable ADR_Record + ordered DecisionEvents, responses: { "200": {description: OK} } }
+  /v1/decisions/{decision_id}/context:
+    get:
+      summary: "Fetch the immutable normalized policy context and its recorded context_hash for replay. Raw tool arguments are never returned."
+      responses:
+        "200":
+          description: Stored context
+          content:
+            application/json:
+              schema: { $ref: "https://mizan.ai/schemas/context_response/1.0.json" }
+        "404": { description: Decision context not found in the authenticated tenant }
   /v1/decisions/{decision_id}/execution-token:
     post:
       summary: "Issue the ExecutionToken (§2.10) a decision earned. Permitted after ALLOW, or after the decision's approval reaches APPROVED/OVERRIDDEN. Only the agent principal named by the ADR_Record may ask (V-23). At most one unconsumed, unexpired token exists per decision: a repeat request returns the outstanding one rather than granting a second capability. `authorized_executor` is chosen from the tool version's registered set (V-21); a caller may name one of them and never propose a new one."

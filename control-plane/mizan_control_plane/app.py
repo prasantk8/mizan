@@ -314,6 +314,12 @@ def create_app(
     ) -> dict[str, Any]:
         return evidence_repository.decision(tenant_id, decision_id)
 
+    @app.get("/v1/decisions/{decision_id}/context")
+    def get_decision_context(
+        decision_id: str, tenant_id: str = Depends(tenant_from_token)
+    ) -> dict[str, Any]:
+        return evidence_repository.decision_context(tenant_id, decision_id)
+
     @app.get("/v1/decisions")
     def search_decisions(
         limit: int = Query(50, ge=1, le=200),

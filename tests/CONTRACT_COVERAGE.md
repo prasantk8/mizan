@@ -50,3 +50,4 @@ argument-revalidation, and semantic-policy-hash coverage.
 | V-19 | `integration/test_authorize_postgres.py::test_v19_identical_decision_event_retry_returns_same_event` |
 | R-003/B-9 | `unit/test_registry.py::test_ratified_policy_hash_excludes_only_lifecycle_fields` plus live lifecycle transitions preserving the ADR-referenced hash |
 | §8.1 / ADR-008 Amd. (executor obligations) | `integration/test_mcp_gateway_postgres.py::test_an_mcp_client_reaches_tools_only_through_a_recorded_decision` + `unit/test_mcp_gateway.py::test_an_authorized_call_whose_capability_is_refused_is_never_performed` + `unit/test_mcp_gateway.py::test_the_documented_example_configuration_is_one_the_gateway_accepts` |
+| ADR-009 decision-context replay read | `integration/test_policy_studio_postgres.py::test_policy_studio_replay_returns_exactly_the_seeded_flip_set` |

@@ -7,6 +7,8 @@ const state = {
   approval: null,
   decision: null,
   requesterId: null,
+  draftPolicies: [],
+  lastReplay: null,
   activeView: "dashboard",
 };
 
@@ -204,6 +206,142 @@ async function loadAudit(append = false) {
     state.auditCursor = page.next_cursor;
     $("moreAudit").classList.toggle("hidden", !page.next_cursor);
     setStatus(`${page.items.length} audit events loaded.`);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+function resetReplay(message = "Run a replay to compare a draft with immutable decisions.") {
+  state.lastReplay = null;
+  $("policyFlips").replaceChildren();
+  $("replaySummary").textContent = message;
+  $("testedEvidence").textContent = "No replay evidence in this session.";
+  $("markTested").disabled = true;
+}
+
+async function loadPolicyStudio() {
+  try {
+    const page = await request("GET", "/v1/policies", "/v1/policies?limit=200");
+    state.draftPolicies = page.items.filter((policy) => policy.status === "DRAFT");
+    const select = $("policyReplay").elements.policy;
+    const selected = select.value;
+    select.replaceChildren(element("option", "Select a DRAFT policy"));
+    select.firstElementChild.value = "";
+    for (const policy of state.draftPolicies) {
+      const option = element("option", `${policy.name} · ${policy.policy_id} v${policy.version}`);
+      option.value = `${policy.policy_id}:${policy.version}`;
+      select.append(option);
+    }
+    if ([...select.options].some((option) => option.value === selected)) select.value = selected;
+    setStatus(`${state.draftPolicies.length} draft policies available for replay.`);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function mapLimit(items, concurrency, callback) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await callback(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
+function renderFlip(flip) {
+  const wrapper = element("article", undefined, "flip-card");
+  const heading = element("div", undefined, "flip-heading");
+  heading.append(
+    element("h3", `${flip.from} → ${flip.to}`),
+    element("span", `Context ${flip.contextHash}`, "hash"),
+  );
+  wrapper.append(heading);
+  renderDecisionCard(wrapper, flip.detail);
+  $("policyFlips").append(wrapper);
+}
+
+async function replayPolicy() {
+  const values = Object.fromEntries(new FormData($("policyReplay")));
+  const policy = state.draftPolicies.find((candidate) => `${candidate.policy_id}:${candidate.version}` === values.policy);
+  if (!policy) {
+    resetReplay("Select a DRAFT policy before replaying decisions.");
+    return;
+  }
+  resetReplay("Replay running…");
+  try {
+    const page = await request("GET", "/v1/decisions", `/v1/decisions?limit=${encodeURIComponent(values.limit)}`);
+    const comparisons = await mapLimit(page.items, 6, async (decision) => {
+      const stored = await request(
+        "GET",
+        "/v1/decisions/{decision_id}/context",
+        `/v1/decisions/${encodeURIComponent(decision.decision_id)}/context`,
+      );
+      const simulationContext = JSON.parse(JSON.stringify(stored.context));
+      simulationContext.tool.arguments = {};
+      const simulation = await request(
+        "POST",
+        "/v1/policies/{policy_id}/simulate",
+        `/v1/policies/${encodeURIComponent(policy.policy_id)}/simulate`,
+        { version: policy.version, context: simulationContext },
+      );
+      if (simulation.decision === decision.decision) return null;
+      const detail = await request(
+        "GET",
+        "/v1/decisions/{decision_id}",
+        `/v1/decisions/${encodeURIComponent(decision.decision_id)}`,
+      );
+      return {
+        from: decision.decision,
+        to: simulation.decision,
+        contextHash: stored.context_hash,
+        detail,
+      };
+    });
+    const flips = comparisons.filter(Boolean);
+    const directions = {};
+    for (const flip of flips) {
+      const direction = `${flip.from}→${flip.to}`;
+      directions[direction] = (directions[direction] || 0) + 1;
+      renderFlip(flip);
+    }
+    const breakdown = Object.entries(directions).map(([direction, count]) => `${direction}: ${count}`).join(" · ");
+    $("replaySummary").textContent = `${page.items.length} replayed · ${flips.length} flipped${breakdown ? ` · ${breakdown}` : ""}`;
+    $("testedEvidence").textContent = `${page.items.length} contexts replayed, ${flips.length} outcome changes.`;
+    state.lastReplay = {
+      policyId: policy.policy_id,
+      version: policy.version,
+      replayed: page.items.length,
+      flipped: flips.length,
+    };
+    $("markTested").disabled = false;
+    if (!flips.length) $("policyFlips").append(element("p", "No recorded decision changes under this draft.", "hint"));
+    setStatus(`Draft replay completed across ${page.items.length} immutable decisions.`);
+  } catch (error) {
+    resetReplay(`Replay failed: ${error.message}`);
+    setStatus(error.message, "error");
+  }
+}
+
+async function markPolicyTested() {
+  const replay = state.lastReplay;
+  if (!replay) return;
+  try {
+    await request(
+      "POST",
+      "/v1/policies/{policy_id}/transition",
+      `/v1/policies/${encodeURIComponent(replay.policyId)}/transition`,
+      { version: replay.version, target_status: "TESTED" },
+    );
+    $("markTested").disabled = true;
+    $("testedEvidence").textContent = `TESTED after ${replay.replayed} replays and ${replay.flipped} flips.`;
+    state.lastReplay = null;
+    await loadPolicyStudio();
+    setStatus(`Policy ${replay.policyId} v${replay.version} transitioned to TESTED.`);
   } catch (error) {
     setStatus(error.message, "error");
   }
@@ -463,6 +601,7 @@ async function withdrawApproval() {
 const loaders = {
   dashboard: loadDashboard,
   approvals: loadApprovals,
+  policyStudio: loadPolicyStudio,
   agents: loadAgents,
   decisions: loadDecisions,
   audit: loadAudit,
@@ -483,6 +622,9 @@ document.querySelectorAll(".nav").forEach((button) => {
 $("filters").onsubmit = (event) => { event.preventDefault(); state.decisionCursor = null; loadDecisions(); };
 $("approvalFilters").onsubmit = (event) => { event.preventDefault(); state.approvalCursor = null; loadApprovals(); };
 $("approvalActions").onsubmit = (event) => { event.preventDefault(); castVote(); };
+$("policyReplay").onsubmit = (event) => { event.preventDefault(); replayPolicy(); };
+$("policyReplay").onchange = () => resetReplay();
+$("markTested").onclick = markPolicyTested;
 $("moreApprovals").onclick = () => loadApprovals(true);
 $("moreDecisions").onclick = () => loadDecisions(true);
 $("moreAudit").onclick = () => loadAudit(true);

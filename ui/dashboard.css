@@ -91,8 +91,25 @@ dialog.wide { width: min(1080px, calc(100vw - 40px)); max-width: none; }
 .approval-actions select { width: 100%; }
 .guard { min-height: 2.5em; color: var(--amber); }
 .danger { border-color: var(--red); color: var(--red); }
+.studio-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.studio-summary > div:last-child { text-align: right; }
+.flip-list { display: grid; gap: 18px; margin-top: 18px; }
+.flip-card { border: 1px solid var(--amber); padding: 18px; background: var(--bg); }
+.flip-card .decision-card { margin-bottom: 0; }
+.flip-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.flip-heading h3 { margin: 0; color: var(--amber); }
 @media (max-width: 760px) {
   .approval-actions { grid-template-columns: 1fr; }
   .timeline article { grid-template-columns: 45px 1fr; }
   .filters.compact { grid-template-columns: 1fr; }
+  .studio-summary, .flip-heading { align-items: flex-start; flex-direction: column; }
+  .studio-summary > div:last-child { text-align: left; }
 }
