@@ -3,6 +3,12 @@
 `pytest.mark.skipif(not MIZAN_TEST_DATABASE_URL)` is right on a laptop and wrong on a build
 machine: it turns "the database was never provisioned" into a green run. Under `CI=true` the
 absence of the DSN is a configuration failure, reported before a single test executes.
+
+The guard is about tests that are going to *execute*. A `--collect-only` run takes an
+inventory of node IDs and runs nothing, so nothing can be falsely reported as skipped and the
+guard's premise does not hold. It fired there anyway, which killed `python-contract` -- a job
+with no PostgreSQL service and no reason to have one -- over a condition satisfied by
+`postgres-contract`, which does set the DSN and does run the gated suite. R-008 F-11.
 """
 
 from __future__ import annotations
@@ -24,6 +30,8 @@ def _needs_postgres(item: pytest.Item) -> bool:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
+    if config.option.collectonly:
+        return
     if os.environ.get("CI", "").lower() != "true" or os.environ.get("MIZAN_TEST_DATABASE_URL"):
         return
     gated = [item.nodeid for item in items if _needs_postgres(item)]
