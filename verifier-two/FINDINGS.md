@@ -88,6 +88,54 @@ Verifier-two now type-checks `files` values as strings and lets the comparison d
 say which sentences in it are grammar and which are evidence** — the distinction decides the
 verdict and is currently left to the reader.
 
+## D-4 — a timestamp whose certificate has since expired is reported as an evidence failure. **Open, escalated.**
+
+`scripts/verify_evidence_export.py tests/fixtures/evidence_export/attested/bundle --tsa-trust-anchor .../tsa-root.pem`
+exits **1** with `FAIL: RFC 3161 TSA certificate is expired`. verifier-two exits **0** and prints a
+`TIMESTAMP LIFETIME:` warning above the verdict.
+
+**This was found by CI, not by me**, and it is the most interesting finding in this file for that
+reason. The committed test TSA certificate has a one-day lifetime. The bundle verified on 2026-08-27
+and stopped verifying on 2026-08-28 with no byte of it changed. A verification result that decays on
+a calendar is a real property of evidence and neither implementation had a considered position on it.
+
+Both behaviours are defensible and both are incomplete:
+
+* Validating the chain at `genTime` — what verifier-two does — is the property a timestamp exists to
+  provide. A timestamp that stopped meaning anything when the TSA's certificate lapsed would be
+  worthless for exactly the archival case it is bought for.
+* But an expired certificate publishes no revocation information, so a key compromised *after*
+  expiry can mint a token bearing any `genTime` and nothing in either verifier would see it. The
+  reference's caution has real content. What is wrong is the **report**, not the concern: `FAIL`
+  says the evidence is bad, when the bundle is unchanged and the timestamp attests exactly what it
+  always attested.
+
+verifier-two states both facts and invents no verdict. It is not claiming to be right — the correct
+long-term answer is probably neither of these but archive timestamping (RFC 4998 / CAdES-A), where a
+token is re-timestamped before its chain expires, which is a design decision neither implementation
+is entitled to make alone.
+
+**Escalated as B-21.** H-7 fires on cryptography. T-091 is in flight on the adjacent question ("say
+when a bundle stops being verifiable") and should absorb this.
+
+## The bug this found in verifier-two
+
+Recording it here rather than only in the PR, because a findings register that lists only the other
+implementation's defects is not a findings register.
+
+The same CI failure exposed a real bug in `verifier-two`: RFC 5035 declares
+`ESSCertIDv2 ::= SEQUENCE { hashAlgorithm AlgorithmIdentifier DEFAULT {algorithm id-sha256}, ... }`,
+and I applied RFC 2634 `ESSCertID`'s SHA-1 default to it. A 32-byte `certHash` can never match a
+20-byte SHA-1 comparison, so the shipped attested bundle was reported **INVALID — ESSCertID does not
+identify the certificate that verified the signature**. An honest token called forged: the worst
+verdict a verifier can return.
+
+The conformance corpus could not reach it. Both public TSAs name their hash algorithm explicitly;
+only the committed test TSA relies on the DEFAULT. **A corpus assembled to exercise a specification
+does not automatically exercise the artifacts the product ships.** `tools/differential.mjs` now
+carries a third corpus, `shipped`, covering `tests/fixtures/evidence_export/`, and the fault
+`esscertid-v2-defaults-to-sha1` reverts the fix so the regression cannot return silently.
+
 ---
 
 ### What was done with the S-series in this change-set
@@ -190,11 +238,15 @@ implementer a day and the spec gave no way to know.
 roots, plus all 288 single-byte mutation cases:
 
 ```
-cases:                          295
-verifiers disagree:               1     (D-1, above)
+cases:                          300
+verifiers disagree:               4     (three instances of D-1, and D-4)
 reference vs recorded oracle:     0
 verifier-two vs oracle:           0
 ```
+
+The corpus is the six conformance bundles and the three shipped bundles, each run with and without
+its declared trust roots, plus all 288 single-byte mutation cases. Three of the four disagreements
+are D-1 seen on three different bundles; the fourth is D-4.
 
 The strongest independent confirmation is not in that table. Working from §3 alone, verifier-two
 computes `anchor_core_digest = 0042dc29e2169826901f390daa538545b293dfa83e560c5c16d43c9fcc6ab3a0`

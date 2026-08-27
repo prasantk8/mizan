@@ -1021,6 +1021,19 @@ function deriveAnchorState(anchor, at, trustRoots, report) {
     if (result.ok) {
       anyVerifiedTimestamp = true;
       report.note(`${at} timestamped by ${result.tsa} at ${result.genTime.toISOString()}`);
+      if (result.expiredSince.length > 0) {
+        // Prominent, and deliberately not a verdict. The chain was valid when the
+        // token was issued, which is the property a timestamp exists to provide;
+        // it is also true that an expired certificate publishes no revocation
+        // information. An auditor is entitled to both facts. See FINDINGS.md D-4.
+        report.warn(
+          `TIMESTAMP LIFETIME: ${at} was timestamped by a certificate chain that was valid at ` +
+            `${result.genTime.toISOString()} and has since expired ` +
+            `(${result.expiredSince.join('; ')}). The timestamp still attests what it always ` +
+            `attested. No revocation information is published for an expired certificate, so a ` +
+            `key compromised after expiry cannot be detected here.`,
+        );
+      }
     } else if (result.canCheck) {
       report.invalid(`${at} RFC 3161 attestation from ${entry.authority} failed: ${result.reason}`);
     } else {

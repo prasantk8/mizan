@@ -4,8 +4,8 @@ A second, from-scratch implementation of the Mizan evidence bundle verifier, wri
 from `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` and the conformance fixtures alone.
 
 **Read [FINDINGS.md](FINDINGS.md) first.** The verifier is the instrument; the findings are the
-result. Three implementation disagreements and nine specification gaps came out of building it, and
-one of them is still open against the reference.
+result. Four implementation disagreements and nine specification gaps came out of building it, two are
+still open against the reference, and one of them found a bug in this verifier.
 
 ## Why a second verifier exists
 
@@ -76,22 +76,22 @@ lib/ed25519.js            raw 32-byte keys wrapped into an RFC 8410 SPKI
 lib/rfc3161.js            timestamp tokens, chain building, EKU policy
 lib/verdict.js            the four verdicts and their precedence
 lib/verify.js             the bundle checks
-tools/differential.mjs    both verifiers over both corpora
+tools/differential.mjs    both verifiers over all three corpora
 tools/fault-injection.mjs breaks lib/ on purpose to prove the suite can go red
 ```
 
 ## Checking it
 
 ```
-npm test                          # 63 tests
-npm run differential              # both verifiers, 295 cases
-npm run fault-injection           # 11 faults, all must go red
+npm test                          # 66 tests
+npm run differential              # both verifiers, 300 cases
+npm run fault-injection           # 13 faults, all must go red
 ```
 
 `differential.mjs` compares **exit status only**. Prose is not the contract; two verifiers are
 entitled to phrase the same finding differently and are not entitled to disagree about the verdict.
 
-`fault-injection.mjs` reverts eleven real guards in `lib/` — one at a time, restoring in a
+`fault-injection.mjs` reverts thirteen real guards in `lib/` — one at a time, restoring in a
 `finally` — and requires the suite to go red for each, naming the test that caught it. Every fault
 is a regression in product code, not a stub in the harness: a fault injected into a test double
 proves only that a test asserting X fails when nothing does X, which was never in doubt. A fault

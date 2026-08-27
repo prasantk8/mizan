@@ -471,7 +471,23 @@ signed. Three defects were found and are fixed in the same change-set:
 * Section 1 and section 4 left the **Base64 alphabet, integer magnitude, attestation and checkpoint member
   sets, and the RFC 3161 evidence encoding** unstated. All are now named.
 
-The remaining disagreement is a defect in the reference verifier, not the format: a missing
+CI then found a fifth defect, in `verifier-two` itself: RFC 5035 `ESSCertIDv2` defaults its
+`hashAlgorithm` to SHA-256 and the second verifier applied RFC 2634 `ESSCertID`'s SHA-1 default,
+reporting the shipped attested bundle's honest timestamp as forged. The conformance corpus could not
+reach it because both public TSAs name their hash algorithm explicitly and only the committed test
+TSA relies on the DEFAULT. The differential now carries a third corpus over
+`tests/fixtures/evidence_export/`: a corpus assembled to exercise a specification does not
+automatically exercise the artifacts the product ships.
+
+The same CI run surfaced a question neither implementation had a position on, filed as B-21 and
+escalated under H-7: the attested bundle verified on 2026-08-27 and failed on 2026-08-28 with no byte
+of it changed, because the committed TSA certificate has a one-day lifetime. `verifier-two` validates
+the chain at `genTime` -- the property a timestamp is bought for -- and reports the subsequent expiry
+as a prominent lifetime warning rather than retracting the verdict; the reference reports `FAIL`.
+Both concerns are real and the resolution is probably archive timestamping, which is a design
+decision. T-091 is in flight on the adjacent question.
+
+The other remaining disagreement is a defect in the reference verifier, not the format: a missing
 `--tsa-trust-anchor` is reported as an evidence failure when section 7 makes a missing verifier dependency
 "neither `VALID` nor evidence failure". It is fixed separately, because fixing it requires reading the
 implementation and so must follow this change-set. `verifier-two/FINDINGS.md` is the register; the two

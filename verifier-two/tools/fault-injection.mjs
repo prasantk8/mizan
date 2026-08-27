@@ -87,6 +87,20 @@ const FAULTS = [
     replace: '    void 0;',
   },
   {
+    name: 'esscertid-v2-defaults-to-sha1',
+    proves: 'RFC 5035 ESSCertIDv2 defaults to SHA-256, not to ESSCertID v1 SHA-1',
+    file: 'lib/rfc3161.js',
+    find: "  let algorithm = isV2 ? 'sha256' : 'sha1';",
+    replace: "  let algorithm = 'sha1';",
+  },
+  {
+    name: 'expired-chain-reported-silently',
+    proves: 'a timestamp whose chain has since expired says so',
+    file: 'lib/verify.js',
+    find: '      if (result.expiredSince.length > 0) {',
+    replace: '      if (false) {',
+  },
+  {
     name: 'missing-trust-root-treated-as-failure',
     proves: 'a missing dependency is CANNOT CHECK, not an evidence failure',
     file: 'lib/rfc3161.js',

@@ -25,17 +25,23 @@ export class TokenInvalid extends Error {}
  * @param {Buffer} der           TimeStampResp or bare TimeStampToken bytes
  * @param {Buffer} expectedDigest  the 32 bytes the token must be a timestamp over
  * @param {crypto.X509Certificate[]} trustRoots  operator-supplied roots
- * @returns {{ok: boolean, canCheck: boolean, reason: string|null, genTime: Date|null, tsa: string|null}}
+ * @returns {{ok: boolean, canCheck: boolean, reason: string|null, genTime: Date|null, tsa: string|null, expiredSince: string[]}}
  */
 export function verifyTimestampToken(der, expectedDigest, trustRoots) {
   try {
-    return { ...check(der, expectedDigest, trustRoots), ok: true, canCheck: true, reason: null };
+    return {
+      expiredSince: [],
+      ...check(der, expectedDigest, trustRoots),
+      ok: true,
+      canCheck: true,
+      reason: null,
+    };
   } catch (error) {
     if (error instanceof CannotCheck) {
-      return { ok: false, canCheck: false, reason: error.message, genTime: null, tsa: null };
+      return { ok: false, canCheck: false, reason: error.message, genTime: null, tsa: null, expiredSince: [] };
     }
     if (error instanceof TokenInvalid || error instanceof DerError) {
-      return { ok: false, canCheck: true, reason: error.message, genTime: null, tsa: null };
+      return { ok: false, canCheck: true, reason: error.message, genTime: null, tsa: null, expiredSince: [] };
     }
     // An unexpected failure is a limit of this verifier, not evidence about the
     // bundle. Reporting it as an evidence failure would accuse the bundle of
@@ -46,6 +52,7 @@ export function verifyTimestampToken(der, expectedDigest, trustRoots) {
       reason: `this verifier could not evaluate the token: ${error.message}`,
       genTime: null,
       tsa: null,
+      expiredSince: [],
     };
   }
 }
@@ -86,9 +93,13 @@ function check(der, expectedDigest, trustRoots) {
   if (trustRoots.length === 0) {
     throw new CannotCheck('no trust roots supplied; RFC 3161 trust roots come from the operator, never from the bundle');
   }
-  buildChain(signer, certificates, trustRoots, tst.genTime);
+  const chain = buildChain(signer, certificates, trustRoots, tst.genTime);
 
-  return { genTime: tst.genTime, tsa: signer.subject };
+  return {
+    genTime: tst.genTime,
+    tsa: signer.subject,
+    expiredSince: expiredSinceIssue(chain, new Date()),
+  };
 }
 
 /** Accept either a TimeStampResp or the bare TimeStampToken inside it. */
@@ -280,7 +291,13 @@ function verifyEssCertId(attrValue, signer, isV2) {
   const first = certs.at(0).expect(TAG.SEQUENCE);
   const fields = first.children();
 
-  let algorithm = 'sha1';
+  // The two structures have DIFFERENT defaults, and using v1's for v2 makes a
+  // verifier reject honest tokens. RFC 2634 ESSCertID has no hashAlgorithm field
+  // at all and is always SHA-1; RFC 5035 ESSCertIDv2 declares
+  // `hashAlgorithm AlgorithmIdentifier DEFAULT {algorithm id-sha256}`, so an
+  // absent field means SHA-256. A 32-byte certHash under a SHA-1 comparison can
+  // never match.
+  let algorithm = isV2 ? 'sha256' : 'sha1';
   let hashIndex = 0;
   if (isV2 && fields[0].is(TAG.SEQUENCE)) {
     const oid = readOid(fields[0].at(0));
@@ -405,15 +422,35 @@ export function assertTimeStampingEku(extension) {
   }
 }
 
+/**
+ * Report certificates in the chain that were valid at genTime and have since
+ * expired.
+ *
+ * The chain is validated at genTime, not at verification time, because that is
+ * the property a timestamp exists to provide: it proves data existed by a date,
+ * and it would be worthless if it stopped meaning that the day the TSA's
+ * certificate lapsed. But an expired certificate publishes no revocation
+ * information, so a key compromised after expiry could mint a token bearing any
+ * genTime and nothing here would see it. Neither fact cancels the other, so the
+ * verifier states both rather than choosing. See FINDINGS.md D-4.
+ */
+function expiredSinceIssue(chain, now) {
+  return chain
+    .filter((cert) => Date.parse(cert.validTo) < now.getTime())
+    .map((cert) => `${cert.subject} (expired ${cert.validTo})`);
+}
+
 function buildChain(signer, bundled, trustRoots, at) {
   const pool = [...bundled, ...trustRoots];
   const rootSet = new Set(trustRoots.map((cert) => cert.fingerprint256));
+  const chain = [];
 
   let current = signer;
   for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
     requireValidAt(current, at);
+    chain.push(current);
 
-    if (rootSet.has(current.fingerprint256)) return;
+    if (rootSet.has(current.fingerprint256)) return chain;
 
     const issuer = pool.find(
       (candidate) =>

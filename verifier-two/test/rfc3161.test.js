@@ -8,7 +8,8 @@ import { verifyTimestampToken, loadTrustRoots, assertTimeStampingEku, TokenInval
 import { parseDer, readOid, readInteger, DerError, TAG } from '../lib/der.js';
 import { OID } from '../lib/oid.js';
 import { jcs } from '../lib/jcs.js';
-import { anchorCoreDigest } from '../lib/verify.js';
+import { anchorCoreDigest, verifyBundle } from '../lib/verify.js';
+import { VERDICT } from '../lib/verdict.js';
 
 const REPO = path.resolve(import.meta.dirname, '../..');
 const PUBLIC_TSA = path.join(REPO, 'tests/fixtures/evidence_export/public-tsa');
@@ -127,4 +128,122 @@ test('a token whose PKIStatus is not granted carries no usable timestamp', () =>
   const rejected = Buffer.from('3006300402020200', 'hex');
   const result = verifyTimestampToken(rejected, coreDigest, roots);
   assert.equal(result.ok, false);
+});
+
+// --- the shipped bundles, not just the conformance fixtures ------------------
+//
+// These two tests exist because CI found a bug that the conformance corpus
+// structurally could not reach. Both public TSAs name their ESSCertIDv2 hash
+// algorithm explicitly; the committed test TSA omits it and relies on the
+// RFC 5035 DEFAULT. verifier-two applied ESSCertID v1's SHA-1 default to
+// ESSCertIDv2, so every 32-byte certHash failed a 20-byte comparison and an
+// honest token was reported as forged.
+
+const ATTESTED = path.join(REPO, 'tests/fixtures/evidence_export/attested');
+
+test('RFC 5035: an ESSCertIDv2 with no hashAlgorithm defaults to SHA-256, not SHA-1', () => {
+  const bundleAnchor = JSON.parse(fs.readFileSync(path.join(ATTESTED, 'bundle/anchors.json'), 'utf8'))[0];
+  const entry = (bundleAnchor.attestations ?? bundleAnchor.payload.attestations).find(
+    (candidate) => candidate.type === 'rfc3161' && candidate.evidence,
+  );
+  assert.ok(entry, 'the attested fixture carries an rfc3161 token');
+
+  // Prove the token really does omit hashAlgorithm, so this test cannot pass for
+  // the wrong reason if the fixture is ever regenerated with it present. Without
+  // this the test would still pass against a token that names SHA-256
+  // explicitly, and the DEFAULT -- the thing that broke -- would go unexercised.
+  const der = Buffer.from(entry.evidence, 'base64');
+  const essCertId = findEssCertIdV2(der);
+  assert.ok(essCertId, 'the shipped token carries a signingCertificateV2 attribute');
+  assert.ok(
+    essCertId.children()[0].is(TAG.OCTET_STRING),
+    'the shipped token omits hashAlgorithm and relies on the RFC 5035 DEFAULT',
+  );
+
+  const digest = Buffer.from(anchorCoreDigest(bundleAnchor.payload), 'hex');
+  const trustRoots = loadTrustRoots(fs.readFileSync(path.join(ATTESTED, 'tsa-root.pem'), 'utf8'));
+  const result = verifyTimestampToken(der, digest, trustRoots);
+
+  assert.equal(result.ok, true, `expected the shipped token to verify, got: ${result.reason}`);
+});
+
+test('a timestamp whose chain has since expired still verifies, and says so', () => {
+  const bundleAnchor = JSON.parse(fs.readFileSync(path.join(ATTESTED, 'bundle/anchors.json'), 'utf8'))[0];
+  const entry = (bundleAnchor.attestations ?? bundleAnchor.payload.attestations).find(
+    (candidate) => candidate.type === 'rfc3161' && candidate.evidence,
+  );
+  const digest = Buffer.from(anchorCoreDigest(bundleAnchor.payload), 'hex');
+  const trustRoots = loadTrustRoots(fs.readFileSync(path.join(ATTESTED, 'tsa-root.pem'), 'utf8'));
+  const result = verifyTimestampToken(Buffer.from(entry.evidence, 'base64'), digest, trustRoots);
+
+  assert.equal(result.ok, true);
+  assert.ok(Array.isArray(result.expiredSince));
+
+  // The committed test TSA certificate has a one-day lifetime, so this branch is
+  // live from the day after the fixture was generated onward. Asserting on the
+  // shape rather than on today's date keeps the test honest before that date
+  // too: what must hold is that an expired chain is reported and not silently
+  // downgraded to a failure.
+  const chainExpired = result.expiredSince.length > 0;
+  if (chainExpired) {
+    assert.match(result.expiredSince.join(' '), /expired/);
+    assert.equal(result.ok, true, 'expiry after genTime does not retract the timestamp');
+  }
+});
+
+/** Locate the first ESSCertIDv2 inside a token's signingCertificateV2 attribute. */
+function findEssCertIdV2(der) {
+  let found = null;
+  const walk = (node, depth) => {
+    if (found || depth > 12) return;
+    let children;
+    try {
+      children = node.children();
+    } catch {
+      return;
+    }
+    if (node.is(TAG.SEQUENCE) && children.length === 2 && children[0].is(TAG.OID)) {
+      let oid = null;
+      try {
+        oid = readOid(children[0]);
+      } catch {
+        oid = null;
+      }
+      if (oid === OID.signingCertificateV2) {
+        // SigningCertificateV2 ::= SEQUENCE { certs SEQUENCE OF ESSCertIDv2, ... }
+        found = children[1].at(0).at(0).at(0);
+        return;
+      }
+    }
+    for (const child of children) walk(child, depth + 1);
+  };
+  walk(parseDer(der), 0);
+  return found;
+}
+
+test('an expired timestamp chain is reported in the bundle verdict, not only in the token result', () => {
+  const dir = path.join(ATTESTED, 'bundle');
+  const report = verifyBundle(dir, {
+    trustRoots: loadTrustRoots(fs.readFileSync(path.join(ATTESTED, 'tsa-root.pem'), 'utf8')),
+  });
+
+  // The committed test TSA certificate has a one-day lifetime and the fixture is
+  // committed, so this precondition holds permanently from the day after it was
+  // generated. Asserting it rather than skipping on it means a regenerated
+  // fixture makes this test fail loudly instead of quietly stopping to test
+  // anything.
+  const lifetime = report.warnings.filter((w) => /^TIMESTAMP LIFETIME:/.test(w));
+  assert.equal(
+    lifetime.length,
+    1,
+    `expected one TIMESTAMP LIFETIME warning, got ${report.warnings.length} warnings: ` +
+      report.warnings.join(' | '),
+  );
+  assert.match(lifetime[0], /valid at .+ and has since expired/);
+  assert.match(lifetime[0], /still attests what it always attested/);
+  assert.match(lifetime[0], /key compromised after expiry cannot be detected/);
+
+  // And the expiry does not retract the timestamp.
+  assert.equal(report.verdict, VERDICT.VALID);
+  assert.equal(report.derivedAssurance, 'rfc3161');
 });

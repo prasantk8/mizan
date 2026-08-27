@@ -11,8 +11,16 @@
 //   conformance  the six hand-built bundles in tests/fixtures/conformance
 //   mutation     the 288 single-byte mutations named in mutation-result.json,
 //                which turn a good bundle into 288 near-miss bundles
+//   shipped      the bundles under tests/fixtures/evidence_export -- the ones the
+//                product actually produces and CI actually verifies
 //
-// Usage: node verifier-two/tools/differential.mjs [--corpus conformance|mutation|both] [--json]
+// The shipped corpus was added after CI found a bug in verifier-two that the
+// other two corpora could not reach: the conformance fixtures happen to use
+// timestamp tokens that name their ESSCertIDv2 hash algorithm explicitly, and
+// the shipped attested bundle relies on the DEFAULT. A corpus assembled to
+// exercise a specification does not automatically exercise the artifacts.
+//
+// Usage: node verifier-two/tools/differential.mjs [--corpus conformance|mutation|shipped|both|all] [--json]
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -76,6 +84,43 @@ async function conformanceCorpus() {
         corpus: 'conformance',
         name: `${testCase.bundle} (${label})`,
         expected: suppliedRoots.length === roots.length ? testCase.verdict : null,
+        reference: a.verdict,
+        second: b.verdict,
+        referenceOutput: a.output,
+        secondOutput: b.output,
+      });
+    }
+  }
+  return results;
+}
+
+// --- corpus 3: the bundles this product actually ships ------------------------
+
+const SHIPPED = path.join(REPO, 'tests/fixtures/evidence_export');
+
+const SHIPPED_CASES = [
+  { bundle: 'golden/bundle', roots: [] },
+  { bundle: 'attested/bundle', roots: ['attested/tsa-root.pem'] },
+  {
+    bundle: 'public-tsa/bundle',
+    roots: ['public-tsa/freetsa-root.pem', 'public-tsa/usertrust-rsa-root.pem'],
+  },
+];
+
+async function shippedCorpus() {
+  const results = [];
+  for (const testCase of SHIPPED_CASES) {
+    const dir = path.join(SHIPPED, testCase.bundle);
+    if (!fs.existsSync(dir)) continue;
+    const roots = testCase.roots.map((relative) => path.join(SHIPPED, relative));
+
+    for (const [label, suppliedRoots] of [['declared roots', roots], ['no roots', []]]) {
+      if (label === 'no roots' && roots.length === 0) continue;
+      const [a, b] = await Promise.all([reference(dir, suppliedRoots), second(dir, suppliedRoots)]);
+      results.push({
+        corpus: 'shipped',
+        name: `${testCase.bundle} (${label})`,
+        expected: null,
         reference: a.verdict,
         second: b.verdict,
         referenceOutput: a.output,
@@ -151,8 +196,10 @@ function main(argv) {
 
   return (async () => {
     const results = [];
-    if (wanted === 'conformance' || wanted === 'both') results.push(...(await conformanceCorpus()));
-    if (wanted === 'mutation' || wanted === 'both') results.push(...(await mutationCorpus(concurrency)));
+    const all = wanted === 'both' || wanted === 'all';
+    if (wanted === 'conformance' || all) results.push(...(await conformanceCorpus()));
+    if (wanted === 'shipped' || all) results.push(...(await shippedCorpus()));
+    if (wanted === 'mutation' || all) results.push(...(await mutationCorpus(concurrency)));
 
     const disagreements = results.filter((r) => r.reference !== r.second);
     const secondWrong = results.filter((r) => r.expected !== null && r.expected !== undefined && r.second !== r.expected);
