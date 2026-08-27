@@ -57,7 +57,7 @@ files, 12 MB of history, three tracked `.pem` files (all public root certificate
 anywhere in the tree, `.env*` and `var/` ignored. Nothing needs scrubbing. Private repository until T-065
 makes custody a gate.
 
-## F-8 through F-14 — what the first CI run and the first cross-lane review found
+## F-8 through F-15 — what the first CI run and the first cross-lane review found
 
 The remote was created and `main` @ `f4f90a2` pushed at 17:24 UTC on 2026-08-27. Run
 [33098206236](https://github.com/prasantk8/mizan/actions/runs/33098206236) is the first execution of
@@ -293,6 +293,40 @@ every job behind it. Fixing a check does not tell you the check was the only thi
 you what the next thing is. That is the argument for one PR per failing job rather than one branch
 that goes green.
 
+
+### F-15 — a merge gate that answers the same question two ways
+
+Found while checking why `postgres-contract` went from green to red on [#2](https://github.com/prasantk8/mizan/pull/2)
+with no relevant change between the runs. `make test-postgres` reaches `benchmark-sequencer` through a
+recursive `$(MAKE)`, and that benchmark returned:
+
+| run | throughput | p99 | verdict |
+|---|---|---|---|
+| [33098924304](https://github.com/prasantk8/mizan/actions/runs/33098924304), 17:33 UTC | 1,198.33 ops/s | 6.2563 ms | pass |
+| [33104226295](https://github.com/prasantk8/mizan/actions/runs/33104226295), 18:35 UTC | 315.73 ops/s | 171.6093 ms | fail |
+
+Identical code, same runner class, one hour apart. **3.8x on throughput and 27x on p99**, against a floor
+of 1,000 sitting inside that range. All 25 schema tests passed in both runs. So whether the job that
+proves migrations, forced RLS, typed IDs and immutability went green was decided by how busy somebody
+else's build was.
+
+This is F-9 again and worse. F-9 was a threshold that measured *which machine*; F-15 is a threshold that
+does not survive **the same machine twice**. And a gate that fails at random is worse than no gate: it
+teaches everyone to re-run CI until it passes, which is how H-8 — CI is authoritative — dies from the
+inside, without anyone deciding to abandon it.
+
+`benchmarks/policy_engine.py` has the same defect in its latent form. Its `p99_ms < 5` has never executed
+on any machine but a laptop, because no CI job invokes `make benchmark-policy`. It has not failed yet; it
+has never been asked.
+
+Two structural notes. The failure arrives through a recursive `$(MAKE)` — the exact edge CODEX identified
+as invisible to the T-088 walker (F-14), live in CI while the review naming it was being written. And a
+performance measurement should not be able to fail the schema-contract job at all; that coupling is in a
+lane-owned Makefile and is raised on #2.
+
+Bounds repaired in T-090. The correctness assertions in `run_shard` — dense, gapless allocation under
+concurrency — are unconditional and are what should have been gating all along.
+
 ## F-1 — Two lanes, nineteen commits, and a `main` that has seen none of it
 
 **Structural, and the only finding with a deadline.**
@@ -453,6 +487,14 @@ runner with a version table so `0002`/`0003` reach existing databases, and `miza
 role. The `request(method, contractPath, path)` design is a real idea. And the T-081 claim I distrusted most
 turns out to be true: `service.py:128` does `context_document["tool"].pop("arguments")` before the context is
 hashed or persisted, so `/v1/decisions/{id}/context` genuinely cannot serve raw arguments.
+
+
+**CODEX's correction, accepted (PR #1 review, 2026-08-27).** A remote caller choosing a trace ID is
+ordinary W3C propagation, so the ID is *correlation*, not authenticated identity, and this finding
+overstated it by implying otherwise. The defect that remains is real and is the deployment document
+calling `trace_id` an unattributed "Fact under signature." The repair is to name remote-versus-local
+origin in the record, not to treat trace IDs as authority. This is the better statement of the finding
+and it replaces mine.
 
 ## One process note
 
