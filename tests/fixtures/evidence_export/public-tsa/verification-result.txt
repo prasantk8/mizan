@@ -1,6 +1,7 @@
 PASS: The exported records, signed receipts, and complete signed anchor chain verified; unsigned checkpoints were used only as a parallel-verification performance aid for sequences 0 through 1 (2 records, 1 anchors).
-ANCHOR 0 ATTESTATION: RFC3161.
+ANCHOR 0 ATTESTATION: RFC3161. Independently verifiable until 2040-02-02T19:44:22Z.
 ASSURANCE DERIVED: rfc3161.
+TIMESTAMP HORIZON: 2040-02-02T19:44:22Z — the date this bundle stops being independently verifiable, read from the timestamp authority's own certificate. Mizan claims offline verifiability up to that date and no further.
 TRUST ROOTS USED: tests/fixtures/evidence_export/public-tsa/freetsa-root.pem, tests/fixtures/evidence_export/public-tsa/usertrust-rsa-root.pem
 WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.
 NOT COVERED: Records omitted before chaining and an entire final anchor withheld before export leave no proof in this bundle.

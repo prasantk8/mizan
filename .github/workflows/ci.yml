@@ -92,6 +92,16 @@ jobs:
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/verify_evidence_export.py tests/fixtures/evidence_export/attested/bundle \
             --tsa-trust-anchor tests/fixtures/evidence_export/attested/tsa-root.pem
+          # A bundle past its timestamp horizon is EXPIRED (exit 4), not FAIL (exit 1), and the
+          # rest of it still verifies. This fixture can never be un-expired: see its README.
+          if sudo unshare --net -- .offline-verifier/bin/python \
+              scripts/verify_evidence_export.py tests/fixtures/evidence_export/expired/bundle \
+              --tsa-trust-anchor tests/fixtures/evidence_export/expired/tsa-root.pem
+          then expired_status=0; else expired_status=$?; fi
+          test "$expired_status" -eq 4 || {
+            echo "expected EXPIRED (exit 4) for the expired fixture, got $expired_status" >&2
+            exit 1
+          }
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/verify_evidence_export.py tests/fixtures/evidence_export/public-tsa/bundle \
             --tsa-trust-anchor tests/fixtures/evidence_export/public-tsa/freetsa-root.pem \
