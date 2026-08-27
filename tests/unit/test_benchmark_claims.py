@@ -12,9 +12,10 @@ without its artifact, and no artifact without its machine.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
-from benchmarks import chain_verifier
+from benchmarks import chain_verifier, evidence_sequencer, policy_engine
 from scripts.validate_benchmark_artifacts import REQUIRED_HOST_FIELDS
 
 REPO = Path(__file__).resolve().parents[2]
@@ -49,6 +50,55 @@ def test_the_report_states_what_its_budget_is_based_on() -> None:
         "the basis has to say the budget is a tripwire, because the first thing anyone does "
         "with a number in an artifact is quote it"
     )
+
+
+def test_the_sequencer_floor_is_below_the_slowest_run_that_machine_has_produced() -> None:
+    """R-008 F-15. The same runner class gave 1,198 ops/s and 315.73 an hour apart.
+
+    A floor of 1,000 sat inside that range, so `postgres-contract` -- the job that proves the
+    schema contract -- was decided by how busy someone else's build was.
+    """
+    assert evidence_sequencer.THROUGHPUT_FLOOR < evidence_sequencer.SLOWEST_MEASURED_OPS, (
+        f"the floor is {evidence_sequencer.THROUGHPUT_FLOOR} ops/s and this machine has been "
+        f"measured at {evidence_sequencer.SLOWEST_MEASURED_OPS}, so the gate is a coin flip "
+        f"and a red build means nothing"
+    )
+
+
+def test_every_benchmark_gate_states_its_basis_in_the_artifact_it_writes() -> None:
+    """A threshold whose reasoning lives only in someone's memory is re-tuned by whoever is
+    annoyed by the red first. Each basis has to say, in the artifact, that it is not a claim.
+    """
+    for name, basis in (
+        ("chain_verifier", chain_verifier.BUDGET_BASIS),
+        ("evidence_sequencer", evidence_sequencer.FLOOR_BASIS),
+        ("policy_engine", policy_engine.BOUNDS_BASIS),
+    ):
+        assert "not a performance claim" in basis, name
+        assert "host" in basis, f"{name}: the basis has to point at the machine"
+
+
+def test_no_benchmark_gate_hardcodes_a_bound_that_only_a_laptop_clears() -> None:
+    """Rule 6 as extended by the ruling: every bound is overridable and none is a literal.
+
+    The three original bounds -- `elapsed < 10`, `throughput >= 1_000`, `p99_ms < 5` -- were
+    literals in a return statement, which is why nobody could see what machine they came from.
+    """
+    # A comparison against a bare number. Not `return 0 ... else 1` -- those digits are exit
+    # codes, and the first version of this test flagged them, which is the same class of
+    # mistake as matching `make check` inside a comment about `make check`.
+    literal_bound = re.compile(r"[<>]=?\s*\d")
+    for module in (chain_verifier, evidence_sequencer, policy_engine):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        offenders = [
+            line.strip()
+            for line in source.splitlines()
+            if literal_bound.search(line) and not line.strip().startswith("#")
+        ]
+        assert offenders == [], (
+            f"{module.__name__} compares against a number nobody can trace to a machine: "
+            f"{offenders}"
+        )
 
 
 def test_no_committed_benchmark_artifact_states_a_number_without_its_machine() -> None:
