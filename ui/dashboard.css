@@ -36,3 +36,63 @@
 .agent-card dt { color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .agent-card dd { margin: 2px 0 0; }
 .agent-card:hover { border-color: var(--green); }
+.filters.compact {
+  grid-template-columns: repeat(2, minmax(160px, 240px)) auto;
+  align-items: end;
+}
+.countdown { font-variant-numeric: tabular-nums; color: var(--amber); }
+dialog.wide { width: min(1080px, calc(100vw - 40px)); max-width: none; }
+.approval-summary,
+.decision-card,
+.approval-actions fieldset {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 20px;
+  margin: 16px 0;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+.facts div { min-width: 0; border-top: 1px solid var(--line); padding-top: 8px; }
+.facts dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.facts dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.card-heading,
+.evidence-links,
+.actions.split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.card-heading { margin-bottom: 18px; }
+.card-heading h3 { margin: 0; }
+.evidence-links { justify-content: flex-start; margin-top: 18px; }
+.export-help { margin-top: 18px; padding: 14px; background: var(--bg); border-left: 3px solid var(--green); }
+.export-help p { color: var(--muted); }
+.export-help code { display: block; overflow-x: auto; margin-top: 8px; }
+.timeline { margin-top: 22px; }
+.timeline article {
+  display: grid;
+  grid-template-columns: 55px minmax(180px, 1fr) minmax(150px, 1fr) auto;
+  gap: 12px;
+  border-left: 2px solid var(--line);
+  padding: 12px 14px;
+}
+.timeline .sequence { color: var(--green); font-variant-numeric: tabular-nums; }
+.timeline time { color: var(--muted); }
+.approval-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.approval-actions fieldset { min-width: 0; }
+.approval-actions label { display: block; margin: 12px 0; }
+.approval-actions textarea,
+.approval-actions select { width: 100%; }
+.guard { min-height: 2.5em; color: var(--amber); }
+.danger { border-color: var(--red); color: var(--red); }
+@media (max-width: 760px) {
+  .approval-actions { grid-template-columns: 1fr; }
+  .timeline article { grid-template-columns: 45px 1fr; }
+  .filters.compact { grid-template-columns: 1fr; }
+}
