@@ -57,7 +57,7 @@ files, 12 MB of history, three tracked `.pem` files (all public root certificate
 anywhere in the tree, `.env*` and `var/` ignored. Nothing needs scrubbing. Private repository until T-065
 makes custody a gate.
 
-## F-8 through F-12 — what the first CI run found, one hour after F-7 was written
+## F-8 through F-14 — what the first CI run and the first cross-lane review found
 
 The remote was created and `main` @ `f4f90a2` pushed at 17:24 UTC on 2026-08-27. Run
 [33098206236](https://github.com/prasantk8/mizan/actions/runs/33098206236) is the first execution of
@@ -98,6 +98,21 @@ passes on Apple silicon and fails on the reference runner is a threshold that me
 This is a decision, not a bug: relax the target to the reference runner, keep the target and mark the
 job informational until T-060 measures the shape, or record two thresholds and say which one is the
 claim. It should not be resolved by whoever is annoyed by the red first.
+
+**Founder ruling, 2026-08-27: "could be any machine."** There is no reference hardware. The budget the
+gate enforces must be one that any machine we support clears, which means it is set from the slowest
+machine we have measured and not from the fastest. The consequences are exact:
+
+* The committed artifact was produced on a sixteen-core Apple-silicon laptop at 15,637 records/second.
+  The four-core runner does 6,630. The two machines differ by **2.36×**, and the 10 s target sat
+  between them, which is the whole of the defect.
+* The wall-clock budget stops being a headline and becomes a **regression tripwire**: wide enough that
+  the slowest supported machine clears it, narrow enough that a change which halves throughput trips
+  it. Nobody is allowed to quote it as a performance claim.
+* The number that *is* the claim is `records_per_second` **beside the host that produced it**. Rule 6
+  is extended accordingly: no number without its artifact, and no artifact without its machine.
+
+Implemented as T-090.
 
 ### F-10 — the job that proves the headline claim expires after twenty-four hours
 
@@ -141,6 +156,65 @@ is crypto, and it decides whether Mizan's central promise is true after year thr
 
 Until it is answered, the honest position is that a bundle is verifiable offline *for the lifetime of
 the timestamp authority's certificate*, and the verifier's LIMITATION block does not currently say so.
+
+**Founder ruling, 2026-08-27: the lifetime of the TSA.** A Mizan bundle claims offline verifiability
+for the lifetime of the timestamp authority's certificate and no longer. RFC 4998 / CAdES-A archive
+timestamping is **out of scope for bundle 1.0**. This is the smaller of the two claims and it is the
+one we can actually keep, but it is only honest if the bundle and the verifier both say it, so the
+ruling is not "do nothing" — it is four specific obligations:
+
+1. **The bundle states its own horizon.** The attestation carries the TSA certificate's `notAfter` as a
+   declared expiry. A holder can read, on the day they receive it, the date after which this bundle
+   stops being independently verifiable. Today they find that out three years later, from a FAIL.
+2. **Expiry is a distinct verdict, not a failure.** `EXPIRED` and `FAIL` are different answers to
+   different questions and the verifier currently gives the second to both. `FAIL` must continue to
+   mean *this evidence is not what it claims to be*. An investigator who cannot tell "the timestamp
+   authority's certificate lapsed in 2029" from "this record was altered" has been handed the one
+   ambiguity the evidence plane exists to remove.
+3. **Expiry must not fail the rest of the bundle.** The hash chain, the receipt signatures and the
+   anchor signatures do not depend on the TSA and must still verify to `valid` after it expires. What
+   is lost on that date is the independent proof of *when*, not the proof of *what*.
+4. **The expired path is tested forever.** The twenty-four-hour fixture is replaced by a pair: one with
+   a realistic lifetime, and one **permanently expired**, whose expected result is `EXPIRED` with the
+   chain still valid. Regenerating a fixture to get a green board is how this defect would have gone
+   back into hiding; a fixture that can never be un-expired is how it stays found.
+
+H-3 fires: `EVIDENCE-BUNDLE-FORMAT.md`, the ADR and the verifier change in one change-set. Scoped as
+T-091, and it belongs to CLAUDE — CODEX cannot touch `verify_evidence_export.py` or `evidence.py`
+before T-062 lands without destroying the sealed second implementation.
+
+### F-13 — the gate that gates could be changed under a waiver
+
+Found by CODEX reviewing PR #1, which is the first time in this project's history that one engineer's
+gate was defeated by the other engineer reading it. Three acceptance holes in
+`scripts/validate_pr_body.py`, all reproducible against the head it was written on:
+
+**F-13a, blocking.** `is_docs_only()` treated every path under `.github/` as documentation, so a pull
+request changing only `.github/workflows/ci.yml` could answer rule 8 with `Result: n/a - no behaviour
+change`. The job that decides whether every other change is correct was the one change admissible with
+no test. A directory is not evidence about whether a file executes; documentation is decided by suffix.
+
+**F-13b.** Empty `## Task` and `## What changed` sections passed. Presence of a heading was read as an
+answer — the same error, at a smaller scale, as a green job that installed nothing.
+
+**F-13c.** Section matching was an unbounded prefix, so `## Rule 80` satisfied `## Rule 8`.
+
+Note what found these. The gate was written against bodies that were trying to pass and against a blank
+template; CODEX pointed it at bodies constructed to defeat it. That is the difference between testing a
+thing and reviewing it, and it is the argument for cross-lane review in one paragraph.
+
+### F-14 — the Makefile walker is not GNU Make
+
+Also CODEX, reviewing PR #4, on `test_no_make_check_recipe_runs_python_outside_the_locked_environment`:
+the hand-written graph is not Make's graph. A recipe that re-enters Make (`$(MAKE) hidden`), a recipe
+that runs a script which then calls `python3`, an `include`, a pattern rule, or a variable-expanded
+prerequisite all pass the walker without being walked. The concrete counterexample — `check → wrapper`,
+where `wrapper` runs `$(MAKE) hidden` — was verified: the old walker reports the tree clean.
+
+The test's name is a claim (rule 11) and the claim was wider than the code. Repaired by making the code
+true rather than the name smaller: the walk now follows sub-Make invocations and reads the text of any
+`.sh` script a reachable recipe runs, and a second test fails the day the Makefile uses a construct the
+parser does not model — so the guard degrades loudly instead of silently.
 
 ### F-11 — a correct guard, wired so that it cannot be satisfied
 

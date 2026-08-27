@@ -15,6 +15,7 @@ TEMPLATE = REPO / ".github" / "pull_request_template.md"
 
 CODE_CHANGE = ["control-plane/mizan_control_plane/evidence.py"]
 DOCS_CHANGE = ["docs/handoff/PR-PROTOCOL.md"]
+WORKFLOW_CHANGE = [".github/workflows/ci.yml"]
 
 FILLED = """\
 ## Task
@@ -103,6 +104,48 @@ def test_the_rule_8_waiver_is_accepted_for_a_documentation_only_change() -> None
         "Result:      n/a - no behaviour change",
     )
     assert validate(body, DOCS_CHANGE, REPO) == []
+
+
+def test_a_change_to_the_workflow_that_gates_cannot_waive_rule_8() -> None:
+    """R-008 F-13a. `.github/` was a documentation prefix, so `ci.yml` was documentation.
+
+    A pull request that alters the job which decides whether every other pull request is
+    correct is the last change that should be admitted on `no behaviour change`.
+    """
+    body = FILLED.format(sha=head_sha()).replace(
+        "Result:      FAILED test_thing.py::test_refusal - AssertionError: assert 'ALLOW' == 'DENY'",
+        "Result:      n/a - no behaviour change",
+    )
+    failures = validate(body, WORKFLOW_CHANGE, REPO)
+    assert any("documentation-only" in failure for failure in failures)
+
+
+def test_documentation_that_happens_to_live_under_the_workflow_directory_still_waives() -> None:
+    """The repair is by suffix, not by banning the directory: `.md` is still documentation."""
+    body = FILLED.format(sha=head_sha()).replace(
+        "Result:      FAILED test_thing.py::test_refusal - AssertionError: assert 'ALLOW' == 'DENY'",
+        "Result:      n/a - no behaviour change",
+    )
+    assert validate(body, [".github/pull_request_template.md"], REPO) == []
+
+
+def test_a_present_but_empty_narrative_section_is_not_an_answer() -> None:
+    """R-008 F-13b. Deleting the prose under `## Task` used to leave the body valid."""
+    for section, answer in (
+        ("## Task", "T-000 - a task"),
+        ("## What changed", "The system now refuses something it used to permit."),
+    ):
+        body = FILLED.format(sha=head_sha()).replace(f"{section}\n{answer}\n", f"{section}\n")
+        failures = validate(body, CODE_CHANGE, REPO)
+        assert any(section in failure for failure in failures), section
+
+
+def test_a_heading_that_merely_begins_with_a_rule_number_is_not_that_rule() -> None:
+    """R-008 F-13c. `## Rule 80` satisfied `## Rule 8` under a bare prefix match."""
+    body = FILLED.format(sha=head_sha()).replace(
+        "## Rule 8 - the test that fails before the fix", "## Rule 80 - a heading I invented"
+    )
+    assert any("Rule 8" in failure for failure in validate(body, CODE_CHANGE, REPO))
 
 
 def test_a_claimed_benchmark_artifact_that_does_not_exist_is_rejected() -> None:

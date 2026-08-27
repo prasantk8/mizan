@@ -51,8 +51,23 @@ EMPTY_ANSWERS = {
 SHA_PATTERN = re.compile(r"^Pre-fix SHA:[^\S\n]*(?P<sha>\S+)", re.MULTILINE)
 RESULT_PATTERN = re.compile(r"^Result:[^\S\n]*(?P<result>.*)$", re.MULTILINE)
 ARTIFACT_PATTERN = re.compile(r"benchmarks/results/[\w./-]+")
+
+# Documentation is decided by suffix and by nothing else. The first draft also treated the
+# `docs/` and `.github/` *directories* as documentation, which meant a pull request changing
+# only `.github/workflows/ci.yml` could answer rule 8 with `Result: n/a - no behaviour
+# change` -- the gate that gates, altered under a waiver. A directory is not evidence about
+# whether a file executes. R-008 F-13a, found by CODEX reviewing this gate on PR #1.
 DOCS_SUFFIXES = {".md", ".rst", ".txt"}
-DOCS_PREFIXES = ("docs/", ".github/")
+
+# `## Rule 80` used to be read as `## Rule 8`, because the heading was matched with a bare
+# prefix test. `(?!\w)` requires the canonical token to end where the heading's own prose
+# begins, so rewording after the number stays legal and renaming the number does not.
+# R-008 F-13c.
+HEADING_TOKENS = {name: re.compile(rf"{re.escape(name)}(?!\w)") for name in SECTIONS}
+
+# The two sections a reviewer reads first, and the two the gate used to accept blank: the
+# heading was present, so the section counted as answered. R-008 F-13b.
+NARRATIVE_SECTIONS = ("Task", "What changed")
 
 
 def split_sections(body: str) -> dict[str, str]:
@@ -75,7 +90,9 @@ def split_sections(body: str) -> dict[str, str]:
             if current is not None:
                 sections[current] = "\n".join(lines).strip()
             heading = line[3:].strip()
-            current = next((name for name in SECTIONS if heading.startswith(name)), heading)
+            current = next(
+                (name for name in SECTIONS if HEADING_TOKENS[name].match(heading)), heading
+            )
             lines = []
         elif current is not None:
             lines.append(line)
@@ -91,10 +108,7 @@ def strip_template_comments(text: str) -> str:
 def is_docs_only(changed_files: list[str]) -> bool:
     if not changed_files:
         return False
-    return all(
-        Path(path).suffix in DOCS_SUFFIXES or path.startswith(DOCS_PREFIXES)
-        for path in changed_files
-    )
+    return all(Path(path).suffix in DOCS_SUFFIXES for path in changed_files)
 
 
 def sha_resolves(sha: str, repo: Path) -> bool:
@@ -114,6 +128,16 @@ def validate(body: str, changed_files: list[str], repo: Path) -> list[str]:
     missing = [name for name in SECTIONS if name not in sections]
     if missing:
         failures.append(f"body has no `## {'`, `## '.join(missing)}` section")
+
+    for name in NARRATIVE_SECTIONS:
+        if name not in sections:
+            continue  # already reported above; do not say the same thing twice
+        answer = strip_template_comments(sections[name])
+        if not answer or answer.lower() in EMPTY_ANSWERS:
+            failures.append(
+                f"`## {name}`: empty. The heading is not the answer -- this section was "
+                f"present and blank, and the gate used to count that as filled"
+            )
 
     docs_only = is_docs_only(changed_files)
 
