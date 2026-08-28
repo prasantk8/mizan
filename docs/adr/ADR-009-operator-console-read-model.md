@@ -25,6 +25,15 @@ and the tenant-scoped agent registry for agent cards and details. All provider-c
 are rendered through text nodes before insertion. Action details remain the immutable ADR_Record
 plus its ordered DecisionEvents; the UI does not synthesize an alternative decision history.
 
+Policy simulation replays the immutable normalized authorization context through a tenant-scoped
+`GET /v1/decisions/{decision_id}/context` read. The response carries the recorded `context_hash`
+and the exact policy-visible context persisted beside the ADR_Record. It never reconstructs or
+returns raw tool arguments: those were transient by contract and were never a policy namespace.
+The console supplies an empty transient `arguments` object only to satisfy the simulation request
+envelope; simulation evaluates the stored normalized fields and does not recompute authorization
+or claim that the original arguments are recoverable. A replay is advisory and emits no replacement
+ADR_Record or DecisionEvent; the original decision history remains immutable.
+
 ## Consequences
 
 - Operators receive exact headline counts without downloading evidence collections.
@@ -33,3 +42,5 @@ plus its ordered DecisionEvents; the UI does not synthesize an alternative decis
   model may later replace them without changing the response contract.
 - Calendar-day semantics are UTC for v0.1 and must be made tenant-configurable before localized
   regulatory reporting.
+- Policy authors can compare a draft with recorded decisions without widening the browser read model
+  to raw payloads. The context endpoint is not a general request-reconstruction API.

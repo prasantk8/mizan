@@ -71,7 +71,14 @@ def execution_app() -> FastAPI:
     return app
 
 
-def test_real_spiffe_uri_san_reaches_execution_endpoint() -> None:
+def test_a_verified_peer_certificate_populates_the_execution_workload_identity() -> None:
+    """Unit scope: one URI SAN out of one certificate.
+
+    The end-to-end claim — a real client certificate over a real mutually authenticated
+    connection reaching a real execution route — belongs to
+    `integration/test_closed_loop_postgres.py::test_an_agent_pauses_for_two_approvers_and_then_executes`,
+    which drives the shipped binary. This test injects an SSL object and proves only the parsing.
+    """
     certificate = client_certificate("spiffe://mizan/executor/settlement")
     app = InjectSslObject(execution_app(), VerifiedSslObject(certificate))
     response = TestClient(app).post("/v1/actions/adr_decision-0001/execute")

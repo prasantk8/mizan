@@ -126,6 +126,7 @@ class AuthenticatedPrincipal(StrictModel):
 
 
 class AuthorizationResponse(StrictModel):
+    approval: dict[str, Any] | None = None
     decision_id: str
     decision: str
     risk: dict[str, Any]
@@ -168,6 +169,7 @@ class PolicyMatch(StrictModel):
     decision: str
     priority: int
     constraints: dict[str, Any] | None = None
+    approval_requirements: dict[str, Any] | None = None
 
 
 class PersistedDecision(StrictModel):
@@ -201,6 +203,15 @@ class PolicySimulationRequest(StrictModel):
 class PolicyTransitionRequest(StrictModel):
     version: int = Field(ge=1)
     target_status: Literal["TESTED", "APPROVED", "ACTIVE", "SUPERSEDED", "RETIRED"]
+
+
+class ExecutionTokenRequest(StrictModel):
+    executor_spiffe_id: str | None = Field(
+        default=None,
+        max_length=265,
+        pattern=r"^spiffe://[A-Za-z0-9._/-]+$",
+        description="One of the tool version's registered executors. Never a new one (V-21).",
+    )
 
 
 class ApprovalVoteRequest(StrictModel):

@@ -23,3 +23,27 @@ services:
     volumes:
       - ./infra/postgres/migrations:/docker-entrypoint-initdb.d:ro
 
+  postgres-demo:
+    profiles: ["demo"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mizan
+      POSTGRES_USER: mizan_owner
+      POSTGRES_PASSWORD: demo-only-mizan
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      # See the postgres service above: a socket-local pg_isready can answer
+      # "ready" against the entrypoint's temporary server while the real one is
+      # still restarting on TCP. This service exists only on this branch (T-094
+      # fixed the other occurrence from main, which never had postgres-demo).
+      test: ["CMD-SHELL", "pg_isready -U mizan_owner -d mizan -h 127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - ./infra/postgres/migrations:/docker-entrypoint-initdb.d:ro
+      - mizan-demo-data:/var/lib/postgresql/data
+
+volumes:
+  mizan-demo-data:

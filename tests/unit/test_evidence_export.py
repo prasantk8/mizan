@@ -122,6 +122,7 @@ def build_bundle(
         {
             "key_id": item.key_id,
             "role": role,
+            "custody": "development-derived",
             "algorithm": "Ed25519",
             "public_key": base64.urlsafe_b64encode(item.public_key.public_bytes(
                 serialization.Encoding.Raw, serialization.PublicFormat.Raw
@@ -218,6 +219,10 @@ def test_standalone_export_verifies_and_discloses_self_signed_limit(tmp_path: Pa
     assert "holding Mizan's database and signing key" in result.stdout
     assert "unsigned checkpoints were used only as a parallel-verification performance aid" in result.stdout
     assert "ATTESTATION: UNATTESTED" in result.stdout
+    assert (
+        "KEY CUSTODY: publicly derivable development key — "
+        "this bundle is forgeable by anyone who reads it."
+    ) in result.stdout
     source = Path("scripts/verify_evidence_export.py").read_text(encoding="utf-8")
     assert "mizan_control_plane" not in source
     assert "rfc8785==0.1.4 cryptography==50.0.0" in source
@@ -255,6 +260,20 @@ def test_manifest_algorithms_are_normative_not_ignored(tmp_path: Path) -> None:
 
     assert result.returncode == 3
     assert "MALFORMED: manifest hash_algorithm is unsupported" in result.stderr
+
+
+def test_key_custody_cannot_be_omitted_from_bundle(tmp_path: Path) -> None:
+    bundle = build_bundle(tmp_path)
+    keys = json.loads((bundle / "keys.json").read_bytes())
+    for item in keys:
+        item.pop("custody")
+    (bundle / "keys.json").write_bytes(rfc8785.dumps(keys))
+    refresh_manifest(bundle, "keys.json")
+
+    result = run_verifier(bundle)
+
+    assert result.returncode == 1
+    assert "lifecycle metadata is incomplete" in result.stderr
 
 
 def test_dropped_receipt_is_rejected_with_specific_reason(tmp_path: Path) -> None:

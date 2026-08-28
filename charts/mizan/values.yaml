@@ -1,0 +1,35 @@
+image:
+  repository: ghcr.io/example/mizan-control-plane
+  digest: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  port: 8443
+
+secrets:
+  runtime: mizan-runtime
+  appDatabaseUrlKey: app-database-url
+  ownerDatabaseUrlKey: owner-database-url
+  jwtPublicKeyKey: jwt-public-key
+  tls: mizan-tls
+
+config:
+  jwtIssuer: https://identity.example.invalid
+  jwtAudience: mizan-control-plane
+  executionTokenIssuer: https://mizan.example.invalid
+  evaluatorBuild: "replace-with-release-id"
+  evaluatorConfigurationHash: "replace-with-64-hex-characters"
+  keyCustodyMode: kms
+  evidenceReceiptKeyRef: kms://mizan/evidence-receipt/prod-1
+  evidenceAnchorKeyRef: kms://mizan/evidence-anchor/prod-1
+  executionTokenKeyRef: kms://mizan/execution-token/prod-1
+  degradedGrantKeyRef: kms://mizan/degraded-grant/prod-1
+  tsaEndpoints: https://tsa.example.invalid
+
+drainer:
+  enabled: false
+  replicaCount: 1
+
+resources: {}

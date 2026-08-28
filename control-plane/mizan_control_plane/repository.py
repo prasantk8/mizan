@@ -8,6 +8,7 @@ from threading import Lock
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from .approval_repository import open_approval_tx
 from .canonical import canonical_hash
 from .models import (
     AuthorizationResponse,
@@ -129,7 +130,11 @@ class PostgresAuthorizationRepository:
             )
 
     def persist_decision(
-        self, decision: PersistedDecision, adr_document: dict, normalized_context: dict
+        self,
+        decision: PersistedDecision,
+        adr_document: dict,
+        normalized_context: dict,
+        approval_request: dict | None = None,
     ) -> None:
         doc = copy.deepcopy(adr_document)
         with self.pool.connection() as connection, connection.transaction():
@@ -192,6 +197,23 @@ class PostgresAuthorizationRepository:
                     json.dumps(normalized_context),
                 ),
             )
+            if approval_request is not None:
+                # Same transaction as the ADR_Record: a REQUIRE_APPROVAL decision and the approval
+                # that lets it resume are one fact, and the approvals FK requires the record first.
+                approval = open_approval_tx(
+                    connection,
+                    doc["tenant_id"],
+                    doc["decision_id"],
+                    approval_request["requester_id"],
+                    set(approval_request["forbidden_approvers"]),
+                    doc["context_hash"],
+                    approval_request["controls"],
+                )
+                adr_document["approval"] = adr_document["approval"] | {
+                    "approval_id": approval["approval_id"],
+                    "status": "PENDING",
+                    "quorum": approval_request["controls"]["quorum"],
+                }
 
 
 class InMemoryAuthorizationRepository:
@@ -208,6 +230,7 @@ class InMemoryAuthorizationRepository:
         self.adr_documents: list[dict] = []
         self.normalized_contexts: dict[tuple[str, str], dict] = {}
         self.fail_writes = False
+        self.approval_requests: list[dict] = []
         self._decision_lock = Lock()
         self._chain_heads: dict[tuple[str, str], tuple[int, str]] = {}
 
@@ -226,8 +249,13 @@ class InMemoryAuthorizationRepository:
         return self.decisions.get((tenant_id, request_id))
 
     def persist_decision(
-        self, decision: PersistedDecision, adr_document: dict, normalized_context: dict
+        self,
+        decision: PersistedDecision,
+        adr_document: dict,
+        normalized_context: dict,
+        approval_request: dict | None = None,
     ) -> None:
+        self.approval_requests.append(approval_request) if approval_request else None
         if self.fail_writes:
             raise EvidenceWriteError("injected evidence failure")
         key = (adr_document["tenant_id"], str(decision.request_id))

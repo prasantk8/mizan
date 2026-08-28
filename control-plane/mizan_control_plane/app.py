@@ -1,10 +1,18 @@
-from __future__ import annotations
+# Deliberately NOT `from __future__ import annotations`. Route parameters are declared as
+# Annotated[..., Depends(local_dependency)] where the dependency is a closure over create_app's
+# arguments. Under PEP 563 those annotations are strings that FastAPI resolves against module
+# globals, where a closure does not exist: the Depends is lost and the parameter silently becomes
+# a required query parameter. See test_app_routes.py.
 
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
@@ -12,17 +20,19 @@ from .auth import TokenVerifier, bearer_token
 from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
 from .execution import ExecutionService
-from .keys import KeyProvider
+from .keys import KEY_ROLES, KeyProvider
 from .models import (
     AgentPatchRequest,
     ApprovalVoteRequest,
     AuditVerifyRequest,
+    AuthenticatedIdentity,
     AuthenticatedPrincipal,
     AuthorizationResponse,
     BindingProfilePublishRequest,
     EvaluationContext,
     ExecuteRequest,
     ExecutionCompleteRequest,
+    ExecutionTokenRequest,
     PolicySimulationRequest,
     PolicyTransitionRequest,
 )
@@ -33,6 +43,8 @@ from .repository import PostgresAuthorizationRepository
 from .risk import RegistryFloorRiskProvider
 from .schema_validation import ContractSchemas
 from .service import AuthorizationService
+
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app(
@@ -54,7 +66,26 @@ def create_app(
         settings.evaluator_build,
         settings.evaluator_configuration_hash,
     )
-    app = FastAPI(title="Mizan Control Plane API", version="1.3.0")
+
+    @asynccontextmanager
+    async def lifespan(instance: FastAPI) -> AsyncIterator[None]:
+        yield
+        for pool in instance.state.connection_pools:
+            try:
+                pool.close()
+            except Exception:  # a pool that will not close must not mask the others
+                LOGGER.exception("connection pool did not close cleanly")
+
+    app = FastAPI(title="Mizan Control Plane API", version="1.3.0", lifespan=lifespan)
+    # Every pool opened here is closed on shutdown; a caller that builds more (the execution
+    # service opens two) appends them before the server starts.
+    app.state.connection_pools = [
+        authorization_repository.pool,
+        registry_repository.pool,
+        evidence_repository.pool,
+        approval_repository.pool,
+    ]
+    app.state.settings = settings
     app.add_middleware(VerifiedPeerSpiffeMiddleware)
     app.add_exception_handler(Problem, problem_response)
 
@@ -70,15 +101,42 @@ def create_app(
     def principal_from_token(token: str = Depends(bearer_token)):
         return verifier.verify_principal(token)
 
+    def agent_from_token(token: str = Depends(bearer_token)) -> AuthenticatedIdentity:
+        return verifier.verify(token)
+
     def workload_spiffe(request: Request) -> str:
         return require_workload_spiffe(request.scope)
 
+    def second_approver(header: str | None) -> AuthenticatedPrincipal | None:
+        """The X-Mizan-Second-Approval bearer, verified the same way the primary one is."""
+        if not header:
+            return None
+        if not header.startswith("Bearer "):
+            raise Problem(401, "invalid_second_approval", "Second approval must be a bearer token")
+        return verifier.verify_principal(header.removeprefix("Bearer ").strip())
+
+    def matched_second_approver(
+        principal: AuthenticatedPrincipal, header: str | None
+    ) -> AuthenticatedPrincipal | None:
+        second = second_approver(header)
+        if second is not None and second.tenant_id != principal.tenant_id:
+            raise Problem(403, "tenant_mismatch", "Second approver belongs to another tenant")
+        return second
+
     @app.post("/v1/agents", status_code=201)
     def create_agent(
-        document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
+        document: dict[str, Any],
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
         schemas.validate("Agent", document)
-        return registry_repository.create_agent(tenant_id, document)
+        return registry_repository.create_agent(
+            principal.tenant_id,
+            document,
+            principal,
+            matched_second_approver(principal, second_approval),
+            settings.environment,
+        )
 
     @app.get("/v1/agents")
     def list_agents(
@@ -101,29 +159,28 @@ def create_app(
         second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
         schemas.validate("Agent", request.document)
-        second = None
-        if second_approval:
-            if not second_approval.startswith("Bearer "):
-                raise Problem(
-                    401, "invalid_second_approval", "Second approval must be a bearer token"
-                )
-            second = verifier.verify_principal(second_approval.removeprefix("Bearer ").strip())
-            if second.tenant_id != principal.tenant_id:
-                raise Problem(403, "tenant_mismatch", "Second approver belongs to another tenant")
         return registry_repository.update_agent(
             principal.tenant_id,
             agent_id,
             request.document,
             principal,
-            second,
+            matched_second_approver(principal, second_approval),
         )
 
     @app.post("/v1/tools", status_code=201)
     def create_tool(
-        document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
+        document: dict[str, Any],
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
         schemas.validate("Tool", document)
-        return registry_repository.create_tool(tenant_id, document)
+        return registry_repository.create_tool(
+            principal.tenant_id,
+            document,
+            principal,
+            matched_second_approver(principal, second_approval),
+            settings.environment,
+        )
 
     @app.get("/v1/tools")
     def list_tools(
@@ -142,23 +199,32 @@ def create_app(
     def publish_binding_profile(
         tool_id: str,
         request: BindingProfilePublishRequest,
-        tenant_id: str = Depends(tenant_from_token),
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
+        second_approval: Annotated[str | None, Header(alias="X-Mizan-Second-Approval")] = None,
     ) -> dict[str, Any]:
-        current = registry_repository.get(tenant_id, "tools", tool_id)
+        current = registry_repository.get(principal.tenant_id, "tools", tool_id)
         candidate = current | {"binding_profile": request.binding_profile}
         schemas.validate("Tool", candidate)
         return registry_repository.publish_binding_profile(
-            tenant_id,
+            principal.tenant_id,
             tool_id,
             request.binding_profile,
+            principal,
+            matched_second_approver(principal, second_approval),
+            settings.environment,
         )
 
     @app.post("/v1/policies", status_code=201)
     def create_policy(
-        document: dict[str, Any], tenant_id: str = Depends(tenant_from_token)
+        document: dict[str, Any],
+        principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
         schemas.validate("Policy", document)
-        return registry_repository.create_policy(tenant_id, document)
+        # A new policy is inert: it enters DRAFT, and reaching ACTIVE already requires a
+        # simulation and an approver who is not the author (V-1). Creation needs no second pair.
+        return registry_repository.create_policy(
+            principal.tenant_id, document, principal, None, settings.environment
+        )
 
     @app.get("/v1/policies")
     def list_policies(
@@ -248,6 +314,12 @@ def create_app(
     ) -> dict[str, Any]:
         return evidence_repository.decision(tenant_id, decision_id)
 
+    @app.get("/v1/decisions/{decision_id}/context")
+    def get_decision_context(
+        decision_id: str, tenant_id: str = Depends(tenant_from_token)
+    ) -> dict[str, Any]:
+        return evidence_repository.decision_context(tenant_id, decision_id)
+
     @app.get("/v1/decisions")
     def search_decisions(
         limit: int = Query(50, ge=1, le=200),
@@ -294,6 +366,33 @@ def create_app(
         if key_provider is None:
             raise Problem(503, "key_provider_unavailable", "Signing key provider is not configured")
         return {"items": key_provider.verification_keyset()}
+
+    @app.get("/v1/approvals")
+    def list_approvals(
+        state: str | None = Query(None, pattern="^[A-Z_]{4,24}$"),
+        limit: int = Query(50, ge=1, le=200),
+        cursor: str | None = None,
+        tenant_id: str = Depends(tenant_from_token),
+    ) -> dict[str, Any]:
+        """The approver's queue: what is waiting, for whom, and until when."""
+        return approval_repository.pending(tenant_id, state, limit, cursor)
+
+    @app.post("/v1/decisions/{decision_id}/execution-token")
+    def issue_execution_token(
+        decision_id: str,
+        request: ExecutionTokenRequest,
+        identity: Annotated[AuthenticatedIdentity, Depends(agent_from_token)],
+    ) -> dict[str, Any]:
+        if execution_service is None:
+            raise Problem(
+                503, "execution_service_unavailable", "Execution keyset is not configured"
+            )
+        return execution_service.issue_for_decision(
+            identity.tenant_id,
+            decision_id,
+            identity.agent_id,
+            request.executor_spiffe_id,
+        )
 
     @app.get("/v1/approvals/{approval_id}")
     def get_approval(
@@ -392,6 +491,43 @@ def create_app(
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/ready", include_in_schema=False)
+    def ready() -> JSONResponse:
+        """Readiness is what this process can actually do, not that it started."""
+        checks: dict[str, str] = {}
+        try:
+            # Bounded: readiness must answer, and a probe that blocks is a probe that lies.
+            with authorization_repository.pool.connection(timeout=2.0) as connection:
+                connection.execute("SELECT 1")
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = f"unavailable: {type(exc).__name__}"
+        if key_provider is None:
+            checks["signing_keys"] = "absent"
+        else:
+            try:
+                for role in KEY_ROLES:
+                    key_provider.active_key(role)
+                checks["signing_keys"] = "ok"
+            except Exception as exc:
+                checks["signing_keys"] = f"unavailable: {type(exc).__name__}"
+        checks["evidence_verifier"] = "ok" if evidence_verifier is not None else "absent"
+        checks["execution_service"] = "ok" if execution_service is not None else "absent"
+        if settings.environment == "production":
+            checks["anchor_provider"] = (
+                "ok"
+                if settings.anchor_provider == "rfc3161"
+                and settings.anchor_tsa_endpoints
+                and settings.anchor_tsa_trust_anchors
+                else "unattested"
+            )
+            checks["mutual_tls"] = "ok" if settings.mutual_tls_configured else "absent"
+        ready_now = all(value == "ok" for value in checks.values())
+        return JSONResponse(
+            {"status": "ready" if ready_now else "not_ready", "checks": checks},
+            status_code=200 if ready_now else 503,
+        )
 
     ui_root = Path(__file__).resolve().parents[2] / "ui"
     if (ui_root / "index.html").exists():

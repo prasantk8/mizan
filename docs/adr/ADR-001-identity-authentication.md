@@ -68,6 +68,74 @@ the second uses `X-Mizan-Second-Approval: Bearer …`. Both tokens must carry MF
 the same tenant, and different principal IDs. A caller-supplied name is never evidence of approval,
 and bearer values are neither persisted nor included in events.
 
+## Implementation Amendment E — registry write authority *(pending ratification: B-17)*
+
+**Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration review, T-077a · **Spec anchors:** SPEC v1.3 §3 `/v1/agents`, `/v1/tools`, `/v1/policies`, V-22
+
+`POST /v1/agents`, `POST /v1/tools`, `POST /v1/tools/{id}/binding-profile` and `POST /v1/policies`
+authenticated the *tenant* and nothing else. Demonstrated on `474efce` against a running control
+plane: a token with `identity_kind: "agent"` posted a `financial_write` tool and received 201. An
+agent that can write to the registry can widen its own permissions without a policy change, an
+approval, or anything a reviewer would see as an authorization event — the registry is what every
+later decision is measured against.
+
+The write authority is therefore narrower than the read authority:
+
+- **Human, MFA or hardware, always.** `identity_kind` must be `human` and `auth_strength` must be
+  `mfa` or `hardware`. Agent and service identities are refused with 403
+  `registry_write_auth_insufficient`, as are password-strength humans.
+- **Four eyes for a production HIGH/CRITICAL object**, on creation as well as on PATCH, using the
+  same `X-Mizan-Second-Approval` header and the same distinctness rules as Amendment C. The object
+  is protected if its own document declares production HIGH/CRITICAL *or* the deployment is
+  running in production and the object is HIGH/CRITICAL.
+- **Policy creation takes one operator.** A new policy enters `DRAFT` and is inert; reaching
+  `ACTIVE` already requires a recorded simulation and an approver who is not the author (V-1), so
+  the two-person control is at the point where the policy starts deciding, not where it is typed.
+
+The rule has one home, `require_registry_authority`, and each repository entry point takes the
+acting principal explicitly so a future route cannot omit it. Ratification is open as B-17: the
+alternative the founder may prefer is a dedicated `registry.admin` service identity for
+infrastructure-as-code, which this default deliberately refuses.
+
+## Implementation Amendment D — the shipped listener publishes the verified peer
+
+**Date:** 2026-08-26 · **Trigger:** Stage 5 acceleration review, T-066 · **Spec anchors:** SPEC v1.3 §8 `MIZAN_TLS_*`, I-23, `docs/deployment/mtls.md`
+
+Amendment B requires the ASGI server adapter to expose the verified connection's `SSLObject` as
+`scope["ssl_object"]`. No shipped ASGI server does: uvicorn builds its HTTP scope without it, so
+`VerifiedPeerSpiffeMiddleware` read nothing behind a real listener and every execution endpoint
+answered 401 regardless of the client certificate presented. Until T-066 there was no entrypoint
+to notice this, because there was no entrypoint at all.
+
+`mizan-control-plane` therefore installs a protocol class that publishes the transport's
+`ssl_object` into each HTTP scope before dispatch. Nothing else about the contract changes:
+identity still comes only from the verified TLS peer, headers are still never trusted, and the
+middleware still requires `CERT_REQUIRED` and exactly one `spiffe://` URI SAN.
+
+Production refuses to boot without `MIZAN_TLS_CERTIFICATE_FILE`, `MIZAN_TLS_PRIVATE_KEY_FILE`, and
+`MIZAN_TLS_CLIENT_CA_FILE`. A production control plane that cannot authenticate an executor cannot
+bind execution to one, and silently answering 401 to every execution call is a worse failure than
+refusing to start.
+
+## Implementation Amendment C — dual control is evaluated over both sides of a PATCH
+
+**Date:** 2026-08-26 · **Trigger:** Stage 5 acceleration review, T-077b · **Spec anchors:** SPEC v1.3 §3 `PATCH /v1/agents/{agent_id}`, V-22
+
+The original amendment named "production HIGH/CRITICAL agent changes" without saying which
+document decides. The implementation read the **submitted** document, so the single write that
+downgrades a production `CRITICAL` agent to `LOW` — while also changing its tools, parent, or
+lifecycle state — evaluated as unprotected and needed no second approver. Protection could be
+removed by the act it was meant to gate.
+
+Dual control is therefore required when the **stored** document or the **submitted** document is a
+production `HIGH`/`CRITICAL` agent. The union is the only reading under which the control is not
+self-defeating; nothing else about the amendment changes.
+
+The same write also re-enforces the delegation edge `create_agent` checks: whenever a PATCH moves
+`parent_agent_id`, the named parent must list the child in `delegation.allowed_agent_ids`, and the
+`agent_delegations` edge is moved with it. Previously a PATCH could graft an agent onto any parent
+in the tenant, and the edge table silently kept the stale row.
+
 ## Implementation Amendment B — application-terminated workload mTLS
 
 **Date:** 2026-08-25 · **Trigger:** R-004 F-5 · **Spec anchors:** SPEC v1.3.1 §3, I-23, V-17

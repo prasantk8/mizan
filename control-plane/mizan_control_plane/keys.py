@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 KeyRole = Literal["evidence-receipt", "evidence-anchor", "execution-token", "degraded-grant"]
+KeyCustody = Literal["development-derived", "kms", "hsm"]
 KEY_ROLES: tuple[KeyRole, ...] = (
     "evidence-receipt",
     "evidence-anchor",
@@ -59,8 +60,8 @@ class LocalKeyProvider:
     """Deterministic development adapter; forbidden in production."""
 
     def __init__(self, versions: list[KeyVersion], environment: str = "development") -> None:
-        if environment == "production" and any(item.key_id.startswith("local://") for item in versions):
-            raise RuntimeError("production refuses local:// signing keys")
+        if environment == "production":
+            raise RuntimeError("production refuses development-derived signing keys")
         roles = {item.role for item in versions}
         if roles != set(KEY_ROLES):
             raise RuntimeError("all four separately-held key roles must be configured")
@@ -91,6 +92,7 @@ class LocalKeyProvider:
             {
                 "key_id": item.key_id,
                 "role": item.role,
+                "custody": "development-derived",
                 "algorithm": "Ed25519",
                 "public_key": base64.urlsafe_b64encode(
                     self._keys[item.key_id].public_key().public_bytes(
@@ -127,11 +129,17 @@ class KmsSigningKey:
 class KmsHsmKeyProvider:
     """Vendor-neutral working sign-in-place adapter; the injected backend owns private material."""
 
-    def __init__(self, versions: list[KeyVersion], backend: KmsHsmBackend) -> None:
+    def __init__(
+        self,
+        versions: list[KeyVersion],
+        backend: KmsHsmBackend,
+        custody: Literal["kms", "hsm"] = "kms",
+    ) -> None:
         if any(item.key_id.startswith("local://") for item in versions):
             raise RuntimeError("KMS/HSM provider rejects local:// key references")
         self.versions = list(versions)
         self.backend = backend
+        self.custody = custody
 
     def active_key(self, role: KeyRole) -> SigningKey:
         candidates = [
@@ -150,6 +158,7 @@ class KmsHsmKeyProvider:
             documents.append({
                 "key_id": item.key_id,
                 "role": item.role,
+                "custody": self.custody,
                 "algorithm": "Ed25519",
                 "public_key": base64.urlsafe_b64encode(key.public_bytes(
                     serialization.Encoding.Raw, serialization.PublicFormat.Raw

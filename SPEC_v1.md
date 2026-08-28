@@ -658,6 +658,59 @@ Fields that the evidence record requires are **required here or supplied by mand
 }
 ```
 
+### 2.4a ContextResponse (policy replay read model)
+
+The tenant-scoped read model for replaying a recorded decision through policy simulation. `context`
+is the normalized document committed beside the ADR_Record and hashed as `context_hash`. It is not a
+reconstructed request: transient `tool.arguments` are intentionally absent and MUST NOT be added to
+this response. A simulation client may supply an empty arguments object to the simulation request
+envelope; arguments remain outside the policy namespace and the replay does not recompute binding.
+
+```json
+{
+  "$id": "https://mizan.ai/schemas/context_response/1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ContextResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["context_hash", "context"],
+  "properties": {
+    "context_hash": { "$ref": "common#/$defs/Sha256Hex" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_id", "principal", "agent", "intent", "tool",
+                   "action", "resource", "environment", "timestamp"],
+      "properties": {
+        "schema_version": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/schema_version" },
+        "request_id": { "$ref": "common#/$defs/RequestId" },
+        "principal": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/principal" },
+        "agent": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/agent" },
+        "customer": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/customer" },
+        "intent": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/intent" },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "parameters_hash", "binding_profile"],
+          "properties": {
+            "id": { "$ref": "common#/$defs/ToolId" },
+            "parameters_hash": { "$ref": "common#/$defs/Sha256Hex" },
+            "binding_profile": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/tool/properties/binding_profile" }
+          }
+        },
+        "action": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/action" },
+        "resource": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/resource" },
+        "business": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/business" },
+        "security": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/security" },
+        "mapped": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/mapped" },
+        "environment": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/environment" },
+        "timestamp": { "$ref": "https://mizan.ai/schemas/evaluation_context/1.2.json#/properties/timestamp" }
+      }
+    }
+  }
+}
+```
+
 ### 2.5 AuditTrail
 
 One entry per event (§4). ADR_Records are the *decision* evidence; AuditTrail is the *everything-else* ledger (registrations, policy changes, admin actions, security events). Both are hash-chained per stream (ADR-004).
@@ -1235,12 +1288,12 @@ paths:
     get:  { summary: List agents (tenant-scoped), x-sla-p95-ms: 100, responses: { "200": {description: OK} } }
   /v1/agents/{agent_id}:
     get:   { summary: Fetch agent, responses: { "200": {description: OK}, "404": {description: Not found in tenant} } }
-    patch: { summary: "Lifecycle/config change (dual-control for production HIGH/CRITICAL agents)",
-             responses: { "200": {description: OK}, "403": {description: Missing second approver} } }
+    patch: { summary: "Lifecycle/config change (dual-control when the stored OR the submitted document is a production HIGH/CRITICAL agent — see V-22)",
+             responses: { "200": {description: OK}, "403": {description: Missing second approver}, "422": {description: "Delegation parent has not authorized this edge"} } }
 
   /v1/tools:
-    post: { summary: "Register tool (§2.6: schema, owner, risk_tier, data_classification, permitted_agents, binding_profile, execution timings)",
-            responses: { "201": {description: Created}, "400": {description: "binding_profile bound_pointers empty or overlapping volatile_pointers"} } }
+    post: { summary: "Register tool (§2.6: schema, owner, risk_tier, data_classification, permitted_agents, binding_profile, execution timings). Registry writes require a human operator with MFA or hardware authentication, and four eyes for a production HIGH/CRITICAL object (V-22).",
+            responses: { "201": {description: Created}, "400": {description: "binding_profile bound_pointers empty or overlapping volatile_pointers"}, "403": {description: "registry_write_auth_insufficient or registry_dual_control_required"} } }
   /v1/tools/{tool_id}:
     get: { summary: Fetch tool, responses: { "200": {description: OK}, "404": {description: Not found} } }
   /v1/tools/{tool_id}/binding-profile:
@@ -1260,6 +1313,9 @@ paths:
     post: { summary: "Lifecycle transition per §5.4 (approver ≠ author enforced here)",
             responses: { "200": {description: OK}, "409": {description: Illegal transition} } }
 
+  /v1/approvals:
+    get: { summary: "Approver queue: approvals awaiting a decision, tenant-scoped, newest first (filters: state; cursor pagination). Each item carries the current epoch's kind, quorum, votes cast, eligible roles and expiry.",
+           x-sla-p95-ms: 200, responses: { "200": {description: OK} } }
   /v1/approvals/{approval_id}:
     get: { summary: "Approval status: state, current epoch, per-epoch votes and eligibility snapshot hash",
            responses: { "200": {description: OK} } }
@@ -1320,6 +1376,28 @@ paths:
 
   /v1/decisions/{decision_id}:
     get: { summary: Fetch immutable ADR_Record + ordered DecisionEvents, responses: { "200": {description: OK} } }
+  /v1/decisions/{decision_id}/context:
+    get:
+      summary: "Fetch the immutable normalized policy context and its recorded context_hash for replay. Raw tool arguments are never returned."
+      responses:
+        "200":
+          description: Stored context
+          content:
+            application/json:
+              schema: { $ref: "https://mizan.ai/schemas/context_response/1.0.json" }
+        "404": { description: Decision context not found in the authenticated tenant }
+  /v1/decisions/{decision_id}/execution-token:
+    post:
+      summary: "Issue the ExecutionToken (§2.10) a decision earned. Permitted after ALLOW, or after the decision's approval reaches APPROVED/OVERRIDDEN. Only the agent principal named by the ADR_Record may ask (V-23). At most one unconsumed, unexpired token exists per decision: a repeat request returns the outstanding one rather than granting a second capability. `authorized_executor` is chosen from the tool version's registered set (V-21); a caller may name one of them and never propose a new one."
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false,
+                      properties: { executor_spiffe_id: { oneOf: [ { $ref: "common#/$defs/SpiffeId" }, { type: "null" } ] } } }
+      responses: { "200": {description: "Issued or reissued; body carries execution_token, expires_at, reused"},
+                   "403": {description: "approval_incomplete, decision_not_executable, execution_token_requester_mismatch, or executor_not_authorized"},
+                   "404": {description: Decision not found in tenant},
+                   "422": {description: "Tool has several registered executors and none was named"} }
   /v1/decisions:
     get: { summary: "Search ADRs (filters: agent, tool, decision, risk, principal, customer, time range; cursor pagination)",
            x-sla-p95-ms: 500, responses: { "200": {description: OK} } }
@@ -1573,6 +1651,18 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 
 | Key | Default | Scope | Notes |
 |---|---|---|---|
+| `MIZAN_DATABASE_URL` | *(required)* | deployment | Runtime-role DSN. The application connects as `mizan_app`, never `mizan_owner`; RLS depends on it. |
+| `MIZAN_JWT_ISSUER` | *(required)* | deployment | Exact accepted `iss` for identity tokens. |
+| `MIZAN_JWT_AUDIENCE` | `mizan-control-plane` | deployment | Exact accepted `aud` for identity tokens. |
+| `MIZAN_JWT_PUBLIC_KEY` | *(required)* | deployment | Asymmetric verification key. Symmetric algorithms are never accepted. |
+| `MIZAN_EVALUATOR_BUILD` | `development` | deployment | Recorded in every ADR_Record's `evaluator.build`. Production refuses the `development` placeholder: an unpinned evaluator makes the record unreplayable. |
+| `MIZAN_EVALUATOR_CONFIGURATION_HASH` | 64 zeros | deployment | Recorded in every ADR_Record's `evaluator.configuration_hash`. Production refuses the all-zero placeholder for the same reason. |
+| `MIZAN_EVIDENCE_OBJECT_STORE_ROOT` | `var/evidence` | deployment | Root of the immutable object store the verifier reads. In v1 this is the create-only local WORM analogue; a real WORM target is `MIZAN_AUDIT_ANCHOR_BUCKET`. |
+| `MIZAN_HTTP_HOST` | `127.0.0.1` | deployment | Listener address. The default is loopback so an unconfigured process is not reachable. |
+| `MIZAN_HTTP_PORT` | `8080` | deployment | Listener port. |
+| `MIZAN_TLS_CERTIFICATE_FILE` | *(required in production)* | deployment | Server certificate chain for the in-process mTLS listener (ADR-001 Amendment B). |
+| `MIZAN_TLS_PRIVATE_KEY_FILE` | *(required in production)* | deployment | Server private key for the listener. |
+| `MIZAN_TLS_CLIENT_CA_FILE` | *(required in production)* | deployment | Client CA trust bundle. The listener sets `CERT_REQUIRED`; without it no execution endpoint can authenticate a workload and every one answers 401. |
 | `MIZAN_BENCHMARK_RESULTS_DIR` | `benchmarks/results` | build/test | Destination for machine-readable benchmark artifacts; changing it has no runtime effect. |
 | `MIZAN_BENCHMARK_COMMIT_SHA` | checked-out `HEAD` | build/test | Optional assertion only: when set it must exactly equal `HEAD`; it cannot relabel a run. Artifacts also record `worktree_clean`, and provenance validation rejects dirty runs or SHAs that do not resolve to commits in this repository. |
 | `MIZAN_ANCHOR_PROVIDER` | `development-unattested` | deployment | `development-unattested` or `rfc3161`; production requires `rfc3161`. Development anchors are explicitly `none_development`/`unattested`. |
@@ -1629,6 +1719,30 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_OUTBOX_DRAIN_INTERVAL_MS` | `250` | deployment | Outbox → Kafka/object-store publisher. |
 | `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` | `5` | deployment | Non-financial asynchronous publication SLO; breach opens the evidence breaker. Financial writes always require a receipt before redemption (I-25). |
 
+### 8.1 MCP Governance Gateway (`mizan-mcp-gateway`)
+
+A client-side component, configured by one TOML file (`integrations/mcp/example.toml`) with an environment fallback for each identity key. It sets nothing on the control plane and can relax no server default: everything below only decides what the gateway *asks*, and the registry's answer always wins.
+
+| Key | Default | Scope | Notes |
+|---|---|---|---|
+| `[upstream].command` / `.args` / `.env` | *(command required)* | gateway | The MCP tool server this process governs. Env replaces the child's environment when present. |
+| `[mizan].url` (`MIZAN_API_URL`) | *(required)* | gateway | Control plane base URL. |
+| `[mizan].agent_id` (`MIZAN_AGENT_ID`) | *(required)* | gateway | The registered agent the gateway calls as. |
+| `[mizan].agent_token` (`MIZAN_AGENT_TOKEN`) | *(required)* | gateway | Identity token; sent on every call, never logged. The tenant is read from it, never configured (I-3). |
+| `[mizan].agent_version` | `1.0.0` | gateway | Must equal the registered agent version or every authorization is `422`. |
+| `[mizan].operator_token` (`MIZAN_OPERATOR_TOKEN`) | *(none)* | gateway | Human operator credential, required only for `register_unknown_tools`. Registry writes are closed to agent identities (ADR-001 Amendment E). |
+| `[mizan].ca_file` (`MIZAN_CA_FILE`) | *(system trust)* | gateway | Trust roots for the control plane's server certificate. |
+| `[mizan].client_certificate_file` / `client_key_file` | *(none)* | gateway | The gateway's own workload certificate. Required with `executor_spiffe_id` over `https`: the authorized executor is read off the verified peer certificate, never off the body (ADR-001 Amendment B). Startup refuses the combination rather than failing at the first high-risk call. |
+| `[mizan].executor_spiffe_id` (`MIZAN_EXECUTOR_SPIFFE_ID`) | *(none)* | gateway | When set, the gateway is the ADR-008 executor: it redeems the token, holds the lease, and closes it. When unset it governs and records but does not bind execution, and says so in the result. |
+| `[mizan].principal_id` / `principal_type` / `principal_auth_strength` | `prn_mcp-client` / `application` / `federated` | gateway | Who the call is on behalf of when the client does not name an end user. |
+| `[mizan].approval_timeout_seconds` | `900` | gateway | How long a call waits for a human before returning `approval_pending`. Giving up cancels nothing: the approval stays open and the work stays paused. |
+| `[mizan].approval_poll_seconds` | `3` | gateway | Approval poll interval. |
+| `[mizan].execution_binding_retry_seconds` | `15` | gateway | How long an executor keeps waiting on `immutable_receipt_missing` / `approval_receipt_missing` / `receipt_verifier_unavailable`. Publication is asynchronous by design (ADR-004), so arriving early is not being refused. Every other refusal is final on the first answer. |
+| `[mizan].register_unknown_tools` | `false` | gateway | Register upstream tools the registry has never seen, under the operator credential. Existing tools are never overwritten. |
+| `[mizan].tool_id_prefix` | `tool_` | gateway | `read_portfolio` → `tool_read-portfolio`. |
+| `[defaults]` / `[tools.<name>]` `risk_tier` | `HIGH` | gateway | A *floor request* only. An unclassified tool is not a low-risk tool, and the registry's floor always wins. |
+| `[defaults]` / `[tools.<name>]` `bound_pointers` | *(empty)* | gateway | Empty means bind every top-level argument in the tool's own input schema: an argument nobody classified may be the one that decides whether the call is safe. |
+
 ---
 
 ## 9. Server-Side Validation Rules (V-rules)
@@ -1658,6 +1772,8 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-19 | DecisionEvent `decision_sequence` allocation and insert are atomic; `previous_event_hash` matches the preceding event, event payload fields are valid for `event_type`, and retries return the existing event rather than creating another. | decision event writer |
 | V-20 | For `financial_write`, token redemption requires a valid `immutable_receipt_ref` covering the originating ADR_Record and any deciding approval event. Receipt tenant, stream, record hash, and signature must verify outside the Postgres administrative boundary. | execution gateway |
 | V-21 | `ExecutionTokenClaims.authorized_executor` is selected server-side from the tool version's non-empty `execution.executor_spiffe_ids`; callers cannot propose or override it. Redemption uses the same immutable tool/profile version cited by the ADR_Record. | tool registration + token issuer |
+| V-22 | An agent PATCH requires a distinct strongly authenticated second approver when the **stored** document or the **submitted** document is a production `HIGH`/`CRITICAL` agent. Evaluating only the submitted side lets one operator remove the protection and change the agent in the same write. The delegation parent edge `create_agent` enforces is re-enforced whenever a PATCH moves `parent_agent_id`. The same authority governs registry creation: `POST /v1/agents`, `/v1/tools`, `/v1/tools/{id}/binding-profile` and `/v1/policies` require a human operator with MFA or hardware authentication — never an agent or service identity — and four eyes for a production `HIGH`/`CRITICAL` object. | `POST`/`PATCH /v1/agents`, `/v1/tools`, `/v1/policies` |
+| V-23 | `POST /v1/decisions/{id}/execution-token` is accepted only from the agent principal the ADR_Record names, and issues at most one unconsumed, unexpired token per decision — a repeat request returns the outstanding capability, never a second one. Serialized per decision so concurrent requests cannot both mint. | execution token issuer |
 
 ---
 

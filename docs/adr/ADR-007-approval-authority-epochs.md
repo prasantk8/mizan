@@ -94,3 +94,32 @@ review epoch, advances `current_epoch_id`, appends decision events, and enqueues
 rolls back the rejection as well, preventing an approval from becoming stranded in a state with no
 active authority set. Original voters have no inherited vote or eligibility unless independently
 present in the configured review snapshot; all later votes must cite the new epoch number.
+
+
+## Implementation Amendment — the approval opens with the decision *(pending ratification: B-16)*
+
+**Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration review, T-067 · **Spec anchors:** SPEC v1.3 §3 `/v1/approvals`, §4 `mizan.approval.requested`, I-6, I-15
+
+Until now `ApprovalRepository.create` had no caller outside tests. A `REQUIRE_APPROVAL` decision
+recorded `approval.status = NOT_REQUIRED` and opened nothing, so the pause half of PRD §37 existed
+only as a state machine no running system entered.
+
+A `REQUIRE_APPROVAL` decision now opens its approval **inside the ADR_Record transaction**. The
+decision and the approval that lets it resume commit together or not at all: a record that says
+"wait" with nothing to wait for is not a state the evidence should be able to hold. The FK from
+`mizan.approvals` to `mizan.adr_records` already required this ordering; nothing else enforced it.
+
+Three consequences, all pending ratification under B-16:
+
+1. The controls come from the winning policy's `approval_requirements`. A `REQUIRE_APPROVAL`
+   policy that carries none is now a 422 `approval_requirements_missing` and **no record is
+   written** — the policy is invalid, not the request.
+2. `forbidden_approvers` is seeded with the requesting principal. The accountable owner is not yet
+   included because the Agent schema carries it as free text, not a `PrincipalId`; excluding them
+   needs a registry change and is left open.
+3. `GET /v1/approvals?state=` is the approver queue: tenant-scoped, newest first, carrying each
+   approval's current epoch kind, quorum, votes cast, eligible roles and expiry. It is the read
+   model the T-072 inbox is built on, and the first way an approver can find out that anything is
+   waiting for them.
+
+`mizan.approval.requested` is emitted through the outbox in the same transaction (SPEC §4).

@@ -68,9 +68,34 @@ def test_multi_role_identity_votes_once_and_cannot_fake_second_role() -> None:
 
 
 def test_dual_control_counts_distinct_control_domains() -> None:
+    # Two approvals from two domains satisfy the quorum...
     pending, _ = vote(approval(), "prn_alice")
     approved, _ = vote(pending, "prn_bob")
     assert approved["state"] == "APPROVED"
+    # ...and two approvals from ONE domain do not, which is the half the name claims. The pool
+    # still has to be able to satisfy dual control, or V-2 refuses the epoch before any vote.
+    pool = eligibility()
+    pool["members"][1]["control_domain"] = pool["members"][0]["control_domain"]
+    one_domain_twice = create_approval(
+        "tnt_bank-a", "adr_decision-0002", "a" * 64, requirements(quorum=2), pool, NOW
+    )
+    first, _ = vote(one_domain_twice, "prn_alice")
+    second, recorded = vote(first, "prn_bob")
+    assert recorded["control_domain"] == "business.ops"
+    assert second["state"] == "PARTIALLY_APPROVED"
+    # The third approver is in a different domain, and that is what carries the quorum.
+    third, _ = vote(second, "prn_eve")
+    assert third["state"] == "APPROVED"
+
+
+def test_a_pool_that_cannot_satisfy_dual_control_is_refused_before_any_vote() -> None:
+    single_domain = eligibility()
+    for member in single_domain["members"]:
+        member["control_domain"] = "business.ops"
+    with pytest.raises(Problem, match="control domains"):
+        create_approval(
+            "tnt_bank-a", "adr_decision-0003", "a" * 64, requirements(quorum=2), single_domain, NOW
+        )
 
 
 @pytest.mark.parametrize("kind,strength", [("service", "mfa"), ("human", "password")])
@@ -98,8 +123,14 @@ def test_stale_epoch_vote_loses_escalation_race() -> None:
 
 
 def test_veto_and_rejection_quorum_are_distinct() -> None:
-    rejected, _ = vote(approval(), "prn_alice", vote="REJECT")
-    assert rejected["state"] == "REJECTED"
+    """One REJECT ends a veto epoch; under rejection_quorum the same vote does not."""
+    vetoed, _ = vote(approval(), "prn_alice", vote="REJECT")
+    assert vetoed["state"] == "REJECTED"
+    quorum_mode = approval(rejection_mode="rejection_quorum", rejection_quorum_count=2)
+    once, _ = vote(quorum_mode, "prn_alice", vote="REJECT")
+    assert once["state"] == "PENDING"
+    twice, _ = vote(once, "prn_bob", vote="REJECT")
+    assert twice["state"] == "REJECTED"
 
 
 def test_review_epoch_is_fresh_and_rejecting_voter_has_no_inherited_authority() -> None:

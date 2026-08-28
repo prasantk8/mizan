@@ -1,0 +1,99 @@
+x-control-environment: &control-environment
+  MIZAN_ENV: production
+  MIZAN_DATABASE_URL: postgresql://mizan_app:${MIZAN_APP_PASSWORD}@postgres-production:5432/mizan
+  MIZAN_JWT_ISSUER: ${MIZAN_JWT_ISSUER}
+  MIZAN_JWT_AUDIENCE: ${MIZAN_JWT_AUDIENCE:-mizan-control-plane}
+  MIZAN_JWT_PUBLIC_KEY: ${MIZAN_JWT_PUBLIC_KEY}
+  MIZAN_KEY_CUSTODY_MODE: ${MIZAN_KEY_CUSTODY_MODE:-kms}
+  MIZAN_EVIDENCE_RECEIPT_KEY_REF: ${MIZAN_EVIDENCE_RECEIPT_KEY_REF:-kms://mizan/evidence-receipt/prod-1}
+  MIZAN_EVIDENCE_ANCHOR_KEY_REF: ${MIZAN_EVIDENCE_ANCHOR_KEY_REF:-kms://mizan/evidence-anchor/prod-1}
+  MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF: ${MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF:-kms://mizan/execution-token/prod-1}
+  MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF: ${MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF:-kms://mizan/degraded-grant/prod-1}
+  MIZAN_ANCHOR_PROVIDER: rfc3161
+  MIZAN_ANCHOR_TSA_ENDPOINTS: ${MIZAN_ANCHOR_TSA_ENDPOINTS}
+  MIZAN_ANCHOR_TSA_TRUST_ANCHORS: /run/mizan/tls/tsa-root.pem
+  MIZAN_EXECUTION_TOKEN_ISSUER: ${MIZAN_EXECUTION_TOKEN_ISSUER}
+  MIZAN_EVALUATOR_BUILD: ${MIZAN_EVALUATOR_BUILD}
+  MIZAN_EVALUATOR_CONFIGURATION_HASH: ${MIZAN_EVALUATOR_CONFIGURATION_HASH}
+  MIZAN_TLS_CERTIFICATE_FILE: /run/mizan/tls/server.pem
+  MIZAN_TLS_PRIVATE_KEY_FILE: /run/mizan/tls/server-key.pem
+  MIZAN_TLS_CLIENT_CA_FILE: /run/mizan/tls/client-ca.pem
+  MIZAN_HEALTH_SERVER_CA_FILE: /run/mizan/tls/server-ca.pem
+  MIZAN_HEALTH_CLIENT_CERTIFICATE_FILE: /run/mizan/tls/health-client.pem
+  MIZAN_HEALTH_CLIENT_PRIVATE_KEY_FILE: /run/mizan/tls/health-client-key.pem
+  MIZAN_HTTP_HOST: 0.0.0.0
+  MIZAN_HTTP_PORT: "8443"
+
+services:
+  postgres-production:
+    profiles: ["production"]
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_DB: mizan
+      POSTGRES_USER: mizan_owner
+      POSTGRES_PASSWORD: ${MIZAN_POSTGRES_OWNER_PASSWORD}
+      MIZAN_APP_PASSWORD: ${MIZAN_APP_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mizan_owner -d mizan"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - ./infra/postgres/migrations/0001_domain_schema.sql:/docker-entrypoint-initdb.d/001_domain_schema.sql:ro
+      - ./infra/postgres/init/010_app_login.sh:/docker-entrypoint-initdb.d/010_app_login.sh:ro
+      - mizan-production-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  migrations:
+    profiles: ["production"]
+    image: ${MIZAN_IMAGE:-mizan-control-plane:local}
+    build:
+      context: .
+    entrypoint: ["python", "/app/scripts/migrate.py"]
+    environment:
+      MIZAN_MIGRATION_DATABASE_URL: postgresql://mizan_owner:${MIZAN_POSTGRES_OWNER_PASSWORD}@postgres-production:5432/mizan
+    depends_on:
+      postgres-production:
+        condition: service_healthy
+    restart: "no"
+
+  control-plane-production:
+    profiles: ["production"]
+    image: ${MIZAN_IMAGE:-mizan-control-plane:local}
+    build:
+      context: .
+    environment: *control-environment
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${MIZAN_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
+      - mizan-production-evidence:/app/var/evidence
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+
+  drain-worker:
+    profiles: ["drainer"]
+    image: ${MIZAN_IMAGE:-mizan-control-plane:local}
+    entrypoint: ["mizan-drain-outbox"]
+    environment: *control-environment
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    volumes:
+      - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
+      - mizan-production-evidence:/app/var/evidence
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+
+volumes:
+  mizan-production-data:
+  mizan-production-evidence:

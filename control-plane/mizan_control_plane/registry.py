@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +10,7 @@ from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from .canonical import canonical_hash
 from .models import AuthenticatedPrincipal, EvaluationContext
+from .pagination import decode_cursor, encode_cursor
 from .policy_engine import CedarPolicyEvaluator
 from .problems import Problem
 from .repository import PostgresAuthorizationRepository
@@ -21,30 +21,61 @@ POLICY_HASH_EXCLUDED_FIELDS = frozenset(
 )
 
 
+def dual_control_required(document: dict[str, Any]) -> bool:
+    """Whether an agent document is protected. Evaluated over both sides of a PATCH: a write that
+    removes its own protection is exactly the write dual control exists to stop."""
+    return document.get("environment") == "production" and document.get("risk_tier") in {
+        "HIGH",
+        "CRITICAL",
+    }
+
+
 def policy_semantic_hash(document: dict[str, Any]) -> str:
     return canonical_hash(
         {key: value for key, value in document.items() if key not in POLICY_HASH_EXCLUDED_FIELDS}
     )
 
 
+def require_registry_authority(
+    actor: AuthenticatedPrincipal,
+    document: dict[str, Any],
+    second_actor: AuthenticatedPrincipal | None,
+    environment: str,
+) -> None:
+    """Who may write to the registry (B-17 default, pending ratification).
+
+    The registry decides what every later authorization is measured against: which tools exist,
+    which agents may call them, and what the binding profile commits to. An agent that can write
+    here can widen its own permissions without a policy change and without an approval, so the
+    write authority is deliberately narrower than the read authority — humans with MFA or hardware
+    only, never an agent or service identity, and four eyes for a production HIGH/CRITICAL object.
+    """
+    if actor.identity_kind != "human" or actor.auth_strength not in {"mfa", "hardware"}:
+        raise Problem(
+            403,
+            "registry_write_auth_insufficient",
+            "Registry writes require a human operator with MFA or hardware authentication",
+        )
+    protected = dual_control_required(document) or (
+        environment == "production" and document.get("risk_tier") in {"HIGH", "CRITICAL"}
+    )
+    if protected and (
+        second_actor is None
+        or second_actor.principal_id == actor.principal_id
+        or second_actor.identity_kind != "human"
+        or second_actor.auth_strength not in {"mfa", "hardware"}
+    ):
+        raise Problem(
+            403,
+            "registry_dual_control_required",
+            "A distinct strongly authenticated second approver is required for this object",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Page:
     items: list[dict[str, Any]]
     next_cursor: str | None
-
-
-def encode_cursor(created_at: datetime, identifier: str) -> str:
-    raw = json.dumps([created_at.isoformat(), identifier], separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def decode_cursor(value: str) -> tuple[datetime, str]:
-    try:
-        padded = value + "=" * (-len(value) % 4)
-        timestamp, identifier = json.loads(base64.urlsafe_b64decode(padded))
-        return datetime.fromisoformat(timestamp), str(identifier)
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        raise Problem(400, "invalid_cursor", "Pagination cursor is malformed") from exc
 
 
 class RegistryRepository(PostgresAuthorizationRepository):
@@ -54,7 +85,15 @@ class RegistryRepository(PostgresAuthorizationRepository):
         "policies": ("policies", "policy_id"),
     }
 
-    def create_agent(self, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]:
+    def create_agent(
+        self,
+        tenant_id: str,
+        document: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
+    ) -> dict[str, Any]:
+        require_registry_authority(actor, document, second_actor, environment)
         self._require_tenant(tenant_id, document)
         try:
             with self.pool.connection() as connection, connection.transaction():
@@ -113,7 +152,15 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 422, "registry_reference_missing", "Agent references an unknown object"
             ) from exc
 
-    def create_tool(self, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]:
+    def create_tool(
+        self,
+        tenant_id: str,
+        document: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
+    ) -> dict[str, Any]:
+        require_registry_authority(actor, document, second_actor, environment)
         self._require_tenant(tenant_id, document)
         profile = document["binding_profile"]
         if set(profile["bound_pointers"]) & set(profile["volatile_pointers"]):
@@ -160,7 +207,15 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 409, "tool_exists", "tool or binding-profile version already exists"
             ) from exc
 
-    def create_policy(self, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]:
+    def create_policy(
+        self,
+        tenant_id: str,
+        document: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
+    ) -> dict[str, Any]:
+        require_registry_authority(actor, document, second_actor, environment)
         self._require_tenant(tenant_id, document)
         if document["status"] != "DRAFT":
             raise Problem(422, "policy_create_requires_draft", "New policies must begin in DRAFT")
@@ -316,10 +371,8 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 raise Problem(404, "registry_object_not_found", "Agent was not found")
             old = row[0]
             self._validate_agent_transition(old["lifecycle_state"], document["lifecycle_state"])
-            protected = document["environment"] == "production" and document["risk_tier"] in {
-                "HIGH",
-                "CRITICAL",
-            }
+            protected = dual_control_required(old) or dual_control_required(document)
+            self._require_authorized_parent(connection, tenant_id, agent_id, old, document)
             if protected and (
                 second_actor is None
                 or second_actor.principal_id == actor.principal_id
@@ -348,6 +401,17 @@ class RegistryRepository(PostgresAuthorizationRepository):
                 "DELETE FROM mizan.agent_tools WHERE tenant_id=%s AND agent_id=%s",
                 (tenant_id, agent_id),
             )
+            if old.get("parent_agent_id") != document.get("parent_agent_id"):
+                connection.execute(
+                    "DELETE FROM mizan.agent_delegations WHERE tenant_id=%s AND child_agent_id=%s",
+                    (tenant_id, agent_id),
+                )
+                if document.get("parent_agent_id"):
+                    connection.execute(
+                        "INSERT INTO mizan.agent_delegations(tenant_id,parent_agent_id,child_agent_id) "
+                        "VALUES (%s,%s,%s)",
+                        (tenant_id, document["parent_agent_id"], agent_id),
+                    )
             for tool_id in document["tools"]:
                 connection.execute(
                     "INSERT INTO mizan.agent_tools(tenant_id,agent_id,tool_id) VALUES (%s,%s,%s)",
@@ -372,9 +436,50 @@ class RegistryRepository(PostgresAuthorizationRepository):
             )
         return document
 
+    @staticmethod
+    def _require_authorized_parent(
+        connection: Any,
+        tenant_id: str,
+        agent_id: str,
+        old: dict[str, Any],
+        document: dict[str, Any],
+    ) -> None:
+        """The delegation edge create_agent enforces, re-enforced on every write that moves it."""
+        parent_id = document.get("parent_agent_id")
+        if parent_id == old.get("parent_agent_id"):
+            return
+        if parent_id is None:
+            return
+        if parent_id == agent_id:
+            raise Problem(
+                422, "registry_reference_missing", "An agent cannot be its own delegation parent"
+            )
+        parent = connection.execute(
+            "SELECT document FROM mizan.agents WHERE tenant_id=%s AND agent_id=%s",
+            (tenant_id, parent_id),
+        ).fetchone()
+        allowed = parent[0].get("delegation", {}).get("allowed_agent_ids", []) if parent else []
+        if agent_id not in allowed:
+            raise Problem(
+                422,
+                "registry_reference_missing",
+                "Parent has not authorized this delegation edge",
+            )
+
     def publish_binding_profile(
-        self, tenant_id: str, tool_id: str, profile: dict[str, Any]
+        self,
+        tenant_id: str,
+        tool_id: str,
+        profile: dict[str, Any],
+        actor: AuthenticatedPrincipal,
+        second_actor: AuthenticatedPrincipal | None = None,
+        environment: str = "development",
     ) -> dict[str, Any]:
+        # A binding profile decides which arguments an execution token commits to (ADR-008), so
+        # publishing one carries the same authority as registering the tool it belongs to.
+        require_registry_authority(
+            actor, self.get(tenant_id, "tools", tool_id), second_actor, environment
+        )
         if not profile.get("bound_pointers") or set(profile["bound_pointers"]) & set(
             profile.get("volatile_pointers", [])
         ):

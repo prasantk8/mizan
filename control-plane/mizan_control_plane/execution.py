@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -10,12 +11,14 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import jwt
+import rfc8785
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from psycopg.errors import UniqueViolation
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .canonical import binding_hash, canonical_hash, validate_binding_arguments
 from .evidence import append_decision_event_tx
+from .keys import SigningKey
 from .models import EvaluationContext
 from .ports import RiskProvider
 from .problems import Problem
@@ -30,18 +33,30 @@ def _jti_hash(jti: str) -> str:
     return hashlib.sha256(jti.encode()).hexdigest()
 
 
+def _base64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
 class ExecutionTokenCodec:
     def __init__(
         self,
         issuer: str,
-        private_key: Ed25519PrivateKey,
+        private_key: Ed25519PrivateKey | None = None,
         public_key: Ed25519PublicKey | None = None,
         clock_skew_seconds: int = 30,
         schemas: ContractSchemas | None = None,
+        signing_key: SigningKey | None = None,
     ) -> None:
+        if (private_key is None) == (signing_key is None):
+            raise ValueError(
+                "an execution token codec signs with exactly one of private_key or signing_key"
+            )
         self.issuer = issuer
         self.private_key = private_key
-        self.public_key = public_key or private_key.public_key()
+        self.signing_key = signing_key
+        self.public_key = public_key or (
+            private_key.public_key() if private_key is not None else signing_key.public_key()
+        )
         self.clock_skew_seconds = clock_skew_seconds
         self.schemas = schemas or ContractSchemas(
             Path(__file__).resolve().parents[2] / "SPEC_v1.md"
@@ -49,7 +64,16 @@ class ExecutionTokenCodec:
 
     def encode(self, claims: dict[str, Any]) -> str:
         self.schemas.validate("ExecutionTokenClaims", claims)
-        return jwt.encode(claims, self.private_key, algorithm="EdDSA", headers={"typ": "JWT"})
+        if self.private_key is not None:
+            return jwt.encode(claims, self.private_key, algorithm="EdDSA", headers={"typ": "JWT"})
+        # Custody-agnostic path: a KMS/HSM key never leaves its provider, so the JWS is assembled
+        # here and only the signing input crosses the boundary. Verification stays PyJWT's.
+        header = _base64url(json.dumps({"alg": "EdDSA", "typ": "JWT"}, separators=(",", ":")).encode())
+        # RFC 8785, not json.dumps: the claims come back from JSONB in Postgres' key order, and an
+        # idempotent re-issue must produce the same bytes as the grant it is repeating.
+        payload = _base64url(rfc8785.dumps(claims))
+        signature = self.signing_key.sign(f"{header}.{payload}".encode())
+        return f"{header}.{payload}.{_base64url(signature)}"
 
     def decode(self, token: str) -> dict[str, Any]:
         try:
@@ -90,6 +114,7 @@ class ExecutionService:
         security_event_pool: Any | None = None,
         security_event_pool_max_size: int = 2,
         security_event_pool_timeout_seconds: float = 0.25,
+        default_token_ttl_seconds: int = 300,
     ) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
         self.security_event_pool = security_event_pool or ConnectionPool(
@@ -103,6 +128,7 @@ class ExecutionService:
         self.receipt_gate = receipt_gate
         self.risk_provider = risk_provider or RegistryFloorRiskProvider()
         self.security_event_counters: Counter[str] = Counter()
+        self.default_token_ttl_seconds = default_token_ttl_seconds
 
     @staticmethod
     def _scope(connection: Any, tenant_id: str) -> None:
@@ -112,89 +138,184 @@ class ExecutionService:
         now = datetime.now(UTC)
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
+            return self._issue_tx(connection, tenant_id, decision_id, executor_spiffe, now)
+
+    def issue_for_decision(
+        self,
+        tenant_id: str,
+        decision_id: str,
+        requesting_agent_id: str,
+        executor_spiffe_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Issue the capability a decision earned, at most once while one is live.
+
+        B-16 default, pending ratification: only the decision's own agent principal may ask, and a
+        repeat request returns the token already outstanding rather than minting a second one. The
+        executor is chosen from the tool version's registered set (V-21) — a caller may name one of
+        them, never propose a new one.
+        """
+        now = datetime.now(UTC)
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            # adr_records is append-only and mizan_app holds no UPDATE privilege on it, so the
+            # serialization point is a transaction-scoped advisory lock on the decision, not a
+            # row lock. Two concurrent requests for one decision cannot both mint a token.
             row = connection.execute(
-                """SELECT a.document,t.document,ag.lifecycle_state
-                     FROM mizan.adr_records a
-                     JOIN mizan.tools t ON t.tenant_id=a.tenant_id AND t.tool_id=a.tool_id
-                     JOIN mizan.agents ag ON ag.tenant_id=a.tenant_id AND ag.agent_id=a.agent_id
-                    WHERE a.tenant_id=%s AND a.decision_id=%s""",
-                (tenant_id, decision_id),
+                "SELECT document, pg_advisory_xact_lock(hashtextextended(%s, 0)) "
+                "FROM mizan.adr_records WHERE tenant_id=%s AND decision_id=%s",
+                (f"{tenant_id}:{decision_id}:execution-token", tenant_id, decision_id),
             ).fetchone()
             if not row:
                 raise Problem(404, "decision_not_found", "Decision was not found")
-            adr, tool, agent_state = row
-            if adr["decision"] not in {"ALLOW", "REQUIRE_APPROVAL"}:
-                raise Problem(403, "decision_not_executable", "Decision does not permit execution")
-            approval_epoch = None
-            if adr["decision"] == "REQUIRE_APPROVAL":
-                approval = connection.execute(
-                    "SELECT document FROM mizan.approvals WHERE tenant_id=%s AND decision_id=%s",
-                    (tenant_id, decision_id),
-                ).fetchone()
-                if not approval or approval[0]["state"] not in {"APPROVED", "OVERRIDDEN"}:
-                    raise Problem(
-                        403, "approval_incomplete", "Approval has not reached an executable state"
-                    )
-                approval_epoch = approval[0]["current_epoch_id"]
-            if agent_state not in {"ACTIVE", "MONITORED"}:
-                raise Problem(403, "agent_not_active", "Agent is not active")
-            executor = self._authorized_executor(tool, executor_spiffe)
-            ttl = tool["execution"]["token_ttl_seconds"]
-            policy_ttls: list[int] = []
-            for policy_ref in adr["policies"]:
-                policy = connection.execute(
-                    "SELECT document FROM mizan.policies WHERE tenant_id=%s AND policy_id=%s AND version=%s",
-                    (tenant_id, policy_ref["policy_id"], policy_ref["version"]),
-                ).fetchone()
-                if policy and policy[0].get("execution_token_ttl_seconds"):
-                    policy_ttls.append(policy[0]["execution_token_ttl_seconds"])
-            ttl = self._clamp_token_ttl(ttl, policy_ttls)
-            jti = uuid4().hex
-            claims = {
-                "token_version": "1.2",
-                "jti": jti,
-                "iss": self.codec.issuer,
-                "aud": "mizan-execution-gateway",
-                "tenant_id": tenant_id,
-                "agent_id": adr["agent"]["id"],
-                "principal_id": adr["principal"]["id"],
-                "delegation_chain_hash": canonical_hash(adr["agent"]["delegation_chain"]),
-                "authorized_executor": executor,
-                "decision_id": decision_id,
-                "tool_id": adr["tool"]["id"],
-                "parameters_hash": adr["tool"]["parameters_hash"],
-                "binding_profile": adr["tool"]["binding_profile"],
-                "context_hash": adr["context_hash"],
-                "approval_epoch_id": approval_epoch,
-                "iat": int(now.timestamp()),
-                "nbf": int(now.timestamp()),
-                "exp": int((now + timedelta(seconds=ttl)).timestamp()),
+            adr = row[0]
+            if adr["agent"]["id"] != requesting_agent_id:
+                raise Problem(
+                    403,
+                    "execution_token_requester_mismatch",
+                    "Only the agent named by the decision may request its execution token",
+                )
+            outstanding = connection.execute(
+                "SELECT claims FROM mizan.execution_tokens WHERE tenant_id=%s AND decision_id=%s "
+                "AND consumed_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
+                (tenant_id, decision_id),
+            ).fetchone()
+            if outstanding:
+                # Deterministic Ed25519 over the stored claims: the same bytes, not a second grant.
+                return {
+                    "execution_token": self.codec.encode(outstanding[0]),
+                    "expires_at": datetime.fromtimestamp(outstanding[0]["exp"], UTC)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "reused": True,
+                }
+            tool = connection.execute(
+                "SELECT document FROM mizan.tools WHERE tenant_id=%s AND tool_id=%s",
+                (tenant_id, adr["tool"]["id"]),
+            ).fetchone()
+            if not tool:
+                raise Problem(404, "tool_not_found", "Decision names a tool that is not registered")
+            executor = self._select_executor(tool[0], executor_spiffe_id)
+            token = self._issue_tx(connection, tenant_id, decision_id, executor, now)
+            claims = self.codec.decode(token)
+            return {
+                "execution_token": token,
+                "expires_at": datetime.fromtimestamp(claims["exp"], UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "reused": False,
             }
-            connection.execute(
-                """INSERT INTO mizan.execution_tokens(
-                     tenant_id,jti_hash,decision_id,agent_id,tool_id,authorized_executor,claims,expires_at
-                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    tenant_id,
-                    _jti_hash(jti),
-                    decision_id,
-                    claims["agent_id"],
-                    claims["tool_id"],
-                    executor,
-                    json.dumps(claims),
-                    datetime.fromtimestamp(claims["exp"], UTC),
-                ),
+
+    @staticmethod
+    def _select_executor(tool: dict[str, Any], requested: str | None) -> str:
+        registered = tool.get("execution", {}).get("executor_spiffe_ids", [])
+        if requested is not None:
+            if requested not in registered:
+                raise Problem(
+                    403,
+                    "executor_not_authorized",
+                    "Requested executor is not registered for this tool version",
+                )
+            return requested
+        if len(registered) != 1:
+            raise Problem(
+                422,
+                "executor_selection_required",
+                f"This tool has {len(registered)} registered executors; name one of "
+                f"{sorted(registered)}",
             )
-            append_decision_event_tx(
-                connection,
+        return registered[0]
+
+    def _issue_tx(
+        self,
+        connection: Any,
+        tenant_id: str,
+        decision_id: str,
+        executor_spiffe: str,
+        now: datetime,
+    ) -> str:
+        row = connection.execute(
+            """SELECT a.document,t.document,ag.lifecycle_state
+                 FROM mizan.adr_records a
+                 JOIN mizan.tools t ON t.tenant_id=a.tenant_id AND t.tool_id=a.tool_id
+                 JOIN mizan.agents ag ON ag.tenant_id=a.tenant_id AND ag.agent_id=a.agent_id
+                WHERE a.tenant_id=%s AND a.decision_id=%s""",
+            (tenant_id, decision_id),
+        ).fetchone()
+        if not row:
+            raise Problem(404, "decision_not_found", "Decision was not found")
+        adr, tool, agent_state = row
+        if adr["decision"] not in {"ALLOW", "REQUIRE_APPROVAL"}:
+            raise Problem(403, "decision_not_executable", "Decision does not permit execution")
+        approval_epoch = None
+        if adr["decision"] == "REQUIRE_APPROVAL":
+            approval = connection.execute(
+                "SELECT document FROM mizan.approvals WHERE tenant_id=%s AND decision_id=%s",
+                (tenant_id, decision_id),
+            ).fetchone()
+            if not approval or approval[0]["state"] not in {"APPROVED", "OVERRIDDEN"}:
+                raise Problem(
+                    403, "approval_incomplete", "Approval has not reached an executable state"
+                )
+            approval_epoch = approval[0]["current_epoch_id"]
+        if agent_state not in {"ACTIVE", "MONITORED"}:
+            raise Problem(403, "agent_not_active", "Agent is not active")
+        executor = self._authorized_executor(tool, executor_spiffe)
+        ttl = tool["execution"].get("token_ttl_seconds", self.default_token_ttl_seconds)
+        policy_ttls: list[int] = []
+        for policy_ref in adr["policies"]:
+            policy = connection.execute(
+                "SELECT document FROM mizan.policies WHERE tenant_id=%s AND policy_id=%s AND version=%s",
+                (tenant_id, policy_ref["policy_id"], policy_ref["version"]),
+            ).fetchone()
+            if policy and policy[0].get("execution_token_ttl_seconds"):
+                policy_ttls.append(policy[0]["execution_token_ttl_seconds"])
+        ttl = self._clamp_token_ttl(ttl, policy_ttls)
+        jti = uuid4().hex
+        claims = {
+            "token_version": "1.2",
+            "jti": jti,
+            "iss": self.codec.issuer,
+            "aud": "mizan-execution-gateway",
+            "tenant_id": tenant_id,
+            "agent_id": adr["agent"]["id"],
+            "principal_id": adr["principal"]["id"],
+            "delegation_chain_hash": canonical_hash(adr["agent"]["delegation_chain"]),
+            "authorized_executor": executor,
+            "decision_id": decision_id,
+            "tool_id": adr["tool"]["id"],
+            "parameters_hash": adr["tool"]["parameters_hash"],
+            "binding_profile": adr["tool"]["binding_profile"],
+            "context_hash": adr["context_hash"],
+            "approval_epoch_id": approval_epoch,
+            "iat": int(now.timestamp()),
+            "nbf": int(now.timestamp()),
+            "exp": int((now + timedelta(seconds=ttl)).timestamp()),
+        }
+        connection.execute(
+            """INSERT INTO mizan.execution_tokens(
+                 tenant_id,jti_hash,decision_id,agent_id,tool_id,authorized_executor,claims,expires_at
+               ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
                 tenant_id,
+                _jti_hash(jti),
                 decision_id,
-                "CAPABILITY_ISSUED",
-                {"kind": "system", "id": "mizan-execution-service", "authenticated_workload": None},
-                {"token_jti_hash": _jti_hash(jti), "approval_state": None},
-                now,
-            )
-            return self.codec.encode(claims)
+                claims["agent_id"],
+                claims["tool_id"],
+                executor,
+                json.dumps(claims),
+                datetime.fromtimestamp(claims["exp"], UTC),
+            ),
+        )
+        append_decision_event_tx(
+            connection,
+            tenant_id,
+            decision_id,
+            "CAPABILITY_ISSUED",
+            {"kind": "system", "id": "mizan-execution-service", "authenticated_workload": None},
+            {"token_jti_hash": _jti_hash(jti), "approval_state": None},
+            now,
+        )
+        return self.codec.encode(claims)
 
     @staticmethod
     def _authorized_executor(tool: dict[str, Any], executor_spiffe: str) -> str:

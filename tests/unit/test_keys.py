@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 from mizan_control_plane.config import Settings
-from mizan_control_plane.keys import KEY_ROLES, KeyVersion, LocalKeyProvider
+from mizan_control_plane.keys import (
+    KEY_ROLES,
+    KeyVersion,
+    KmsHsmKeyProvider,
+    LocalKeyProvider,
+    local_private_key_for_testing,
+)
 
 
 def versions(*, revoked_receipt: bool = False) -> list[KeyVersion]:
@@ -28,6 +34,15 @@ def test_production_refuses_local_keys_at_startup(monkeypatch) -> None:
         Settings.from_environment()
 
 
+def test_local_provider_refuses_production_even_when_key_ids_claim_kms() -> None:
+    disguised = [
+        KeyVersion(f"kms://disguised/{role}", role, "2026-08-25T00:00:00Z")
+        for role in KEY_ROLES
+    ]
+    with pytest.raises(RuntimeError, match="development-derived"):
+        LocalKeyProvider(disguised, environment="production")
+
+
 def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
@@ -49,6 +64,18 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="trust anchor"):
         Settings.from_environment()
     monkeypatch.setenv("MIZAN_ANCHOR_TSA_TRUST_ANCHORS", "/etc/mizan/tsa-root.pem")
+    with pytest.raises(RuntimeError, match="MIZAN_EXECUTION_TOKEN_ISSUER"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_EXECUTION_TOKEN_ISSUER", "https://execution.issuer.test")
+    with pytest.raises(RuntimeError, match="MIZAN_EVALUATOR_BUILD"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_EVALUATOR_BUILD", "2026.08.26+abc1234")
+    monkeypatch.setenv("MIZAN_EVALUATOR_CONFIGURATION_HASH", "a" * 64)
+    with pytest.raises(RuntimeError, match="MIZAN_TLS_CERTIFICATE_FILE"):
+        Settings.from_environment()
+    monkeypatch.setenv("MIZAN_TLS_CERTIFICATE_FILE", "/etc/mizan/server.pem")
+    monkeypatch.setenv("MIZAN_TLS_PRIVATE_KEY_FILE", "/etc/mizan/server.key")
+    monkeypatch.setenv("MIZAN_TLS_CLIENT_CA_FILE", "/etc/mizan/client-ca.pem")
     assert Settings.from_environment().anchor_provider == "rfc3161"
 
 
@@ -90,4 +117,24 @@ def test_revoked_version_remains_in_verification_keyset() -> None:
     provider = LocalKeyProvider([old, *versions()])
     documents = {item["key_id"]: item for item in provider.verification_keyset()}
     assert documents[old.key_id]["revoked_at"] == "2026-08-25T01:00:00Z"
+    assert {item["custody"] for item in documents.values()} == {"development-derived"}
     assert provider.active_key("evidence-receipt").key_id.endswith("/v1")
+
+
+def test_kms_hsm_provider_publishes_explicit_custody() -> None:
+    key = local_private_key_for_testing("custody-test")
+
+    class Backend:
+        def sign(self, key_ref, payload):
+            return key.sign(payload)
+
+        def public_key(self, key_ref):
+            return key.public_key()
+
+    remote_versions = [
+        KeyVersion(f"remote-ref:{role}", role, "2026-08-25T00:00:00Z")
+        for role in KEY_ROLES
+    ]
+    provider = KmsHsmKeyProvider(remote_versions, Backend(), custody="hsm")
+
+    assert {item["custody"] for item in provider.verification_keyset()} == {"hsm"}

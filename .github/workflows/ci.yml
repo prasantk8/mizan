@@ -53,6 +53,14 @@ jobs:
         run: uv run --frozen pytest -q tests/unit
       - name: Verify contract coverage references are collected
         run: uv run --frozen python scripts/validate_contract_coverage.py
+      - name: Gate control-plane unit coverage
+        run: uv run --frozen pytest -q tests/unit --cov=mizan_control_plane --cov-fail-under=62
+      - name: Gate identity and route coverage
+        run: |
+          uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_dev_token.py \
+            --cov=mizan_control_plane.auth --cov-fail-under=75
+          uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_runtime.py \
+            --cov=mizan_control_plane.app --cov-fail-under=68
       - name: Verify 100k-record chain performance
         env:
           MIZAN_BENCHMARK_RESULTS_DIR: ${{ runner.temp }}/benchmark-results
@@ -76,7 +84,100 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --dev
       - name: Validate migrations, forced RLS, typed IDs, and immutability
+        env:
+          CI: "true"
         run: make test-postgres
+
+  production-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+        env:
+          POSTGRES_DB: mizan
+          POSTGRES_USER: mizan_owner
+          POSTGRES_PASSWORD: integration-only-owner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mizan_owner -d mizan"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+      - name: Build the pinned non-root image
+        run: docker build --tag "mizan-control-plane:${GITHUB_SHA}" .
+      - name: Provision exactly migration 0001
+        env:
+          PGPASSWORD: integration-only-owner
+        run: >-
+          psql --host 127.0.0.1 --username mizan_owner --dbname mizan
+          --set ON_ERROR_STOP=1 --file infra/postgres/migrations/0001_domain_schema.sql
+      - name: Upgrade 0001 through the image migration job
+        run: >-
+          docker run --rm --network host
+          --env MIZAN_MIGRATION_DATABASE_URL=postgresql://mizan_owner:integration-only-owner@127.0.0.1:5432/mizan
+          --entrypoint python "mizan-control-plane:${GITHUB_SHA}" /app/scripts/migrate.py
+      - name: Assert migration history and provision the runtime login
+        env:
+          PGPASSWORD: integration-only-owner
+        run: |
+          test "$(psql --host 127.0.0.1 --username mizan_owner --dbname mizan --tuples-only --no-align --command 'SELECT count(*) FROM mizan.schema_migrations')" = "3"
+          psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 --command "ALTER ROLE mizan_app LOGIN PASSWORD 'integration-only-app'"
+      - name: Boot the container and require readiness 200
+        run: |
+          docker run --detach --name mizan-package-gate --network host \
+            --env MIZAN_DATABASE_URL=postgresql://mizan_app:integration-only-app@127.0.0.1:5432/mizan \
+            --env MIZAN_JWT_ISSUER=urn:mizan:development:package-gate \
+            --env MIZAN_JWT_PUBLIC_KEY=unused-for-readiness \
+            --env MIZAN_ENV=development \
+            --env MIZAN_HTTP_HOST=0.0.0.0 \
+            "mizan-control-plane:${GITHUB_SHA}"
+          test "$(docker inspect --format '{{.Config.User}}' mizan-package-gate)" = "65532:65532"
+          docker exec mizan-package-gate openssl version
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health/ready >ready.json; then
+              break
+            fi
+            sleep 1
+          done
+          test "$(python3 -c 'import json; print(json.load(open("ready.json"))["status"])')" = "ready"
+      - name: Validate dated vulnerability exceptions
+        run: python3 scripts/validate_vulnerability_allowlist.py
+      - name: Generate CycloneDX SBOM
+        run: >-
+          docker run --rm --user 0:0 --volume /var/run/docker.sock:/var/run/docker.sock
+          --volume "${PWD}:/output"
+          anchore/syft:v1.29.0@sha256:e86b0ba0b1d2fe8a2e9f96ed9b22033df9781f43b9a7eb27c57e6c89234946bc
+          "mizan-control-plane:${GITHUB_SHA}" --output cyclonedx-json=/output/mizan-sbom.cdx.json
+      - name: Scan HIGH and CRITICAL vulnerabilities
+        id: vulnerability_scan
+        continue-on-error: true
+        run: >-
+          docker run --rm --user 0:0 --volume /var/run/docker.sock:/var/run/docker.sock
+          --volume "${PWD}:/workspace" aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+          image --ignorefile /workspace/infra/supply-chain/.trivyignore.yaml
+          --scanners vuln --skip-version-check --severity HIGH,CRITICAL --exit-code 1 --format json
+          --output /workspace/mizan-trivy.json "mizan-control-plane:${GITHUB_SHA}"
+      - name: Upload image evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-image-evidence-${{ github.sha }}
+          path: |
+            mizan-sbom.cdx.json
+            mizan-trivy.json
+          if-no-files-found: error
+      - name: Enforce vulnerability result
+        if: steps.vulnerability_scan.outcome == 'failure'
+        run: exit 1
+      - name: Remove package gate container
+        if: always()
+        run: docker rm --force mizan-package-gate 2>/dev/null || true
 
   offline-evidence-verifier:
     runs-on: ubuntu-latest

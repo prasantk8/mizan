@@ -706,6 +706,19 @@ class EvidenceRepository:
             ).fetchall()
             return {"decision": row[0], "events": [item[0] for item in events]}
 
+    def decision_context(self, tenant_id: str, decision_id: str) -> dict[str, Any]:
+        """Return the immutable, policy-safe context stored with a decision."""
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT context_hash,document FROM mizan.authorization_contexts "
+                "WHERE tenant_id=%s AND decision_id=%s",
+                (tenant_id, decision_id),
+            ).fetchone()
+        if not row:
+            raise Problem(404, "decision_context_not_found", "Decision context does not exist")
+        return {"context_hash": row[0], "context": row[1]}
+
     def search_decisions(
         self,
         tenant_id: str,

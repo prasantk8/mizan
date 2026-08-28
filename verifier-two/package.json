@@ -1,0 +1,16 @@
+{
+  "name": "mizan-verify-two",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Independent second verifier for Mizan evidence bundles, written from the format specification alone.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "mizan-verify-two": "./bin/mizan-verify-two.js" },
+  "scripts": {
+    "test": "node --test",
+    "fault-injection": "node tools/fault-injection.mjs",
+    "differential": "node tools/differential.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

@@ -368,7 +368,8 @@ def verify_bundle(
     key_metadata: dict[str, dict[str, Any]] = {}
     for item in key_documents:
         required_key_fields = {
-            "key_id", "role", "algorithm", "public_key", "not_before", "not_after", "revoked_at"
+            "key_id", "role", "custody", "algorithm", "public_key",
+            "not_before", "not_after", "revoked_at",
         }
         if set(item) != required_key_fields:
             raise VerificationFailure(
@@ -376,6 +377,8 @@ def verify_bundle(
             )
         if item.get("algorithm") != "Ed25519":
             raise VerificationFailure(f"key {item.get('key_id')} uses an unsupported algorithm")
+        if item.get("custody") not in {"development-derived", "kms", "hsm"}:
+            raise MalformedBundle(f"key {item.get('key_id')} has an unsupported custody value")
         try:
             keys[item["key_id"]] = Ed25519PublicKey.from_public_bytes(
                 base64.urlsafe_b64decode(item["public_key"])
@@ -619,6 +622,9 @@ def verify_bundle(
             for item in key_metadata.values()
             if item.get("revoked_at")
         }.items()),
+        "development_custody": any(
+            item["custody"] == "development-derived" for item in key_metadata.values()
+        ),
         "derived_assurance": derived_assurance,
         "horizon": min(
             (horizon for *_, horizon in anchor_assurance if horizon is not None),
@@ -678,6 +684,11 @@ def main() -> int:
         print("ATTESTATION: STREAM NOT EXTERNALLY ANCHORED — at least one anchor lacks a verified RFC 3161 token.")
     for key_id, revoked_at in result["revoked_keys"]:
         print(f"KEY STATUS: valid signature, key {key_id} revoked at {revoked_at}.")
+    if result["development_custody"]:
+        print(
+            "KEY CUSTODY: publicly derivable development key — "
+            "this bundle is forgeable by anyone who reads it."
+        )
     print(f"ASSURANCE DERIVED: {result['derived_assurance']}.")
     if result["horizon"] is not None:
         tense = "stopped" if expired else "stops"

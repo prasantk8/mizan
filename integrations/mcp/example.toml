@@ -1,0 +1,58 @@
+# Every mizan-mcp-gateway key, with its default. Only [upstream].command and the three
+# [mizan] identity keys are required; everything else has a value that is safe to leave alone.
+
+[server]
+name = "mizan-governed"          # the server name the MCP client sees
+
+[upstream]
+command = "npx"                  # the tool server this gateway governs (required)
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+
+[upstream.env]                   # replaces the child's environment when present
+# API_TOKEN = "..."
+
+[mizan]
+url = "https://mizan.internal"   # required, or MIZAN_API_URL
+agent_id = "agt_wealth-advisor"  # required, or MIZAN_AGENT_ID
+agent_token = "..."              # required, or MIZAN_AGENT_TOKEN — never logged
+agent_version = "1.0.0"          # must match the registered agent version
+environment = "production"       # recorded in every decision context
+operator_token = ""              # or MIZAN_OPERATOR_TOKEN; only needed to register tools
+
+# Transport. The control plane reads the authorized executor off the verified peer certificate,
+# so an executor_spiffe_id over https without a client certificate is refused at startup.
+ca_file = ""                     # or MIZAN_CA_FILE; system trust store when empty
+client_certificate_file = ""     # or MIZAN_CLIENT_CERTIFICATE_FILE
+client_key_file = ""             # or MIZAN_CLIENT_KEY_FILE
+executor_spiffe_id = ""          # or MIZAN_EXECUTOR_SPIFFE_ID; unset means "govern, do not bind"
+
+# Who the call is on behalf of. Override per session by the client where it knows the end user.
+principal_id = "prn_mcp-client"
+principal_type = "application"
+principal_auth_strength = "federated"
+
+approval_timeout_seconds = 900.0 # how long a call waits for a human before returning "pending"
+approval_poll_seconds = 3.0
+execution_binding_retry_seconds = 15.0  # evidence publication is asynchronous; arriving early
+                                        # is not being refused (ADR-004)
+
+register_unknown_tools = false   # register upstream tools the registry has never seen
+tool_id_prefix = "tool_"         # read_portfolio -> tool_read-portfolio
+
+# What to assert about a tool the registry has never seen. The registry's own floor always wins.
+[defaults]
+risk_tier = "HIGH"               # deliberately pessimistic: an unclassified tool is not low risk
+action_type = "write"
+data_classification = "confidential"
+resource_owner = "external-tool-server"
+resource_type = "external"
+bound_pointers = []              # empty: bind every top-level argument from the tool's schema
+volatile_pointers = []           # nonces, timestamps, trace ids — excluded from parameters_hash
+
+[tools.write_file]
+risk_tier = "HIGH"
+action_type = "write"
+data_classification = "confidential"
+resource_owner = "document-store"
+resource_type = "document"
+bound_pointers = ["/contents", "/path"]
