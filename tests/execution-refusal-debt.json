@@ -1,21 +1,26 @@
 {
   "module": "control-plane/mizan_control_plane/execution.py",
-  "measured_total_percent": 90.77,
+  "measured_total_percent": 83.28,
   "unexercised_refusals": [
-    "agent_not_active#2",
+    "agent_not_active#1",
     "approval_incomplete#1",
     "approval_receipt_invalid#1",
     "approval_receipt_missing#1",
     "decision_not_executable#1",
     "decision_not_found#1",
+    "decision_not_found#2",
     "execution_idempotency_conflict#1",
     "execution_idempotency_conflict#2",
     "execution_token_consumed#2",
     "execution_token_consumed#3",
+    "execution_token_requester_mismatch#1",
+    "executor_not_authorized#2",
+    "executor_selection_required#1",
     "lease_executor_mismatch#1",
     "lease_executor_mismatch#2",
     "lease_extension_exhausted#1",
     "lease_not_found#1",
-    "lease_terminal#1"
+    "lease_terminal#1",
+    "tool_not_found#1"
   ]
 }
