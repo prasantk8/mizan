@@ -53,8 +53,6 @@ jobs:
         run: uv run --frozen pytest -q tests/unit
       - name: Verify contract coverage references are collected
         run: uv run --frozen python scripts/validate_contract_coverage.py
-      - name: Gate execution security module unit coverage
-        run: uv run --frozen pytest -q tests/unit/test_execution.py --cov=mizan_control_plane.execution --cov-fail-under=50
       - name: Verify 100k-record chain performance
         env:
           MIZAN_BENCHMARK_RESULTS_DIR: ${{ runner.temp }}/benchmark-results

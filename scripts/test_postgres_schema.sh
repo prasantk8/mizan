@@ -17,7 +17,10 @@ trap cleanup EXIT
   -c "ALTER ROLE mizan_app LOGIN PASSWORD 'integration-only-mizan'"
 published_port="$("${compose[@]}" port postgres 5432 | awk -F: '{print $NF}')"
 MIZAN_TEST_DATABASE_URL="postgresql://mizan_app:integration-only-mizan@127.0.0.1:${published_port}/mizan" \
-  uv run pytest -q tests/integration/test_evidence_export_postgres.py tests/integration/test_authorize_postgres.py
+  uv run pytest -q tests/unit \
+    tests/integration/test_evidence_export_postgres.py tests/integration/test_authorize_postgres.py \
+    --cov=mizan_control_plane.execution --cov-report=json:.coverage-execution.json
+uv run python scripts/validate_execution_coverage.py
 MIZAN_TEST_DATABASE_URL="postgresql://mizan_app:integration-only-mizan@127.0.0.1:${published_port}/mizan" \
   make benchmark-sequencer
 
