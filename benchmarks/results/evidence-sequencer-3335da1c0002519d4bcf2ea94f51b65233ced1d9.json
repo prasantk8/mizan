@@ -1,0 +1,25 @@
+{
+  "benchmark": "evidence-sequencer",
+  "commit_sha": "3335da1c0002519d4bcf2ea94f51b65233ced1d9",
+  "host": {
+    "cpu": "arm",
+    "logical_cores": 16,
+    "os": "macOS-15.1-arm64-arm-64bit",
+    "python": "3.12.12"
+  },
+  "measurements": {
+    "floor_basis": "half the slowest run measured to date (315.73 ops/s on a four-core ubuntu-latest GitHub runner, which the same runner class beat by 3.8x an hour earlier, R-008 F-15). A collapse detector, not a performance claim; the claim is operations_per_second beside `host` in this artifact.",
+    "operations": 2000,
+    "operations_per_second": 2573.17,
+    "p50_ms": 1.4793,
+    "p99_ms": 1.9425,
+    "shards": 4,
+    "throughput_floor": 150.0
+  },
+  "parameters": {
+    "operations_per_shard": 500,
+    "shards": 4
+  },
+  "timestamp_utc": "2026-08-27T23:29:49.690265+00:00",
+  "worktree_clean": false
+}

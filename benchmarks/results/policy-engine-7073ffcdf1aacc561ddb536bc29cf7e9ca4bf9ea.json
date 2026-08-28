@@ -1,0 +1,22 @@
+{
+  "benchmark": "policy-engine",
+  "commit_sha": "7073ffcdf1aacc561ddb536bc29cf7e9ca4bf9ea",
+  "host": {
+    "cpu": "arm",
+    "logical_cores": 16,
+    "os": "macOS-15.1-arm64-arm-64bit",
+    "python": "3.12.12"
+  },
+  "measurements": {
+    "evaluations_per_second": 5835.33,
+    "iterations": 5000,
+    "p50_ms": 0.1683,
+    "p99_ms": 0.2705
+  },
+  "parameters": {
+    "iterations": 5000,
+    "warmup_iterations": 200
+  },
+  "timestamp_utc": "2026-08-27T19:54:51.100450+00:00",
+  "worktree_clean": false
+}
