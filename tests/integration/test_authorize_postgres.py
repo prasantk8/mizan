@@ -912,3 +912,61 @@ def test_a_production_critical_agent_cannot_be_created_by_one_operator() -> None
         )["agent_id"]
         == "agt_four-eyes"
     )
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_a_financial_write_is_refused_when_no_receipt_verifier_is_configured() -> None:
+    """An operator who deployed without the evidence verifier gets a refusal, not an execution.
+
+    SPEC 5.4 makes durable publication a precondition of a financial write. With no verifier there
+    is nothing that can establish it, and "we could not check" is not "it is fine": the 503 says the
+    control plane is not currently able to authorize this class of call at all.
+    """
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000301")
+    execution = ExecutionService(
+        os.environ["MIZAN_TEST_DATABASE_URL"],
+        ExecutionTokenCodec(
+            "https://issuer.mizan.test", local_private_key_for_testing("integration-execution-6")
+        ),
+        None,
+    )
+    token = execution.issue("tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth")
+    with pytest.raises(Problem) as refused:
+        execution.redeem(
+            token,
+            response.decision_id,
+            "spiffe://mizan/executor/wealth",
+            {"amount": 12500, "request_time": "no-verifier"},
+        )
+    assert refused.value.code == "receipt_verifier_unavailable"
+    assert refused.value.status == 503
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_a_published_receipt_that_does_not_verify_refuses_the_financial_write(
+    tmp_path: Path,
+) -> None:
+    """A receipt row existing is not a receipt verifying, and the gate must not confuse the two.
+
+    The row is present and correctly bound — `immutable_receipt_missing` does not fire — and the
+    verifier rejects the signature. That is the shape a tampered or wrongly-keyed evidence store
+    takes, and it is a distinct refusal from the publication race the drainer produces.
+    """
+    repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000302")
+    _publish_focused_evidence(repository, tmp_path)
+    execution = ExecutionService(
+        os.environ["MIZAN_TEST_DATABASE_URL"],
+        ExecutionTokenCodec(
+            "https://issuer.mizan.test", local_private_key_for_testing("integration-execution-7")
+        ),
+        SimpleNamespace(verify_record_receipt=lambda *arguments: False),
+    )
+    token = execution.issue("tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth")
+    with pytest.raises(Problem) as refused:
+        execution.redeem(
+            token,
+            response.decision_id,
+            "spiffe://mizan/executor/wealth",
+            {"amount": 12500, "request_time": "unverifiable-receipt"},
+        )
+    assert refused.value.code == "immutable_receipt_invalid"
