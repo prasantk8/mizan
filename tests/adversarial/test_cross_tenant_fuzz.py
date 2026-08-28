@@ -13,8 +13,6 @@ from mizan_control_plane.registry import RegistryRepository
 
 from tests.unit.test_registry import agent_document
 
-from .regression import active
-
 DATABASE_URL = os.getenv("MIZAN_TEST_DATABASE_URL")
 TENANTS = ("tnt_bank-a", "tnt_bank-b")
 AGENTS = {
@@ -93,13 +91,12 @@ def test_random_cross_tenant_registry_read_or_write_looks_absent(
     victim: str,
     operation: str,
 ) -> None:
-    attacker = (
-        victim
-        if active("cross_tenant")
-        else TENANTS[1]
-        if victim == TENANTS[0]
-        else TENANTS[0]
-    )
+    # No internal active() switch: F-3 requires the fault to be a regression in
+    # product code. attacker is unconditionally the other tenant, and the external
+    # fault in scripts/adversarial_fault_injection.py defeats RegistryRepository's
+    # real RLS scoping call (repository.py's _scope) to prove this is a genuine
+    # cross-tenant read/write, not a test that only ever queries its own tenant.
+    attacker = TENANTS[1] if victim == TENANTS[0] else TENANTS[0]
     victim_id = AGENTS[victim]
     if operation == "list":
         page = tenant_registry.list(attacker, "agents", 200, None)
