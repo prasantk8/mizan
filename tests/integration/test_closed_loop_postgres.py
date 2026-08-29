@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from mizan_control_plane.canonical import binding_hash
 from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint
+from mizan_control_plane.drain_worker import run_once
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -189,7 +190,14 @@ def activate_policy(database_url: str) -> None:
 
 
 def publish_evidence(tmp_path: Path) -> None:
-    """What the T-074 drainer will do continuously: receipts, then an anchor."""
+    """One cycle of the real drainer.
+
+    This used to hand-roll `drain` then `anchor` under the docstring *"what the T-074 drainer
+    will do continuously"* -- a test standing in for a worker that did not exist, which is how
+    the closed loop passed here while every deployed Mizan refused every financial write. It now
+    runs the shipped `mizan-drain-outbox` cycle, so what this test exercises and what production
+    launches are the same code (T-099).
+    """
     evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
     try:
         publisher = OutboxPublisher(
@@ -198,8 +206,7 @@ def publish_evidence(tmp_path: Path) -> None:
             Ed25519EvidenceSigner.development("evidence-receipt"),
             Ed25519EvidenceSigner.development("evidence-anchor"),
         )
-        publisher.drain(TENANT)
-        publisher.anchor(TENANT, f"{TENANT}:adr:0")
+        run_once(publisher, evidence, [TENANT], batch_size=100, max_unpublished_seconds=5)
     finally:
         evidence.pool.close()
 

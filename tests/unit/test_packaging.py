@@ -32,6 +32,7 @@ def test_migration_set_is_ordered_and_every_file_is_atomic() -> None:
         "0001_domain_schema.sql",
         "0002_anchor_chain.sql",
         "0003_anchor_attestations.sql",
+        "0004_outbox_quarantine.sql",
     ]
     assert all("BEGIN;" not in migration.body.splitlines()[:1] for migration in migrations)
 
@@ -146,11 +147,21 @@ def test_production_packaging_contract_is_complete() -> None:
     assert "postgresql://mizan_app:" in compose
     assert "python /app/scripts/migrate.py" not in compose
     assert 'entrypoint: ["python", "/app/scripts/migrate.py"]' in compose
-    assert 'profiles: ["drainer"]' in compose
+    # Was `assert 'profiles: ["drainer"]' in compose`, and was passing: it asserted the presence
+    # of a service pointing at `mizan-drain-outbox`, a binary that did not exist, behind an
+    # opt-in profile. Without that service `execution.py::_require_receipts` refuses every
+    # `financial_write` with 403 `immutable_receipt_missing`, so the assertion was pinning the
+    # defect in place under the name "the production packaging contract is complete" (T-099).
+    assert 'profiles: ["drainer"]' not in compose
+    assert 'entrypoint: ["mizan-drain-outbox"]' in compose
     assert "MIZAN_HEALTH_SERVER_CA_FILE: /run/mizan/tls/server-ca.pem" in compose
 
     chart_values = Path("charts/mizan/values.yaml").read_text(encoding="utf-8")
-    assert "enabled: false" in chart_values
+    # Same defect in the chart: `enabled: false` on the drainer. A substring test cannot tell
+    # which key it matched, which is half of why this went unnoticed -- T-100 replaces the whole
+    # function with `helm template` and assertions against rendered objects.
+    assert "drainer:\n" in chart_values
+    assert "enabled: false" not in chart_values
     migration_job = Path("charts/mizan/templates/migration-job.yaml").read_text(
         encoding="utf-8"
     )

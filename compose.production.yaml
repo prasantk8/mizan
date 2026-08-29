@@ -78,7 +78,11 @@ services:
     restart: unless-stopped
 
   drain-worker:
-    profiles: ["drainer"]
+    # This service used to sit behind its own opt-in profile while every other service here was
+    # in the production one, so the single component without which `execution.py` refuses every
+    # financial write shipped as optional. That is how it stayed invisible long enough for the
+    # binary it names to never get written at all (T-099).
+    profiles: ["production"]
     image: ${MIZAN_IMAGE:-mizan-control-plane:local}
     entrypoint: ["mizan-drain-outbox"]
     environment: *control-environment

@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -258,14 +258,100 @@ class EvidenceRepository:
                 else ""
             )
             rows = connection.execute(
-                "SELECT outbox_id,event_type,payload,created_at FROM mizan.outbox "
-                "WHERE tenant_id=%s AND published_at IS NULL"
+                "SELECT outbox_id,event_type,payload,created_at,attempts FROM mizan.outbox "
+                "WHERE tenant_id=%s AND published_at IS NULL AND quarantined_at IS NULL"
                 + clause
                 + " ORDER BY outbox_id LIMIT %s FOR UPDATE SKIP LOCKED",
                 (tenant_id, limit),
             ).fetchall()
             return [
-                {"outbox_id": row[0], "event_type": row[1], "payload": row[2], "created_at": row[3]}
+                {
+                    "outbox_id": row[0],
+                    "event_type": row[1],
+                    "payload": row[2],
+                    "created_at": row[3],
+                    "attempts": row[4],
+                }
+                for row in rows
+            ]
+
+    def streams(self, tenant_id: str) -> list[str]:
+        """Every evidence stream this tenant has ever written to.
+
+        Read from `evidence_chain_heads` rather than from `evidence_receipts`, so a stream that
+        exists but has nothing published yet is still visible to the anchor cadence. Scoped by the
+        same RLS session variable as every other read here -- enumerating one tenant's streams from
+        inside that tenant's scope crosses no isolation boundary. Enumerating *tenants* would, and
+        deliberately does not happen anywhere in this class; see B-27.
+        """
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT stream_id FROM mizan.evidence_chain_heads WHERE tenant_id=%s "
+                "ORDER BY stream_id",
+                (tenant_id,),
+            ).fetchall()
+            return [row[0] for row in rows]
+
+    def oldest_unpublished_age_seconds(self, tenant_id: str) -> float | None:
+        """Age of the oldest row still waiting to publish, or None when the queue is empty.
+
+        This is the quantity `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` bounds (SPEC 8, ADR-004):
+        breaching it opens the evidence breaker and is not merely an observability warning.
+        Measured with the database's clock, not the worker's -- a drainer with a skewed clock
+        would otherwise report a lag that no other component agrees with.
+        """
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT EXTRACT(EPOCH FROM (clock_timestamp() - MIN(created_at))) "
+                "FROM mizan.outbox WHERE tenant_id=%s AND published_at IS NULL "
+                "AND quarantined_at IS NULL",
+                (tenant_id,),
+            ).fetchone()
+        return None if row is None or row[0] is None else float(row[0])
+
+    def record_publication_failure(
+        self, tenant_id: str, outbox_id: int, error: str, quarantine_at_attempts: int
+    ) -> bool:
+        """Count a failed publication attempt, and set the row aside once its budget is spent.
+
+        Returns True when this call quarantined the row. `attempts` has always existed and has
+        only ever counted successes, because `record_publication` increments it in the statement
+        that publishes. A retry budget that never decrements is not a budget, which is why a
+        poisoned row could previously block its stream forever.
+        """
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "UPDATE mizan.outbox SET attempts=attempts+1, failed_at=clock_timestamp(), "
+                "last_error=%s, quarantined_at=CASE WHEN attempts+1 >= %s "
+                "THEN clock_timestamp() END "
+                "WHERE tenant_id=%s AND outbox_id=%s AND published_at IS NULL "
+                "AND quarantined_at IS NULL "
+                "RETURNING quarantined_at IS NOT NULL",
+                (error[:2000], quarantine_at_attempts, tenant_id, outbox_id),
+            ).fetchone()
+            return bool(row[0]) if row else False
+
+    def quarantined(self, tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Rows set aside for a human. Nothing drains them; that is the point of the state."""
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT outbox_id,event_type,attempts,last_error,quarantined_at "
+                "FROM mizan.outbox WHERE tenant_id=%s AND quarantined_at IS NOT NULL "
+                "ORDER BY outbox_id LIMIT %s",
+                (tenant_id, limit),
+            ).fetchall()
+            return [
+                {
+                    "outbox_id": row[0],
+                    "event_type": row[1],
+                    "attempts": row[2],
+                    "last_error": row[3],
+                    "quarantined_at": row[4],
+                }
                 for row in rows
             ]
 
@@ -844,37 +930,76 @@ class OutboxPublisher:
         self.delivery = delivery or NullDeliverySink()
         self.anchor_provider = anchor_provider or anchor_provider_from_config()
 
-    def drain(self, tenant_id: str, limit: int = 100) -> int:
+    def drain(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        on_failure: Callable[[list[dict[str, Any]], Exception], None] | None = None,
+    ) -> int:
+        """Publish unpublished evidence rows and return how many were published.
+
+        `on_failure` is how a long-running worker survives a row that will never publish. Without
+        it -- the default, and what every in-process caller wants -- an exception propagates and
+        the batch is abandoned, which is correct for a request handler. With it, a group that
+        raises is handed to the callback and the remaining groups still drain, so one malformed
+        payload cannot hold up the queue whose emptiness makes `execution.py` refuse every
+        financial write. The callback owns the retry budget; this method owns no policy about it.
+
+        Grouping is the unit of failure, not the row: the segment object covers the whole group
+        and is written before any receipt in it, so a group that fails at `put_once` has published
+        nothing and a group that fails midway through its receipts has published a prefix. Both
+        are safe to re-attempt -- `put_once` is idempotent and `record_publication` is
+        `ON CONFLICT DO NOTHING` -- which is why a failed group is retried rather than rolled back.
+        """
         published = 0
         groups: dict[str, list[dict[str, Any]]] = {}
+        malformed: list[dict[str, Any]] = []
         for item in self.repository.unpublished(tenant_id, limit, evidence_only=True):
-            groups.setdefault(item["payload"]["stream_id"], []).append(item)
+            payload = item["payload"]
+            if not isinstance(payload, dict) or "stream_id" not in payload:
+                # Cannot be grouped, so it cannot be published, and it would otherwise be
+                # re-read on every cycle forever. Reported through the same path as any other
+                # failure rather than dropped here.
+                malformed.append(item)
+                continue
+            groups.setdefault(payload["stream_id"], []).append(item)
+        if malformed:
+            if on_failure is None:
+                raise KeyError("stream_id")
+            on_failure(malformed, KeyError("stream_id"))
         for stream_id, items in groups.items():
-            items.sort(key=lambda item: item["payload"]["sequence_number"])
-            first, last = items[0]["payload"], items[-1]["payload"]
-            key = (
-                f"segments/{tenant_id}/{stream_id.replace(':', '_')}/"
-                f"{first['sequence_number']:020d}-{last['sequence_number']:020d}-{last['record_hash']}.json"
-            )
-            canonical = rfc8785.dumps([item["payload"] for item in items])
-            object_version = self.store.put_once(key, canonical)
-            for item in items:
-                payload = item["payload"]
-                receipt = {
-                    "receipt_id": str(uuid4()),
-                    "tenant_id": tenant_id,
-                    "stream_id": stream_id,
-                    "sequence_number": payload["sequence_number"],
-                    "record_hash": payload["record_hash"],
-                    "object_version": object_version,
-                    "object_key": key,
-                    "key_id": self.receipt_signer.key_id,
-                    "issued_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                }
-                signature = self.receipt_signer.sign(receipt)
-                self.repository.record_publication(tenant_id, item["outbox_id"], receipt, signature)
-                self.delivery.publish(item["event_type"], stream_id, payload)
-                published += 1
+            try:
+                items.sort(key=lambda item: item["payload"]["sequence_number"])
+                first, last = items[0]["payload"], items[-1]["payload"]
+                key = (
+                    f"segments/{tenant_id}/{stream_id.replace(':', '_')}/"
+                    f"{first['sequence_number']:020d}-{last['sequence_number']:020d}-{last['record_hash']}.json"
+                )
+                canonical = rfc8785.dumps([item["payload"] for item in items])
+                object_version = self.store.put_once(key, canonical)
+                for item in items:
+                    payload = item["payload"]
+                    receipt = {
+                        "receipt_id": str(uuid4()),
+                        "tenant_id": tenant_id,
+                        "stream_id": stream_id,
+                        "sequence_number": payload["sequence_number"],
+                        "record_hash": payload["record_hash"],
+                        "object_version": object_version,
+                        "object_key": key,
+                        "key_id": self.receipt_signer.key_id,
+                        "issued_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    }
+                    signature = self.receipt_signer.sign(receipt)
+                    self.repository.record_publication(
+                        tenant_id, item["outbox_id"], receipt, signature
+                    )
+                    self.delivery.publish(item["event_type"], stream_id, payload)
+                    published += 1
+            except Exception as error:
+                if on_failure is None:
+                    raise
+                on_failure(items, error)
         return published
 
     def anchor(

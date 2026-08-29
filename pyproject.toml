@@ -24,6 +24,7 @@ mizan-control-plane = "mizan_control_plane.__main__:main"
 mizan-dev-token = "mizan_control_plane.dev_token:main"
 mizan-export-evidence = "mizan_control_plane.evidence_export:main"
 mizan-attest-anchors = "mizan_control_plane.attestation_runner:main"
+mizan-drain-outbox = "mizan_control_plane.drain_worker:main"
 mizan-mcp-gateway = "mizan_mcp_gateway.__main__:main"
 
 [project.optional-dependencies]
