@@ -160,3 +160,25 @@ class Settings:
             tls_private_key_file=tls_private_key_file,
             tls_client_ca_file=tls_client_ca_file,
         )
+
+
+def resolve_served_tenants(explicit: list[str] | None, environment_key: str) -> list[str]:
+    """The tenants a background workload serves -- named, never discovered.
+
+    Every managed workload in this system needs this list and none of them can query it:
+    `mizan.tenants` carries `FORCE ROW LEVEL SECURITY` under
+    `USING (tenant_id = mizan.current_tenant_id())`, and the schema holds no `SECURITY DEFINER`
+    function, so `mizan_app` sees only the tenant it is currently scoped to. Widening that is a
+    tenant-isolation decision and therefore H-7 -- escalated as **B-27**, not taken in code.
+
+    It lives here rather than in either worker because the drainer and the attestation runner hit
+    the same wall, and a second copy of this reasoning is how two workloads come to resolve
+    tenants two subtly different ways.
+    """
+    named = list(explicit or [])
+    if not named:
+        named = [
+            item.strip() for item in environ.get(environment_key, "").split(",") if item.strip()
+        ]
+    # Deduplicate while preserving the operator's order, so a cycle is reproducible.
+    return list(dict.fromkeys(named))

@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import signal
 import sys
 import time
@@ -49,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 
-from .config import Settings
+from .config import Settings, resolve_served_tenants
 from .evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -232,15 +231,8 @@ def run_once(
 
 
 def resolve_tenants(argument: list[str] | None) -> list[str]:
-    named = list(argument or [])
-    if not named:
-        named = [
-            item.strip()
-            for item in os.environ.get("MIZAN_DRAIN_TENANTS", "").split(",")
-            if item.strip()
-        ]
-    # Deduplicate while keeping the operator's order, so the cycle is reproducible.
-    return list(dict.fromkeys(named))
+    """This worker's served set. The reasoning, and B-27, live on the shared helper."""
+    return resolve_served_tenants(argument, "MIZAN_DRAIN_TENANTS")
 
 
 def main(argv: list[str] | None = None) -> int:
