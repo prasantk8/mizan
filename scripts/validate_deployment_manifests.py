@@ -57,6 +57,22 @@ RENDER_DIGEST = "sha256:" + "0" * 64
 # exists in the image, `python -c` is an inline probe with no file to resolve.
 INTERPRETERS = {"python", "python3", "/usr/bin/env"}
 
+# Background workloads a Mizan install cannot honestly do without. Both were shipped as optional
+# or as nothing at all, and in both cases the deployment ran, looked healthy, and silently failed
+# to do the thing the product exists to do -- which is why their absence is a gate failure rather
+# than a chart preference.
+REQUIRED_WORKLOADS = {
+    "drainer": (
+        "Without one nothing writes mizan.evidence_receipts and execution.py refuses every "
+        "financial_write with 403 immutable_receipt_missing (T-099)."
+    ),
+    "attestation": (
+        "Without one every anchor stays pending forever, so no stream may be described as "
+        "externally anchored (ADR-004 G.11 / B-12) and the product never produces the RFC 3161 "
+        "timestamp that is its central claim (T-106)."
+    ),
+}
+
 FAILURES: list[str] = []
 
 
@@ -151,18 +167,13 @@ def check_chart(documents: list[dict[str, Any]], scripts: set[str]) -> None:
     """Check C -- production properties asserted against rendered objects."""
     kinds = {(item.get("kind"), item.get("metadata", {}).get("name")) for item in documents}
 
-    drainers = [
-        item
-        for item in documents
-        if item.get("kind") == "Deployment"
-        and "drainer" in item.get("metadata", {}).get("name", "")
-    ]
-    if not drainers:
-        fail(
-            "the chart renders no drainer workload. Without one nothing writes "
-            "mizan.evidence_receipts and execution.py refuses every financial_write with 403 "
-            "immutable_receipt_missing -- it is not an optional component (T-099)"
-        )
+    for component, consequence in REQUIRED_WORKLOADS.items():
+        if not any(
+            item.get("kind") == "Deployment"
+            and component in item.get("metadata", {}).get("name", "")
+            for item in documents
+        ):
+            fail(f"the chart renders no {component} workload. {consequence}")
 
     if not any(kind == "Job" for kind, _ in kinds):
         fail("the chart renders no migration Job")

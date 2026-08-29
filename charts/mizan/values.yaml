@@ -40,4 +40,15 @@ drainer:
   # B-27. Until it is ruled on, name the tenants this drainer serves.
   tenants: []
 
+attestation:
+  # On by default for the reason the drainer is: `mizan-attest-anchors` appeared in no manifest
+  # at all, so every anchor stayed `pending` forever and the RFC 3161 timestamp that is this
+  # product's central claim was never obtained on any deployment. B-12 forbids calling such a
+  # stream externally anchored, so a Mizan without this workload cannot honestly make the claim
+  # it exists to make.
+  enabled: true
+  # Same B-27 constraint as the drainer, and a separate key so one workload's served set cannot
+  # silently become the other's.
+  tenants: []
+
 resources: {}

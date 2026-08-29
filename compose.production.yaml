@@ -23,6 +23,13 @@ x-control-environment: &control-environment
   MIZAN_HEALTH_CLIENT_PRIVATE_KEY_FILE: /run/mizan/tls/health-client-key.pem
   MIZAN_HTTP_HOST: 0.0.0.0
   MIZAN_HTTP_PORT: "8443"
+  # The two background workloads are told which tenants they serve. Neither can discover them:
+  # mizan.tenants is under FORCE ROW LEVEL SECURITY and the schema has no SECURITY DEFINER
+  # function, so widening that is an H-7 tenant-isolation decision, escalated as B-27. Both
+  # workers refuse to start when their list is empty rather than running healthy and doing
+  # nothing -- so an operator who leaves these unset learns immediately, not at the first audit.
+  MIZAN_DRAIN_TENANTS: ${MIZAN_DRAIN_TENANTS}
+  MIZAN_ATTEST_TENANTS: ${MIZAN_ATTEST_TENANTS}
 
 services:
   postgres-production:
@@ -85,6 +92,28 @@ services:
     profiles: ["production"]
     image: ${MIZAN_IMAGE:-mizan-control-plane:local}
     entrypoint: ["mizan-drain-outbox"]
+    environment: *control-environment
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    volumes:
+      - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
+      - mizan-production-evidence:/app/var/evidence
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+
+  attestation-worker:
+    # `mizan-attest-anchors` has existed since T-036 and appeared in no manifest at all, so on a
+    # real deployment nothing ever contacted a timestamp authority: every anchor stayed `pending`
+    # forever. B-12 forbids describing a stream carrying a pending attestation as externally
+    # anchored, which means the product ran and never produced the RFC 3161 timestamp that is its
+    # central claim (T-106).
+    profiles: ["production"]
+    image: ${MIZAN_IMAGE:-mizan-control-plane:local}
+    entrypoint: ["mizan-attest-anchors"]
     environment: *control-environment
     depends_on:
       migrations:

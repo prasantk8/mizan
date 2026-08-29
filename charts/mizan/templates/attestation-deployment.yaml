@@ -1,0 +1,64 @@
+{{- if .Values.attestation.enabled }}
+{{/*
+  `mizan-attest-anchors` has existed since T-036 and appeared in NO manifest -- not this chart,
+  not the production compose file. So on a real deployment nothing ever contacted a timestamp
+  authority and every anchor stayed `pending` forever. ADR-004 G.11 / B-12 forbid describing a
+  stream carrying a pending attestation as externally anchored, so the product ran and never
+  produced the RFC 3161 timestamp that is its central claim (T-106).
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mizan.fullname" . }}-attestation
+  labels:
+    {{- include "mizan.labels" . | nindent 4 }}
+    app.kubernetes.io/component: attestation
+spec:
+  # Deliberately not parameterised. Two runners racing the same pending anchor both mint a token
+  # and the second append is refused, which T-061 showed opens the tamper alarm on ordinary
+  # concurrency. One replica, and the work is cheap.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "mizan.labels" . | nindent 6 }}
+      app.kubernetes.io/component: attestation
+  template:
+    metadata:
+      labels:
+        {{- include "mizan.labels" . | nindent 8 }}
+        app.kubernetes.io/component: attestation
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: attestation
+          image: {{ include "mizan.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["mizan-attest-anchors"]
+          env:
+            - {name: MIZAN_ENV, value: production}
+            - name: MIZAN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.runtime }}
+                  key: {{ .Values.secrets.appDatabaseUrlKey }}
+            - {name: MIZAN_KEY_CUSTODY_MODE, value: {{ .Values.config.keyCustodyMode | quote }}}
+            - {name: MIZAN_EVIDENCE_RECEIPT_KEY_REF, value: {{ .Values.config.evidenceReceiptKeyRef | quote }}}
+            - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
+            - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}
+            - {name: MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF, value: {{ .Values.config.degradedGrantKeyRef | quote }}}
+            # The runner refuses to start unless the provider is rfc3161, which is the point:
+            # a development-unattested provider would let it poll forever, complete nothing, and
+            # still look healthy.
+            - {name: MIZAN_ANCHOR_PROVIDER, value: rfc3161}
+            - {name: MIZAN_ANCHOR_TSA_ENDPOINTS, value: {{ .Values.config.tsaEndpoints | quote }}}
+            - {name: MIZAN_ANCHOR_TSA_TRUST_ANCHORS, value: /run/mizan/tls/tsa-root.pem}
+            - {name: MIZAN_ATTEST_TENANTS, value: {{ join "," .Values.attestation.tenants | quote }}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+{{- end }}
