@@ -113,6 +113,8 @@ jobs:
             --cov=mizan_control_plane.auth --cov-fail-under=75
           uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_runtime.py \
             --cov=mizan_control_plane.app --cov-fail-under=68
+      - name: Reproduce the CP-B attestation review
+        run: uv run --frozen python docs/reviews/reproductions/R-007-cpb-attestation.py
       - name: Verify 100k-record chain performance
         env:
           MIZAN_BENCHMARK_RESULTS_DIR: ${{ runner.temp }}/benchmark-results

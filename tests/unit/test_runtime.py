@@ -205,3 +205,40 @@ def _unsigned_parts(codec: ExecutionTokenCodec) -> tuple[str, str, str]:
         "exp": int(time.time()) + 300,
     }
     return tuple(codec.encode(claims).split("."))  # type: ignore[return-value]
+
+
+def test_the_approval_expiry_mode_defaults_to_enforced_and_refuses_anything_else(
+    monkeypatch, tmp_path
+) -> None:
+    """A misspelled money-movement policy must not silently pick one of the two behaviours.
+
+    `MIZAN_APPROVAL_EPOCH_EXPIRY=advisiory` reading as `enforced` would expire approvals at an
+    institution that had written down that it does not, and the typo is invisible in a manifest.
+    Refused at startup, where a person is still watching.
+    """
+    assert development_settings(monkeypatch, tmp_path).approval_epoch_expiry == "enforced"
+    assert (
+        development_settings(
+            monkeypatch, tmp_path, MIZAN_APPROVAL_EPOCH_EXPIRY="ADVISORY"
+        ).approval_epoch_expiry
+        == "advisory"
+    )
+    with pytest.raises(RuntimeError, match="MIZAN_APPROVAL_EPOCH_EXPIRY"):
+        development_settings(monkeypatch, tmp_path, MIZAN_APPROVAL_EPOCH_EXPIRY="advisiory")
+
+
+def test_the_repository_refuses_to_sweep_under_a_deployment_that_does_not_expire(
+    monkeypatch, tmp_path
+) -> None:
+    """A repository that quietly did nothing would make `advisory` look like a broken sweeper.
+
+    The two are indistinguishable from the outside -- no approvals expire in either case -- so the
+    only way an operator learns which one they have is if the wrong call is an error rather than a
+    no-op. `run_once` never makes it; this is the guard for anything that does.
+    """
+    from mizan_control_plane.approval_repository import ApprovalRepository
+
+    repository = ApprovalRepository.__new__(ApprovalRepository)
+    repository.approval_epoch_expiry = "advisory"
+    with pytest.raises(RuntimeError, match="advisory"):
+        repository.sweep_expired_epochs("tnt_bank-a")

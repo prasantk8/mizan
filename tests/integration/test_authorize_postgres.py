@@ -949,11 +949,22 @@ def test_a_poisoned_outbox_row_is_set_aside_with_its_reason_against_a_live_table
     exhausts the budget -- and because the partial index and the CHECK constraint keeping
     quarantine and publication distinct exist only in the database.
     """
-    _focused_authorization("018f47a6-7b42-7c00-8000-000000000208")
     evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
-    pending = evidence.unpublished("tnt_bank-a", limit=1)
-    assert pending, "the fixture wrote no outbox row, so this test would assert nothing"
-    outbox_id = pending[0]["outbox_id"]
+    # A row this test owns, not the head of the shared queue. It used to take
+    # `unpublished("tnt_bank-a", limit=1)[0]`, which worked only because SPEC §4 events were never
+    # relayed and therefore sat unpublished at the front of the queue for ever -- the row it
+    # quarantined was one nothing would ever have published anyway. Once the drainer began
+    # relaying them the head became a `decision_event`, and quarantining *that* takes a record out
+    # of the middle of a hash chain: the stream can then never be anchored past the hole, and two
+    # unrelated tests failed on `evidence_anchor_declared_density`. What is under test here is the
+    # quarantine arithmetic, so the row is one that belongs to no chain.
+    with evidence.pool.connection() as connection, connection.transaction():
+        connection.execute("SELECT set_config('app.tenant_id',%s,true)", ("tnt_bank-a",))
+        outbox_id = connection.execute(
+            "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+            "VALUES (%s,'policy',%s,'mizan.policy.activated',%s) RETURNING outbox_id",
+            ("tnt_bank-a", "pol_quarantine-fixture", json.dumps({"policy_id": "pol_q"})),
+        ).fetchone()[0]
 
     assert evidence.record_publication_failure("tnt_bank-a", outbox_id, "boom", 2) is False
     assert all(row["outbox_id"] != outbox_id for row in evidence.quarantined("tnt_bank-a"))

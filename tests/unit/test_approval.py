@@ -182,3 +182,63 @@ def test_override_requires_fresh_votes_and_justification() -> None:
             forbidden_approvers=set(),
             now=NOW,
         )
+
+
+# ---------------------------------------------------------------------------------------------
+# Whether a clock may decide a payment is a deployment decision (H-7, MIZAN_APPROVAL_EPOCH_EXPIRY)
+# ---------------------------------------------------------------------------------------------
+
+LATE = datetime(2026, 8, 25, 1, tzinfo=UTC)  # an hour past a 900-second epoch
+
+
+def test_a_late_vote_is_refused_when_the_deployment_enforces_expiry() -> None:
+    """The default, and the behaviour every deployment had before the setting existed."""
+    with pytest.raises(Problem, match="Approval epoch has expired"):
+        vote(approval(), "prn_alice", role_claim="manager", now=LATE)
+
+
+def test_a_late_vote_is_accepted_when_the_deployment_does_not_expire_epochs() -> None:
+    """`advisory` has to reach the request path, or it is the worst of both answers.
+
+    An institution that says no clock may decide a payment, but whose control plane still refuses
+    the late vote, has an epoch that stays OPEN for ever *and* cannot be answered: the approval is
+    now undecidable by anyone. Fails before `enforce_expiry`, because the check was unconditional
+    and there was no way for a deployment to say it wanted the other behaviour.
+    """
+    pending, recorded = vote(
+        approval(), "prn_alice", role_claim="manager", now=LATE, enforce_expiry=False
+    )
+
+    assert recorded["vote"] == "APPROVE"
+    # Counted, not merely not-refused: the late vote moved the approval toward its quorum.
+    assert pending["state"] == "PARTIALLY_APPROVED"
+    # The deadline is still recorded and still reportable; it is a deadline for the people
+    # rather than a rule against them.
+    assert pending["epochs"][-1]["expires_at"] == "2026-08-25T00:15:00Z"
+
+
+def test_not_expiring_an_epoch_does_not_also_disable_the_other_refusals() -> None:
+    """`enforce_expiry=False` relaxes exactly one check and nothing else.
+
+    A blanket "skip validation when advisory" would have quietly re-opened self-approval and the
+    terminal-state guard along with it, which is how a configuration flag becomes a vulnerability.
+    """
+    subject = approval()
+    with pytest.raises(Problem, match="cannot approve"):
+        vote(
+            subject,
+            "prn_alice",
+            role_claim="manager",
+            now=LATE,
+            enforce_expiry=False,
+            forbidden_approvers={"prn_alice"},
+        )
+    with pytest.raises(Problem, match="Current epoch is"):
+        vote(
+            subject,
+            "prn_alice",
+            role_claim="manager",
+            now=LATE,
+            enforce_expiry=False,
+            epoch_number=99,
+        )

@@ -43,6 +43,23 @@ class Settings:
     tls_certificate_file: str | None
     tls_private_key_file: str | None
     tls_client_ca_file: str | None
+    outbox_batch_limit: int = 100
+    outbox_max_attempts: int = 5
+    audit_anchor_interval_seconds: int = 300
+    audit_anchor_interval_records: int = 10000
+    expiry_sweep_interval_seconds: float = 30.0
+    approval_epoch_expiry: str = "enforced"
+    drain_tenants: tuple[str, ...] = ()
+    log_level: str = "INFO"
+    log_format: str = "json"
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 0
+    otel_exporter_endpoint: str = ""
+    otel_service_name: str = "mizan-control-plane"
+
+    @property
+    def metrics_enabled(self) -> bool:
+        return self.metrics_port > 0
 
     @property
     def is_production(self) -> bool:
@@ -119,6 +136,23 @@ class Settings:
                     "and MIZAN_TLS_CLIENT_CA_FILE; execution endpoints authenticate the workload "
                     "from the verified TLS peer only (ADR-001 Amendment B)"
                 )
+        log_format = environ.get("MIZAN_LOG_FORMAT", "json").lower()
+        if log_format not in ("json", "text"):
+            raise RuntimeError("MIZAN_LOG_FORMAT must be 'json' or 'text'")
+        # Whether an unanswered approval epoch expires by itself is a money-movement policy, not
+        # an implementation detail, so it is a deployment decision and both answers are real.
+        # `enforced`: the sweeper closes an elapsed epoch as EXPIRED and emits
+        # `mizan.approval.expired`, and the request path refuses a late vote -- an approval nobody
+        # answered is a refusal. `advisory`: nothing is ever written at rest, an elapsed epoch
+        # stays OPEN and a late vote is accepted, because a deployment that chooses this one is
+        # saying a human decides every payment and no clock may decide one for them. The overdue
+        # count is reported either way; the difference is who acts on it.
+        approval_epoch_expiry = environ.get("MIZAN_APPROVAL_EPOCH_EXPIRY", "enforced").lower()
+        if approval_epoch_expiry not in ("enforced", "advisory"):
+            raise RuntimeError("MIZAN_APPROVAL_EPOCH_EXPIRY must be 'enforced' or 'advisory'")
+        drain_tenants = tuple(
+            item.strip() for item in environ.get("MIZAN_DRAIN_TENANTS", "").split(",") if item.strip()
+        )
         return cls(
             database_url=environ["MIZAN_DATABASE_URL"],
             jwt_issuer=environ["MIZAN_JWT_ISSUER"],
@@ -142,10 +176,6 @@ class Settings:
             anchor_attestation_max_pending_seconds=int(
                 environ.get("MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS", "900")
             ),
-            evidence_max_unpublished_seconds=int(
-                environ.get("MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS", "5")
-            ),
-            outbox_drain_interval_ms=int(environ.get("MIZAN_OUTBOX_DRAIN_INTERVAL_MS", "250")),
             identity_token_max_ttl_seconds=int(
                 environ.get("MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS", "3600")
             ),
@@ -171,6 +201,29 @@ class Settings:
             tls_certificate_file=tls_certificate_file,
             tls_private_key_file=tls_private_key_file,
             tls_client_ca_file=tls_client_ca_file,
+            outbox_drain_interval_ms=int(environ.get("MIZAN_OUTBOX_DRAIN_INTERVAL_MS", "250")),
+            outbox_batch_limit=int(environ.get("MIZAN_OUTBOX_BATCH_LIMIT", "100")),
+            outbox_max_attempts=int(environ.get("MIZAN_OUTBOX_MAX_ATTEMPTS", "5")),
+            evidence_max_unpublished_seconds=float(
+                environ.get("MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS", "5")
+            ),
+            audit_anchor_interval_seconds=int(
+                environ.get("MIZAN_AUDIT_ANCHOR_INTERVAL_SECONDS", "300")
+            ),
+            audit_anchor_interval_records=int(
+                environ.get("MIZAN_AUDIT_ANCHOR_INTERVAL_RECORDS", "10000")
+            ),
+            expiry_sweep_interval_seconds=float(
+                environ.get("MIZAN_EXPIRY_SWEEP_INTERVAL_SECONDS", "30")
+            ),
+            drain_tenants=drain_tenants,
+            log_level=environ.get("MIZAN_LOG_LEVEL", "INFO"),
+            log_format=log_format,
+            approval_epoch_expiry=approval_epoch_expiry,
+            metrics_host=environ.get("MIZAN_METRICS_HOST", "127.0.0.1"),
+            metrics_port=int(environ.get("MIZAN_METRICS_PORT", "0")),
+            otel_exporter_endpoint=environ.get("MIZAN_OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+            otel_service_name=environ.get("MIZAN_OTEL_SERVICE_NAME", "mizan-control-plane"),
         )
 
 

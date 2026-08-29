@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import json
+import logging
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import jwt
 import pytest
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.execution import ExecutionService, ExecutionTokenCodec
 from mizan_control_plane.keys import local_private_key_for_testing
+from mizan_control_plane.observability import Metrics
 from mizan_control_plane.problems import Problem
+from psycopg import OperationalError
 from psycopg_pool import PoolTimeout
 
 from tests.unit.test_authorization import context, identity
@@ -118,6 +123,7 @@ def test_replay_security_events_use_bounded_pool_without_exhausting_primary() ->
     service = object.__new__(ExecutionService)
     service.security_event_pool = AlwaysTimeoutPool()
     service.security_event_counters = Counter()
+    service.metrics = Metrics()
     service.pool = object()  # A primary-pool access would fail: it has no connection method.
 
     with ThreadPoolExecutor(max_workers=16) as workers:
@@ -135,6 +141,77 @@ def test_replay_security_events_use_bounded_pool_without_exhausting_primary() ->
         for future in futures:
             future.result(timeout=1)
     assert service.security_event_counters["security_event_pool_timeout"] == 64
+
+
+class BrokenPool:
+    """A security-event sink that fails the way a database actually fails."""
+
+    def __init__(self, failure: Exception) -> None:
+        self.failure = failure
+
+    def connection(self):
+        raise self.failure
+
+
+def _isolated_service(pool: Any) -> ExecutionService:
+    service = object.__new__(ExecutionService)
+    service.security_event_pool = pool
+    service.security_event_counters = Counter()
+    service.metrics = Metrics()
+    service.pool = object()  # a primary-pool access would fail: it has no connection method
+    return service
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OperationalError("connection closed"), RuntimeError("sink is gone"), ValueError("bad json")],
+)
+def test_a_security_event_sink_that_fails_does_not_change_the_security_answer(
+    failure: Exception,
+) -> None:
+    """The audit sink may never decide the outcome it is auditing.
+
+    `_record_security_event` runs *inside* the redemption transaction. Before T-073 it caught
+    `PoolTimeout` alone, so any other fault escaped, rolled the redemption back, and turned a
+    detected replay of an execution capability into a 500 — telling the attacker to retry, by the
+    mechanism whose whole job was to refuse them. Fails on 793a54a: the exception propagates.
+    """
+    service = _isolated_service(BrokenPool(failure))
+    service._record_security_event(
+        "tnt_bank-a",
+        "mizan.security.execution_token_replay",
+        "adr_decision-0001",
+        "jti-1",
+        "spiffe://mizan/executor/wealth",
+    )
+    assert service.security_event_counters["security_event_write_failed"] == 1
+    exposition = service.metrics.exposition().decode()
+    assert 'cause="' + type(failure).__name__ + '"' in exposition
+    assert "mizan_security_events_dropped_total" in exposition
+
+
+def test_a_dropped_security_event_is_written_where_the_siem_can_still_recover_it(caplog) -> None:
+    """There is no queue behind this sink, so a dropped event is lost, not deferred.
+
+    The row that could not be written is therefore logged in full at ERROR — the same pipeline that
+    ships logs to the SIEM is the last chance to reconstruct it. It carries ids and hashes only,
+    which is exactly what the outbox row would have carried.
+    """
+    service = _isolated_service(BrokenPool(OperationalError("connection closed")))
+    with caplog.at_level(logging.ERROR):
+        service._record_security_event(
+            "tnt_bank-a",
+            "mizan.security.execution_token_replay",
+            "adr_decision-0001",
+            "jti-1",
+            "spiffe://mizan/executor/wealth",
+        )
+    record = next(r for r in caplog.records if r.message == "security event dropped and lost")
+    recovered = json.loads(record.dropped_event)
+    assert recovered["decision_id"] == "adr_decision-0001"
+    assert recovered["authenticated_workload"] == "spiffe://mizan/executor/wealth"
+    assert len(recovered["token_jti_hash"]) == 64
+    assert record.event_type == "mizan.security.execution_token_replay"
 
 
 def test_policy_ttl_can_only_clamp_tool_ttl() -> None:
