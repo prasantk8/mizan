@@ -286,3 +286,34 @@ def test_a_report_knows_whether_it_did_anything() -> None:
     assert DrainReport(published=1).did_work
     assert DrainReport(anchored=1).did_work
     assert DrainReport(quarantined=1).did_work
+
+
+def test_one_unanchorable_stream_does_not_kill_the_worker(tmp_path: Path) -> None:
+    """Found by running `make demo`, not by any test that existed.
+
+    `anchor_tenant` caught `Problem` and nothing else, so a `RuntimeError` from
+    `LocalImmutableObjectStore.put_once` -- `immutable object collision`, raised when the store
+    holds an object the database no longer knows about -- escaped `run_once` and terminated the
+    process. The drain worker is what every `financial_write` depends on, so one unanchorable
+    stream stopped every tenant's publication indefinitely.
+    """
+    repository = FakeDrainRepository([outbox_row(0, 0)])
+    repository.stream_ids = [STREAM, f"{TENANT}:adr:1"]
+    publisher = publisher_for(repository, tmp_path)
+    real_anchor = publisher.anchor
+    calls: list[str] = []
+
+    def anchor(tenant_id, stream_id, from_sequence=None):
+        calls.append(stream_id)
+        if stream_id == STREAM:
+            raise RuntimeError("immutable object collision")
+        return real_anchor(tenant_id, stream_id, from_sequence)
+
+    publisher.anchor = anchor  # type: ignore[method-assign]
+    report = run_once(publisher, repository, [TENANT], 100, 5)
+
+    # The failure is counted and named, and the *next* stream was still attempted.
+    assert report.failed == 1
+    assert calls == [STREAM, f"{TENANT}:adr:1"]
+    # And the rows still published: draining is not held hostage by an anchoring fault.
+    assert report.published == 1

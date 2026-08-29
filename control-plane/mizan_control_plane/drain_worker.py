@@ -181,6 +181,16 @@ def anchor_tenant(
             )
             report.failed += 1
             continue
+        except Exception:
+            # Anything else -- `put_once` raising `immutable object collision` when the object
+            # store holds a segment the database no longer knows about, a transient database
+            # fault, a full disk. This used to escape `run_once` and terminate the process, so a
+            # single unanchorable stream stopped the worker that every financial write depends
+            # on, in a way no unit test reached: `make demo` found it the first time the worker
+            # ran continuously against a real store. One stream's failure is not the fleet's.
+            LOGGER.exception("anchoring failed: tenant=%s stream=%s", tenant_id, stream_id)
+            report.failed += 1
+            continue
         report.anchored += 1
         LOGGER.info(
             "anchored tenant=%s stream=%s anchor_number=%s records=%s",

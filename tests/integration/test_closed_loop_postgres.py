@@ -8,7 +8,6 @@ call; nothing is stubbed but the outbox drain, which the T-074 worker will run c
 
 from __future__ import annotations
 
-import ipaddress
 import os
 import socket
 import ssl
@@ -16,18 +15,17 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
 from mizan_control_plane.canonical import binding_hash
 from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint
 from mizan_control_plane.drain_worker import run_once
+
+# The demo's PKI generator, imported rather than duplicated -- see workload_pki below.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import dev_pki  # noqa: E402
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -54,89 +52,16 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _issue(subject: str, issuer_key, issuer_name, *, uri_san: str | None, server: bool):
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)])
-    alternatives = []
-    if server:
-        alternatives = [
-            x509.DNSName("localhost"),
-            x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-        ]
-    if uri_san:
-        alternatives.append(x509.UniformResourceIdentifier(uri_san))
-    builder = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(issuer_name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(UTC) - timedelta(minutes=5))
-        .not_valid_after(datetime.now(UTC) + timedelta(hours=1))
-        .add_extension(x509.SubjectAlternativeName(alternatives), critical=False)
-        .add_extension(
-            x509.ExtendedKeyUsage(
-                [
-                    x509.ExtendedKeyUsageOID.SERVER_AUTH
-                    if server
-                    else x509.ExtendedKeyUsageOID.CLIENT_AUTH
-                ]
-            ),
-            critical=False,
-        )
-    )
-    return builder.sign(issuer_key, hashes.SHA256()), key
-
-
 def workload_pki(directory: Path) -> dict[str, Path]:
-    """A throwaway CA, one server certificate, and one client certificate with a SPIFFE URI SAN."""
-    directory.mkdir(parents=True, exist_ok=True)
-    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "mizan-test-ca")])
-    ca = (
-        x509.CertificateBuilder()
-        .subject_name(ca_name)
-        .issuer_name(ca_name)
-        .public_key(ca_key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.now(UTC) - timedelta(minutes=5))
-        .not_valid_after(datetime.now(UTC) + timedelta(hours=2))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(ca_key, hashes.SHA256())
-    )
-    server_certificate, server_key = _issue("localhost", ca_key, ca_name, uri_san=None, server=True)
-    client_certificate, client_key = _issue(
-        "executor", ca_key, ca_name, uri_san=EXECUTOR, server=False
-    )
-    paths = {
-        "ca": directory / "ca.pem",
-        "server_certificate": directory / "server.pem",
-        "server_key": directory / "server.key",
-        "client_certificate": directory / "client.pem",
-        "client_key": directory / "client.key",
-    }
-    paths["ca"].write_bytes(ca.public_bytes(serialization.Encoding.PEM))
-    paths["server_certificate"].write_bytes(
-        server_certificate.public_bytes(serialization.Encoding.PEM)
-    )
-    paths["server_key"].write_bytes(
-        server_key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
-    paths["client_certificate"].write_bytes(
-        client_certificate.public_bytes(serialization.Encoding.PEM)
-    )
-    paths["client_key"].write_bytes(
-        client_key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
-    return paths
+    """The demo's generator, not a second copy of it.
+
+    This test has booted the shipped binary behind real mutual TLS since T-067, and its PKI
+    builder was the only proven one in the tree -- which is why `make demo` could not reach any
+    execution endpoint at all. T-103 moved the generator to `scripts/dev_pki.py`; this test now
+    imports it, so the demo and the test agree by construction rather than by two authors
+    happening to be careful in the same way.
+    """
+    return dev_pki.workload_pki(directory, executor_spiffe=EXECUTOR)
 
 
 def approval_policy() -> dict:
