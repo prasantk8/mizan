@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
@@ -37,6 +37,7 @@ from .models import (
     PolicyTransitionRequest,
 )
 from .mtls import VerifiedPeerSpiffeMiddleware, require_workload_spiffe
+from .observability import CONTENT_TYPE, MetricFamily, render_prometheus
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -491,6 +492,40 @@ def create_app(
     @app.get("/health/live", include_in_schema=False)
     def live() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics() -> PlainTextResponse:
+        """The counters this process keeps, in a form something can scrape.
+
+        `security_event_counters` and `failure_counters` have accumulated since T-021 and were
+        read by nothing outside tests -- a fail-closed evidence write incremented a number that
+        never left the process.
+
+        These are per-process and reset on restart, which is correct for a counter and worth
+        saying: a scrape gap shows up as a reset rather than being smoothed over. Queue depth
+        and anchor lag are deliberately not here. They are per-tenant quantities and this
+        process cannot enumerate tenants (B-27), so each worker reports its own.
+        """
+        security_events = MetricFamily(
+            "mizan_security_events_total",
+            "counter",
+            "Security-relevant execution events, by event name.",
+            label="event",
+        )
+        # A process with no execution keyset still emits the family, with no samples: a scrape
+        # can then tell "no such events" from "this deployment cannot report them".
+        if execution_service is not None:
+            security_events.extend(execution_service.security_event_counters)
+        families = [
+            security_events,
+            MetricFamily(
+                "mizan_authorization_failures_total",
+                "counter",
+                "Authorization failures that fail closed, by reason.",
+                label="reason",
+            ).extend(service.failure_counters),
+        ]
+        return PlainTextResponse(render_prometheus(families), media_type=CONTENT_TYPE)
 
     @app.get("/health/ready", include_in_schema=False)
     def ready() -> JSONResponse:

@@ -9,6 +9,7 @@ import sys
 import uvicorn
 
 from .config import Settings
+from .observability import configure_logging
 from .runtime import (
     StartupRefused,
     build_runtime,
@@ -22,7 +23,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, help="overrides MIZAN_HTTP_PORT")
     parser.add_argument("--log-level", default="info")
     arguments = parser.parse_args(argv)
-    logging.basicConfig(level=arguments.log_level.upper())
+    # Was `logging.basicConfig(level=...)`, whose default formatter renders `%(message)s` and
+    # discards everything a call site attaches through `extra=`. The two places this system
+    # reports a security-relevant failure both pass their tenant and decision that way, so the
+    # operator investigating one got a line naming neither (T-107).
+    configure_logging(arguments.log_level)
     try:
         settings = Settings.from_environment()
         runtime = build_runtime(settings)
