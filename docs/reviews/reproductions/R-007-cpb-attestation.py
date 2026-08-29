@@ -120,6 +120,24 @@ def make_tsa(work: Path, name: str) -> tuple[Path, Path]:
     return cert, config
 
 
+def certificate_horizon(cert: Path) -> str:
+    """The TSA certificate's `notAfter`, in the instant format the verifier compares against.
+
+    T-091 (ADR-004 G.19, ratified after R-007 was written) made a bundle's horizon a property of
+    the timestamp authority's certificate, and the verifier now refuses an `attested` sidecar that
+    does not declare `expires_at` -- and refuses one whose value disagrees with the certificate.
+    This reproduction pre-dates that and built its sidecars without the field, so cases 1 and 2
+    went red the first time CI ran the script at all. The script was never wrong about attestation;
+    it was describing an older bundle format that nothing re-checked it against.
+    """
+    from cryptography import x509
+
+    return (
+        x509.load_pem_x509_certificate(cert.read_bytes())
+        .not_valid_after_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
+
+
 def mint(work: Path, config: Path, digest: str) -> str:
     """A real TSA round trip over `digest`, exactly as Rfc3161AnchorProvider.obtain does."""
     query, reply = work / f"{digest[:8]}.tsq", work / f"{digest[:8]}.tsr"
@@ -157,9 +175,15 @@ def main(work: Path) -> int:
     attested = {
         "type": "rfc3161", "status": "attested", "authority": "http://tsa-a.local/tsr",
         "requested_at": "2026-08-26T04:59:00Z", "obtained_at": "2026-08-26T05:00:00Z",
+        "expires_at": certificate_horizon(trusted),
         "anchor_digest": digest, "evidence": mint(work, config, digest),
     }
-    pending_a = attested | {"status": "pending", "obtained_at": None, "evidence": None}
+    # `expires_at` belongs to the sidecar and must NOT appear in the signed payload roster: the
+    # payload is written before any TSA is contacted, so it cannot know a certificate's notAfter,
+    # and the verifier refuses a roster entry that claims one.
+    pending_a = {k: v for k, v in attested.items() if k != "expires_at"} | {
+        "status": "pending", "obtained_at": None, "evidence": None
+    }
 
     # --- CASE 1 · regression guard: signer and verifier agree on what they hash ---
     bundle = build_bundle(work / "case1", count=2, anchor_interval=2,
