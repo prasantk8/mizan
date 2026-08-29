@@ -32,6 +32,14 @@ jobs:
         run: uv sync --locked --dev
       - name: Validate repository and frozen contract
         run: make check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # R-005 F-18: this repository has drift gates and no anti-rot gates. Everything here can be
+      # weakened by subtraction without one assertion going red -- delete a job, shrink the
+      # corpus, drop a fault category, and the build goes green faster with nobody told anything.
+      - name: The gates only ratchet upward
+        run: uv run --frozen python scripts/validate_gate_inventory.py
 
   installed-console-scripts:
     # Every test in this repository runs with `sdk/python` and `integrations/mcp` on `sys.path`,
