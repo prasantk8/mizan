@@ -109,10 +109,23 @@ def main() -> int:
 
     database_url = os.environ.get("MIZAN_TEST_DATABASE_URL")
     needing_db = [fault["name"] for fault in FAULTS if fault["needs_db"] and not database_url]
+    if needing_db and os.environ.get("CI"):
+        # T-035, skipped-is-not-passed. On a developer's machine, skipping the categories that
+        # need PostgreSQL is a convenience. On a build machine it is a false green: this gate
+        # would report that every fault was caught while having injected fewer of them, and the
+        # reason -- an unset environment variable -- is exactly the kind of thing that changes
+        # silently when a workflow is edited. The job that runs this provisions a database; if
+        # it stops doing so, that must be a red build rather than a quieter one.
+        print(
+            f"MIZAN_TEST_DATABASE_URL is not set under CI. These categories cannot be injected "
+            f"and a partial run must not report success: {', '.join(needing_db)}",
+            file=sys.stderr,
+        )
+        return 1
     if needing_db:
         print(
             f"MIZAN_TEST_DATABASE_URL is not set; skipping (not failing) categories that need "
-            f"PostgreSQL: {', '.join(needing_db)}",
+            f"PostgreSQL: {', '.join(needing_db)}. Under CI this is an error, not a skip.",
             file=sys.stderr,
         )
 
