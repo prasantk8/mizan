@@ -12,6 +12,10 @@
 #
 #   VAULT_ADDR=https://vault.internal:8200 VAULT_TOKEN=... bash scripts/provision_vault.sh
 #
+# Set VAULT_CACERT when Vault presents a certificate from a private CA, which is the normal case
+# for an internal deployment -- and the only case, in production, where MIZAN_VAULT_ADDR must be
+# https://.
+#
 # The token needs: create on sys/mounts/transit, and create+read on transit/keys/*. It does NOT
 # need sign -- provisioning and running are different jobs and should be different tokens.
 
@@ -20,14 +24,20 @@ set -euo pipefail
 VAULT_ADDR="${VAULT_ADDR:?set VAULT_ADDR, e.g. https://vault.internal:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:?set VAULT_TOKEN}"
 MOUNT="${MIZAN_VAULT_TRANSIT_MOUNT:-transit}"
+# A private CA is the normal case for an internal Vault, and production requires https:// -- so a
+# provisioning script that could only talk to a publicly-trusted endpoint could not be run against
+# the deployment it provisions. Same variable name Vault's own CLI uses.
+CACERT="${VAULT_CACERT:-}"
 PREFIX="${MIZAN_VAULT_KEY_PREFIX:-mizan}"
 
 api() {
   local method="$1" path="$2" body="${3:-}"
+  local -a curl_options=(-sS -X "$method" -H "X-Vault-Token: $VAULT_TOKEN")
+  [ -n "$CACERT" ] && curl_options+=(--cacert "$CACERT")
   if [ -n "$body" ]; then
-    curl -sS -X "$method" -H "X-Vault-Token: $VAULT_TOKEN" -d "$body" "$VAULT_ADDR$path"
+    curl "${curl_options[@]}" -d "$body" "$VAULT_ADDR$path"
   else
-    curl -sS -X "$method" -H "X-Vault-Token: $VAULT_TOKEN" "$VAULT_ADDR$path"
+    curl "${curl_options[@]}" "$VAULT_ADDR$path"
   fi
 }
 
@@ -42,6 +52,7 @@ echo "#"
 echo "# Set these on the control plane, the drain worker and the attestation runner:"
 echo "MIZAN_KEY_CUSTODY_MODE=vault-transit"
 echo "MIZAN_VAULT_ADDR=$VAULT_ADDR"
+[ -n "$CACERT" ] && echo "MIZAN_VAULT_CA_CERT=$CACERT"
 echo "# MIZAN_VAULT_TOKEN_FILE=/var/run/secrets/vault/token   # preferred over MIZAN_VAULT_TOKEN"
 
 for pair in \

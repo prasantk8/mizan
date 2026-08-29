@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import base64
 import re
+import ssl
 from dataclasses import dataclass
 from typing import Any
 
@@ -99,11 +100,20 @@ class VaultTransitBackend:
         if namespace:
             headers["X-Vault-Namespace"] = namespace
         self.address = address.rstrip("/")
+        # An `ssl.SSLContext` rather than `verify=<path>`: httpx deprecated the string form, and
+        # the deprecation is the polite version of a real hazard -- this repository has already
+        # been bitten once by httpx quietly not doing what a TLS keyword appeared to say, when
+        # `verify=<ca path>` beside `cert=(cert, key)` silently declined to present the client
+        # certificate and every mTLS request failed with a protocol error (T-103).
         self._client = client or httpx.Client(
             base_url=self.address,
             headers=headers,
             timeout=timeout,
-            verify=ca_certificate or True,
+            verify=(
+                ssl.create_default_context(cafile=ca_certificate)
+                if ca_certificate
+                else ssl.create_default_context()
+            ),
         )
         # Public keys are immutable per version, so one read each is enough -- and caching them
         # means a signature can still be verified locally while Vault is briefly unreachable for
