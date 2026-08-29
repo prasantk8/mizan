@@ -11,6 +11,7 @@ from .attestation import AnchorAttestationWorker, Rfc3161AnchorProvider
 from .config import Settings, resolve_served_tenants
 from .drain_worker import StopSignal
 from .evidence import EvidenceRepository
+from .observability import configure_logging
 
 LOGGER = logging.getLogger("mizan.attest")
 
@@ -98,9 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    configure_logging()
     tenants = resolve_served_tenants(args.tenant_id, "MIZAN_ATTEST_TENANTS")
     if not tenants:
         parser.error(

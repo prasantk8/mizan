@@ -306,3 +306,49 @@ def test_a_strong_human_operator_reaches_the_registry(wired) -> None:
     assert name == "create_tool"
     assert arguments[0] == TENANT
     assert arguments[2].principal_id == "prn_ops-manager"
+
+
+def test_metrics_is_scrapeable_and_needs_no_bearer_token(wired) -> None:
+    """`/metrics` was not among the 39 routes, so the counters never left the process.
+
+    Unauthenticated on purpose: a scraper is not a tenant, and the endpoint exposes event names
+    and counts with no tenant identifier, no decision id and no principal in it. Reaching it is
+    a network-policy question rather than a token question -- which is worth stating, because
+    the opposite choice would put a bearer token in a Prometheus config file.
+    """
+    client, _repositories, _private_key = wired
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain; version=0.0.4")
+    body = response.text
+    # Both families declare themselves even at zero, so a scrape can tell "no events" from
+    # "this build cannot report them".
+    assert "# TYPE mizan_security_events_total counter" in body
+    assert "# TYPE mizan_authorization_failures_total counter" in body
+    # And nothing tenant-identifying leaks into an unauthenticated endpoint.
+    assert TENANT not in body
+
+
+def test_metrics_reads_the_counters_at_scrape_time_not_at_wiring_time(wired) -> None:
+    """A snapshot taken when the app was built would report zero forever.
+
+    The route closes over the service objects rather than copying their numbers, so this holds
+    the very Counter an execution service would use, increments it after the app exists, and
+    requires the next scrape to show it. `wired` is taken for its environment and repository
+    patching; the app under test is a second one, built with an execution service attached.
+    """
+    from collections import Counter
+    from types import SimpleNamespace
+
+    counters: Counter[str] = Counter()
+    application = app_module.create_app(
+        Settings.from_environment(),
+        execution_service=SimpleNamespace(security_event_counters=counters),
+    )
+    with TestClient(application) as client:
+        assert "security_event_pool_timeout" not in client.get("/metrics").text
+        counters["security_event_pool_timeout"] += 2
+        body = client.get("/metrics").text
+
+    assert 'mizan_security_events_total{event="security_event_pool_timeout"} 2' in body

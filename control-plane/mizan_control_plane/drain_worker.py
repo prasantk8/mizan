@@ -55,6 +55,7 @@ from .evidence import (
     LocalImmutableObjectStore,
     OutboxPublisher,
 )
+from .observability import configure_logging
 from .problems import Problem
 from .runtime import build_key_provider
 
@@ -253,9 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true")
     arguments = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    configure_logging()
 
     tenants = resolve_tenants(arguments.tenant_id)
     if not tenants:
