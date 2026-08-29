@@ -20,6 +20,7 @@ from .models import (
     PersistedDecision,
     PolicyMatch,
 )
+from .observability import Metrics, TraceContext, annotate, current_trace
 from .policy_engine import PolicyCompileError
 from .ports import (
     AuthorizationRepository,
@@ -60,12 +61,14 @@ class AuthorizationService:
         risk_provider: RiskProvider,
         evaluator_build: str,
         configuration_hash: str,
+        metrics: Metrics | None = None,
     ) -> None:
         self.repository = repository
         self.risk_provider = risk_provider
         self.evaluator_build = evaluator_build
         self.configuration_hash = configuration_hash
         self.failure_counters: Counter[str] = Counter()
+        self.metrics = metrics or Metrics()
 
     def authorize(
         self, identity: AuthenticatedIdentity, context: EvaluationContext
@@ -181,6 +184,7 @@ class AuthorizationService:
             constraints = None
         now = datetime.now(UTC)
         decision_id = self._decision_id(identity.tenant_id, context.request_id)
+        annotate(tenant_id=identity.tenant_id, decision_id=decision_id)
         policies = [
             {"policy_id": p.policy_id, "version": p.version, "content_hash": p.content_hash}
             for p in matches
@@ -224,6 +228,12 @@ class AuthorizationService:
             raise Problem(
                 503, "evidence_write_failed", "Decision was not returned because evidence failed"
             ) from exc
+        # Counted here and not where the document is built: a decision whose evidence did not
+        # commit is not a decision, and a metric that disagrees with `adr_records` about how many
+        # there are teaches an operator to stop believing the metric.
+        self.metrics.decisions.labels(
+            identity.tenant_id, response.decision, adr["decision_basis"]
+        ).inc()
         if terminal_problem is not None:
             raise terminal_problem
         response.approval = adr["approval"] if adr["approval"]["required"] else None
@@ -286,6 +296,7 @@ class AuthorizationService:
         except EXPECTED_EVIDENCE_ERRORS as evidence_error:
             metric = "system_fail_closed_evidence_write_failed"
             self.failure_counters[metric] += 1
+            self.metrics.fail_closed.labels(identity.tenant_id, metric).inc()
             LOGGER.critical(
                 metric,
                 extra={"tenant_id": identity.tenant_id, "decision_id": decision_id, "reason": reason},
@@ -296,6 +307,8 @@ class AuthorizationService:
                 "fail_closed_evidence_write_failed",
                 "Authorization failed closed but its evidence could not be persisted",
             ) from evidence_error
+        self.metrics.decisions.labels(identity.tenant_id, response.decision, "system_fail_closed").inc()
+        self.metrics.fail_closed.labels(identity.tenant_id, reason).inc()
         raise Problem(
             403,
             "authorization_failed_closed",
@@ -410,12 +423,19 @@ class AuthorizationService:
         decision_basis = decision_basis or (
             "matched_policy" if response.policies else "default_deny"
         )
+        trace = current_trace() or TraceContext.begin()
         document = {
             "schema_version": "1.2",
             "decision_id": response.decision_id,
             "tenant_id": identity.tenant_id,
-            "trace_id": hashlib.sha256(str(context.request_id).encode()).hexdigest()[:32],
-            "span_id": None,
+            # SPEC section 2 calls this the W3C traceparent trace-id, and until T-073 it was
+            # sha256(request_id): the right shape, stable, and a member of no trace that has ever
+            # existed. An investigator holding this record could not open the request that produced
+            # it and nothing said so, because a populated well-formed field looks like an answer.
+            # Taken from the caller's traceparent now, or minted here when this decision is the
+            # start of the trace. Never derived from an identifier that is not one.
+            "trace_id": trace.trace_id,
+            "span_id": trace.span_id,
             "timestamp": now.isoformat().replace("+00:00", "Z"),
             "principal": context.principal.model_dump(mode="json"),
             "agent": context.agent.model_dump(mode="json"),

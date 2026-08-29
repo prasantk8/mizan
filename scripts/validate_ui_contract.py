@@ -27,7 +27,10 @@ class _Pool:
 
 
 class _Repository:
-    def __init__(self, _database_url: str) -> None:
+    def __init__(self, _database_url: str, *_arguments: object) -> None:
+        # `*_arguments` because `ApprovalRepository` also takes the deployment's
+        # `MIZAN_APPROVAL_EPOCH_EXPIRY` mode. This stub exists to let `create_app` build a route
+        # table without a database; it models no repository behaviour.
         self.pool = _Pool()
 
 

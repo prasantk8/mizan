@@ -551,3 +551,76 @@ implementation and so must follow this change-set. `verifier-two/FINDINGS.md` is
 gaps held open there — countersignature verification and the verdict for a revoked key — are escalated
 under H-7 rather than decided.
 
+
+### G.21 Implementation delta — publication is a process, not a side effect of a request (T-074)
+
+Every amendment above describes publication as asynchronous, and until T-074 nothing performed it
+asynchronously. `OutboxPublisher.drain` existed and was only ever called by a test that stood up its
+own publisher, so a deployed control plane wrote evidence rows that nothing at rest turned into
+receipts. That is not a slow publisher; it is no publisher, and the symptom it produces is remote
+from its cause: a financial write refusing on `immutable_receipt_missing` (I-25) with nothing in the
+logs connecting the refusal to the absent process. `mizan-drain-outbox` is that process.
+
+Four properties are normative for any drainer, not just this one.
+
+**Failure is isolated to a stream.** A segment that cannot be published has its attempt count
+raised and is retried; the other streams in the same batch still publish. Draining a batch as one
+unit means one unpublishable record holds every other tenant's evidence behind it.
+
+**Nothing is dropped, and nothing stuck is allowed to mask the alarm.** A row that exceeds
+`MIZAN_OUTBOX_MAX_ATTEMPTS` is quarantined: excluded from the head of the batch and from the
+publication-lag measurement, never deleted, and reported through the evidence breaker under
+`outbox_poisoned`. The lag SLO exists to be alarming when it breaches; a permanently stuck row
+pinning it above threshold would retire the one signal that matters.
+
+**Backpressure runs toward the work.** A saturated batch means the backlog is growing faster than
+one batch per interval, so the drainer returns immediately instead of sleeping. The bound on that
+is fairness — one busy tenant may not starve another tenant's publication SLO — not throughput.
+
+**Events without receipts are still published.** SPEC §4 approval, policy, agent, execution and
+security events have external subscribers and no evidence receipt, and `drain` has always ignored
+them. They were written, counted against the lag, and delivered to nothing. The drainer now relays
+them to the delivery sink and stamps them, at-least-once: the sink is called before the row is
+marked, because a duplicated SIEM event is recoverable and a silently dropped one is not.
+
+Tenants are configured (`MIZAN_DRAIN_TENANTS`), never discovered. `mizan.tenants` carries FORCE ROW
+LEVEL SECURITY keyed on the current tenant, so a process able to enumerate tenants would already
+have crossed the boundary ADR-005 exists to hold. The cost is real and is recorded as blocker
+B-19: a tenant absent from the drainer's configuration is never published and never swept, and
+nothing in the system currently notices.
+
+### G.22 Implementation delta — the trace id is a fact about a trace (T-073)
+
+`ADR_Record.trace_id` is specified in SPEC §2 as *"W3C traceparent trace-id (OpenTelemetry)"*, and
+until T-073 it was populated with `sha256(request_id)[:32]`. That value satisfied every automated
+check the tree can apply: thirty-two lowercase hex characters, present on every record, stable
+across retries of the same request, accepted by the `mizan.trace_id` domain and by the closed
+schema. It was also a member of no trace that has ever existed.
+
+This matters because of what an ADR_Record is *for*. Every other field in it is either a fact the
+control plane observed or a hash committing to one; the record's entire authority rests on the
+reader being able to trust that a populated field means what the schema says it means. A field
+that is well-formed, signed, chained, anchored and false costs more than an absent field, because
+an absent field is a question and a false one is an answer. An investigator holding a record and
+trying to open the request that produced it finds an id their tracing backend has never seen, with
+nothing in the record to say the id was never real.
+
+Two properties are now normative.
+
+**Correlation identifiers are received or minted, never derived.** `trace_id` and `span_id` come
+from the caller's `traceparent` header when there is one, and are generated when this decision
+begins the trace. A correlation identifier computed from a request id — or from anything else that
+is not a trace — is prohibited, including as a fallback: a decision reached with no ambient trace
+mints a real id rather than deriving a plausible one. `span_id` is populated; it was hardcoded
+`null`, so a record named a trace without naming its own position inside it.
+
+**Propagation is unconditional; export is not.** Continuing the caller's `traceparent` and
+recording it needs no dependency and is always on. Whether those spans also reach a collector
+depends on the `otel` extra and on `MIZAN_OTEL_EXPORTER_OTLP_ENDPOINT`. An endpoint configured
+without the exporter installed refuses at startup rather than serving a process that reports
+itself healthy and exports nothing — configured-and-silent is the failure that is found during the
+incident instead of before it.
+
+Both directions of the correction are demonstrated against `793a54a`, where the same authorization
+produces `trace_id=09fef18dd7c0dc66009857d7d4d02a52` — exactly `sha256(request_id)[:32]` — and
+`span_id=null`, and where the T-073 contract rejects that record on both fields.

@@ -42,7 +42,13 @@ BEGIN
 END $$;
 
 INSERT INTO mizan.tenants(tenant_id, region, status)
-VALUES ('tnt_bank-a', 'ae-dubai-1', 'ACTIVE'), ('tnt_bank-b', 'ae-dubai-1', 'ACTIVE');
+VALUES ('tnt_bank-a', 'ae-dubai-1', 'ACTIVE'), ('tnt_bank-b', 'ae-dubai-1', 'ACTIVE'),
+       -- Owned by tests/integration/test_approval_expiry_postgres.py. Both fixture
+       -- tenants above already carry a test that asserts an exact tenant-wide drain
+       -- count, so a file that seeds decisions of its own needs a tenant of its own.
+       -- `mizan_app` cannot create one: `mizan.tenants` is FORCE RLS and there is no
+       -- SECURITY DEFINER path, which is the same fact B-27 is about.
+       ('tnt_expiry-sweep', 'ae-dubai-1', 'ACTIVE');
 
 SET ROLE mizan_app;
 BEGIN;

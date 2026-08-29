@@ -28,6 +28,18 @@ TENANT = "tnt_bank-a"
 STREAM = f"{TENANT}:adr:0"
 
 
+EVIDENCE_AGGREGATES = ("decision", "decision_event", "audit")
+
+
+def _selected(row: dict[str, Any], evidence_only: bool, relay_only: bool) -> bool:
+    aggregate = row.get("aggregate_type", "decision")
+    if evidence_only:
+        return aggregate in EVIDENCE_AGGREGATES
+    if relay_only:
+        return aggregate not in EVIDENCE_AGGREGATES
+    return True
+
+
 class FakeDrainRepository:
     """The three tables the worker touches, with the semantics that actually matter.
 
@@ -46,14 +58,29 @@ class FakeDrainRepository:
         self.published_ids: set[int] = set()
         self.quarantined_ids: set[int] = set()
 
-    def unpublished(self, tenant_id, limit=100, evidence_only=False):
+    def unpublished(
+        self, tenant_id, limit=100, evidence_only=False, max_attempts=None, relay_only=False
+    ):
+        if evidence_only and relay_only:
+            raise ValueError("evidence_only and relay_only select disjoint sets")
         pending = [
             row
             for row in self.rows
             if row["outbox_id"] not in self.published_ids
             and row["outbox_id"] not in self.quarantined_ids
+            # `aggregate_type` defaults to an evidence aggregate, so a row written by an older
+            # test keeps its previous meaning. Both selectors are honoured because the real query
+            # honours both -- a fake that returned an `approval` row to the evidence drain would
+            # be testing a failure the database makes impossible.
+            and _selected(row, evidence_only, relay_only)
         ]
         return pending[:limit]
+
+    def record_delivery(self, tenant_id, outbox_id):
+        if outbox_id in self.published_ids:
+            return False
+        self.published_ids.add(outbox_id)
+        return True
 
     def record_publication(self, tenant_id, outbox_id, receipt, signature):
         self.published_ids.add(outbox_id)
@@ -396,3 +423,190 @@ def test_an_expiry_counts_as_work_even_when_nothing_published(tmp_path: Path) ->
         publisher_for(repository, tmp_path), repository, [TENANT], 100, 5, execution=execution
     )
     assert report.did_work and report.published == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Relay: the SPEC section 4 events that never become receipts (T-074)
+# ---------------------------------------------------------------------------------------------
+
+
+def relay_row(outbox_id: int, event_type: str, aggregate_type: str = "approval"):
+    """An outbox row with an external subscriber and no evidence receipt."""
+    return {
+        "outbox_id": outbox_id,
+        "event_type": event_type,
+        "aggregate_type": aggregate_type,
+        "attempts": 0,
+        "created_at": None,
+        "payload": {"approval_id": "apr_0001"},
+    }
+
+
+class RecordingSink:
+    def __init__(self, raises: Exception | None = None) -> None:
+        self.published: list[tuple[str, str, dict[str, Any]]] = []
+        self.raises = raises
+
+    def publish(self, event_type: str, key: str, payload: dict[str, Any]) -> None:
+        if self.raises is not None:
+            raise self.raises
+        self.published.append((event_type, key, payload))
+
+
+def test_events_that_never_become_receipts_are_delivered_and_marked_published(
+    tmp_path: Path,
+) -> None:
+    """`OutboxPublisher.drain` selects `evidence_only=True`, so it has never seen these rows.
+
+    An `approval`, `policy`, `agent`, `execution` or `security` row has an external subscriber and
+    no receipt. Before this, they were written, they counted against the publication lag, and they
+    were delivered to nothing -- a SIEM subscribed to `mizan.approval.expired` received silence
+    while the rows accumulated, and the only visible symptom was an evidence lag alarm pointing at
+    the drainer. Fails without `relay_tenant`: the row stays unpublished and `relayed` is 0.
+    """
+    repository = FakeDrainRepository([relay_row(7, "mizan.approval.expired")])
+    publisher = publisher_for(repository, tmp_path)
+    publisher.delivery = sink = RecordingSink()
+
+    report = run_once(publisher, repository, [TENANT], 100, 5)
+
+    assert report.relayed == 1
+    assert sink.published == [("mizan.approval.expired", "approval", {"approval_id": "apr_0001"})]
+    assert 7 in repository.published_ids
+    # And it is not counted as evidence: nothing was signed into a receipt.
+    assert report.published == 0
+    assert repository.receipts == []
+
+
+def test_a_relayed_row_is_marked_published_only_after_the_sink_accepted_it(tmp_path: Path) -> None:
+    """At-least-once, deliberately. Marking first would make it at-most-once.
+
+    A subscriber must tolerate a repeat; a silently dropped security event is worse than a
+    duplicated one. So a sink that raises must leave the row unpublished and retryable.
+    """
+    repository = FakeDrainRepository([relay_row(7, "mizan.security.token_replayed", "security")])
+    publisher = publisher_for(repository, tmp_path)
+    publisher.delivery = RecordingSink(raises=RuntimeError("sink is down"))
+
+    report = run_once(publisher, repository, [TENANT], 100, 5)
+
+    assert report.relayed == 0
+    assert report.failed == 1
+    assert 7 not in repository.published_ids
+    assert repository.rows[0]["attempts"] == 1
+
+
+def test_an_undeliverable_event_is_quarantined_rather_than_retried_for_ever(tmp_path: Path) -> None:
+    repository = FakeDrainRepository([relay_row(7, "mizan.policy.activated", "policy")])
+    publisher = publisher_for(repository, tmp_path)
+    publisher.delivery = RecordingSink(raises=RuntimeError("sink is down"))
+
+    for _ in range(3):
+        report = run_once(publisher, repository, [TENANT], 100, 5, quarantine_at_attempts=3)
+
+    assert report.quarantined == 1
+    assert 7 in repository.quarantined_ids
+
+
+# ---------------------------------------------------------------------------------------------
+# Approval-epoch expiry is a deployment decision, and both answers are implemented (H-7)
+# ---------------------------------------------------------------------------------------------
+
+
+class FakeApprovals:
+    def __init__(self, overdue: list[str] | None = None, raises: Exception | None = None) -> None:
+        self.overdue = overdue or []
+        self.raises = raises
+        self.swept: list[str] = []
+        self.read: list[str] = []
+
+    def sweep_expired_epochs(self, tenant_id, limit=100, now=None):
+        self.swept.append(tenant_id)
+        if self.raises is not None:
+            raise self.raises
+        return list(self.overdue)
+
+    def overdue_epochs(self, tenant_id, limit=100, now=None):
+        self.read.append(tenant_id)
+        if self.raises is not None:
+            raise self.raises
+        return list(self.overdue)
+
+
+def test_enforced_expiry_closes_an_elapsed_epoch_at_rest(tmp_path: Path) -> None:
+    """`EXPIRED` was declared by SPEC section 4 and reachable from nowhere.
+
+    The only code that could produce it ran when the *next* voter called in, so an approval nobody
+    answered again stayed `PENDING` for ever. Same defect T-108 fixed for leases, other state
+    machine. Fails without `sweep_approvals`: nothing calls the repository at all.
+    """
+    repository = FakeDrainRepository([])
+    approvals = FakeApprovals(overdue=["apr_unanswered"])
+
+    report = run_once(
+        publisher_for(repository, tmp_path),
+        repository,
+        [TENANT],
+        100,
+        5,
+        approvals=approvals,
+        approval_epoch_expiry="enforced",
+    )
+
+    assert approvals.swept == [TENANT]
+    assert report.approvals_expired == 1
+    assert report.approvals_overdue == 0
+    assert report.did_work
+
+
+def test_advisory_expiry_reports_the_overdue_epochs_and_writes_nothing(tmp_path: Path) -> None:
+    """The other half of the ruling, and the half that is easy to fake by doing nothing.
+
+    A deployment that says no clock decides a payment must still be able to see which payments are
+    waiting. So `advisory` reads the same query and counts it, and never calls the sweeper: the
+    difference between "we chose not to expire these" and "expiry is broken" is this number.
+    """
+    repository = FakeDrainRepository([])
+    approvals = FakeApprovals(overdue=["apr_unanswered", "apr_also-waiting"])
+
+    report = run_once(
+        publisher_for(repository, tmp_path),
+        repository,
+        [TENANT],
+        100,
+        5,
+        approvals=approvals,
+        approval_epoch_expiry="advisory",
+    )
+
+    assert approvals.swept == []           # nothing was written
+    assert approvals.read == [TENANT]      # and the condition is still visible
+    assert report.approvals_overdue == 2
+    assert report.approvals_expired == 0
+    assert not report.did_work
+
+
+def test_an_approval_sweep_that_fails_does_not_stop_the_drain(tmp_path: Path) -> None:
+    repository = FakeDrainRepository([outbox_row(0, 0)])
+    approvals = FakeApprovals(raises=RuntimeError("approval pool is down"))
+
+    report = run_once(
+        publisher_for(repository, tmp_path),
+        repository,
+        [TENANT],
+        100,
+        5,
+        approvals=approvals,
+        approval_epoch_expiry="enforced",
+    )
+
+    assert report.failed == 1
+    assert report.published == 1
+
+
+def test_a_worker_with_no_approval_repository_simply_does_not_sweep(tmp_path: Path) -> None:
+    repository = FakeDrainRepository([outbox_row(0, 0)])
+    report = run_once(publisher_for(repository, tmp_path), repository, [TENANT], 100, 5)
+    assert report.approvals_expired == 0
+    assert report.approvals_overdue == 0
+    assert report.published == 1
