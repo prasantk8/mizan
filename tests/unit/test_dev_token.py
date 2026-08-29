@@ -55,7 +55,12 @@ def test_the_control_plane_refuses_the_development_issuer_in_production(
     monkeypatch.setenv("MIZAN_JWT_ISSUER", DEVELOPMENT_ISSUER)
     monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
     monkeypatch.setenv("MIZAN_ENV", "production")
-    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "kms_hsm")
+    # `vault-transit` rather than the retired `kms_hsm` spelling: this test is about a
+    # different production refusal, and a custody value the config layer now rejects would
+    # shadow it (B-20, T-102).
+    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "vault-transit")
+    monkeypatch.setenv("MIZAN_VAULT_ADDR", "https://vault.test")
+    monkeypatch.setenv("MIZAN_VAULT_TOKEN", "s.unused-by-this-test")
     for name, role in (
         ("MIZAN_EVIDENCE_RECEIPT_KEY_REF", "receipt"),
         ("MIZAN_EVIDENCE_ANCHOR_KEY_REF", "anchor"),

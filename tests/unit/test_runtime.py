@@ -86,26 +86,54 @@ def test_readiness_reports_the_unreachable_database_rather_than_reporting_ok(
 
 
 def test_production_refuses_to_start_without_a_real_key_backend(monkeypatch, tmp_path) -> None:
-    settings = development_settings(
-        monkeypatch,
-        tmp_path,
-        MIZAN_ENV="production",
-        MIZAN_KEY_CUSTODY_MODE="kms_hsm",
-        MIZAN_EVIDENCE_RECEIPT_KEY_REF="kms://vault/receipt",
-        MIZAN_EVIDENCE_ANCHOR_KEY_REF="kms://vault/anchor",
-        MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF="kms://vault/execution",
-        MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF="kms://vault/degraded",
-        MIZAN_ANCHOR_PROVIDER="rfc3161",
-        MIZAN_ANCHOR_TSA_ENDPOINTS="https://tsa.example.test",
-        MIZAN_ANCHOR_TSA_TRUST_ANCHORS=str(tmp_path / "root.pem"),
-        MIZAN_EXECUTION_TOKEN_ISSUER="https://execution.issuer.test",
-        MIZAN_EVALUATOR_BUILD="2026.08.26+abc1234",
-        MIZAN_EVALUATOR_CONFIGURATION_HASH="a" * 64,
-        MIZAN_TLS_CERTIFICATE_FILE=str(tmp_path / "server.pem"),
-        MIZAN_TLS_PRIVATE_KEY_FILE=str(tmp_path / "server.key"),
-        MIZAN_TLS_CLIENT_CA_FILE=str(tmp_path / "client-ca.pem"),
+    """The refusal moved earlier, and now names the backend that exists.
+
+    It used to happen in `build_key_provider`, which meant `MIZAN_KEY_CUSTODY_MODE=kms_hsm` --
+    the spelling SPEC §8 used and no code ever read -- produced a `Settings` that parsed cleanly
+    and a refusal only once something asked for a key. Now the value is enumerated where it is
+    read, so an operator learns at configuration time that the control they set is not one the
+    process understands. Both halves are asserted here: the unknown mode, and a known mode whose
+    backend cannot actually be reached.
+    """
+    def production(**overrides: str):
+        return development_settings(
+            monkeypatch,
+            tmp_path,
+            MIZAN_ENV="production",
+            MIZAN_ANCHOR_PROVIDER="rfc3161",
+            MIZAN_ANCHOR_TSA_ENDPOINTS="https://tsa.example.test",
+            MIZAN_ANCHOR_TSA_TRUST_ANCHORS=str(tmp_path / "root.pem"),
+            MIZAN_EXECUTION_TOKEN_ISSUER="https://execution.issuer.test",
+            MIZAN_EVALUATOR_BUILD="2026.08.26+abc1234",
+            MIZAN_EVALUATOR_CONFIGURATION_HASH="a" * 64,
+            MIZAN_TLS_CERTIFICATE_FILE=str(tmp_path / "server.pem"),
+            MIZAN_TLS_PRIVATE_KEY_FILE=str(tmp_path / "server.key"),
+            MIZAN_TLS_CLIENT_CA_FILE=str(tmp_path / "client-ca.pem"),
+            **overrides,
+        )
+
+    with pytest.raises(RuntimeError, match="names no built backend"):
+        production(
+            MIZAN_KEY_CUSTODY_MODE="kms_hsm",
+            MIZAN_EVIDENCE_RECEIPT_KEY_REF="kms://vault/receipt",
+            MIZAN_EVIDENCE_ANCHOR_KEY_REF="kms://vault/anchor",
+            MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF="kms://vault/execution",
+            MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF="kms://vault/degraded",
+        )
+
+    # And a real backend whose Vault is not there still refuses, rather than starting and failing
+    # at the first signature -- which is what `build_key_provider` reading every public key at
+    # startup buys.
+    settings = production(
+        MIZAN_KEY_CUSTODY_MODE="vault-transit",
+        MIZAN_VAULT_ADDR="https://vault.invalid.test:8200",
+        MIZAN_VAULT_TOKEN="s.unused",
+        MIZAN_EVIDENCE_RECEIPT_KEY_REF="vault://transit/receipt#v1",
+        MIZAN_EVIDENCE_ANCHOR_KEY_REF="vault://transit/anchor#v1",
+        MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF="vault://transit/execution#v1",
+        MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF="vault://transit/degraded#v1",
     )
-    with pytest.raises(StartupRefused, match="B-18"):
+    with pytest.raises(StartupRefused, match="vault-transit key backend is not usable"):
         build_key_provider(settings)
 
 
@@ -242,3 +270,69 @@ def test_the_repository_refuses_to_sweep_under_a_deployment_that_does_not_expire
     repository.approval_epoch_expiry = "advisory"
     with pytest.raises(RuntimeError, match="advisory"):
         repository.sweep_expired_epochs("tnt_bank-a")
+
+
+# ---------------------------------------------------------------------------------------------
+# The key backend a deployment names (B-18 / T-102)
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_custody_mode_that_names_no_built_backend_is_refused_at_startup(
+    monkeypatch, tmp_path
+) -> None:
+    """`kms_hsm` is the spelling SPEC §8 used and no code has ever read (B-20).
+
+    An operator who sets it got a `Settings` that parsed, a process that started, and development
+    keys signing their evidence -- the one outcome the setting exists to prevent. The refusal names
+    the mode that would work rather than only rejecting the one that does not.
+    """
+    with pytest.raises(RuntimeError, match="names no built backend"):
+        development_settings(monkeypatch, tmp_path, MIZAN_KEY_CUSTODY_MODE="kms_hsm")
+
+
+def test_vault_transit_without_an_address_or_token_is_refused_before_any_request(
+    monkeypatch, tmp_path
+) -> None:
+    with pytest.raises(RuntimeError, match="requires MIZAN_VAULT_ADDR"):
+        development_settings(monkeypatch, tmp_path, MIZAN_KEY_CUSTODY_MODE="vault-transit")
+    with pytest.raises(RuntimeError, match="MIZAN_VAULT_TOKEN"):
+        development_settings(
+            monkeypatch,
+            tmp_path,
+            MIZAN_KEY_CUSTODY_MODE="vault-transit",
+            MIZAN_VAULT_ADDR="https://vault.test",
+        )
+
+
+def test_a_vault_token_can_come_from_a_file_so_it_is_not_in_the_environment(
+    monkeypatch, tmp_path
+) -> None:
+    """A token in `os.environ` is a token in anything that dumps the environment into a log.
+
+    A file is what a Kubernetes Secret mount and a Vault Agent sink both produce, and the trailing
+    newline they both write is stripped here rather than sent to Vault as part of the credential.
+    """
+    token_file = tmp_path / "vault-token"
+    token_file.write_text("s.from-a-file\n", encoding="utf-8")
+    settings = development_settings(
+        monkeypatch,
+        tmp_path,
+        MIZAN_KEY_CUSTODY_MODE="vault-transit",
+        MIZAN_VAULT_ADDR="https://vault.test",
+        MIZAN_VAULT_TOKEN_FILE=str(token_file),
+    )
+    assert settings.vault_token == "s.from-a-file"
+
+
+def test_an_unreadable_token_file_is_refused_rather_than_treated_as_absent(
+    monkeypatch, tmp_path
+) -> None:
+    """Silently falling back would start the process with whatever `MIZAN_VAULT_TOKEN` held."""
+    with pytest.raises(RuntimeError, match="could not be read"):
+        development_settings(
+            monkeypatch,
+            tmp_path,
+            MIZAN_KEY_CUSTODY_MODE="vault-transit",
+            MIZAN_VAULT_ADDR="https://vault.test",
+            MIZAN_VAULT_TOKEN_FILE=str(tmp_path / "does-not-exist"),
+        )

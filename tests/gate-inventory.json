@@ -1,7 +1,7 @@
 {
   "_comment": "Counts of the checks this repository runs. A decrease fails scripts/validate_gate_inventory.py; growth is silent. Regenerate with --record only when a gate is deliberately removed, and say why in the commit.",
   "counts": {
-    "ci_jobs": 10,
+    "ci_jobs": 11,
     "conformance_bundles": 8,
     "adversarial_fault_categories": 4,
     "console_scripts": 6,

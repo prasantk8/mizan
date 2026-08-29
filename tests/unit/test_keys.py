@@ -48,7 +48,12 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
     monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
     monkeypatch.setenv("MIZAN_ENV", "production")
-    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "kms_hsm")
+    # `vault-transit` rather than the retired `kms_hsm` spelling: this test is about a
+    # different production refusal, and a custody value the config layer now rejects would
+    # shadow it (B-20, T-102).
+    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "vault-transit")
+    monkeypatch.setenv("MIZAN_VAULT_ADDR", "https://vault.test")
+    monkeypatch.setenv("MIZAN_VAULT_TOKEN", "s.unused-by-this-test")
     refs = {
         "MIZAN_EVIDENCE_RECEIPT_KEY_REF": "kms://vault/receipt",
         "MIZAN_EVIDENCE_ANCHOR_KEY_REF": "kms://vault/anchor",
@@ -84,7 +89,12 @@ def test_production_refuses_non_tls_tsa_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
     monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
     monkeypatch.setenv("MIZAN_ENV", "production")
-    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "kms_hsm")
+    # `vault-transit` rather than the retired `kms_hsm` spelling: this test is about a
+    # different production refusal, and a custody value the config layer now rejects would
+    # shadow it (B-20, T-102).
+    monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "vault-transit")
+    monkeypatch.setenv("MIZAN_VAULT_ADDR", "https://vault.test")
+    monkeypatch.setenv("MIZAN_VAULT_TOKEN", "s.unused-by-this-test")
     for role, name in zip(KEY_ROLES, (
         "MIZAN_EVIDENCE_RECEIPT_KEY_REF", "MIZAN_EVIDENCE_ANCHOR_KEY_REF",
         "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF", "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF",
