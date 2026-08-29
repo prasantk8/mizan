@@ -133,7 +133,36 @@ def test_vulnerability_allowlist_warns_inside_the_final_week(tmp_path) -> None:
     assert warnings == ["vulnerabilities[0] expires 2026-09-01 (5 days remaining)"]
 
 
-def test_production_packaging_contract_is_complete() -> None:
+def test_the_supply_chain_scan_is_wired_and_its_artifacts_are_named() -> None:
+    """What is left of the old contract test once the manifest claims move to T-100's gate.
+
+    `test_production_packaging_contract_is_complete` used to assert substrings across the
+    Dockerfile, compose, `values.yaml`, the migration job and this workflow. It passed
+    throughout the entire period in which `helm install` and
+    `docker compose --profile production up` could not start Mizan, and one of its assertions
+    -- `assert 'profiles: ["drainer"]' in compose` -- asserted the *presence* of a service
+    pointing at a binary that did not exist. Everything it claimed about what the manifests
+    launch is now `scripts/validate_deployment_manifests.py`, which resolves entrypoints against
+    the declared console scripts and asserts against `helm template` output rather than text.
+
+    These four are genuinely text properties of a workflow file -- there is no rendered object
+    to interrogate -- so they stay here, narrowly and under an honest name.
+    """
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "mizan-sbom.cdx.json" in workflow
+    assert "mizan-trivy.json" in workflow
+    assert "--scanners vuln --skip-version-check --severity HIGH,CRITICAL --exit-code 1" in workflow
+    # The gate that replaced this function must itself be wired, or T-100 buys nothing.
+    assert "scripts/validate_deployment_manifests.py" in workflow
+
+
+def test_the_dockerfile_still_builds_the_runtime_rather_than_the_toolchain() -> None:
+    """Text assertions that remain text assertions, because a Dockerfile has no rendered form.
+
+    Narrowed to what only the Dockerfile can say. The digest pin and the non-root UID are also
+    asserted by the T-100 gate, deliberately: they are the two properties whose regression is
+    least recoverable, and a claim worth making twice is worth checking twice.
+    """
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
     assert dockerfile.count("python:3.12-slim-trixie@sha256:") == 2
     assert "uv sync --frozen --no-dev" in dockerfile
@@ -142,32 +171,3 @@ def test_production_packaging_contract_is_complete() -> None:
     assert "HEALTHCHECK" in dockerfile and "/health/ready" in dockerfile
     assert "MIZAN_HEALTH_SERVER_CA_FILE" in dockerfile
     assert "COPY --chown=65532:65532 SPEC_v1.md ./SPEC_v1.md" in dockerfile
-
-    compose = Path("compose.production.yaml").read_text(encoding="utf-8")
-    assert "postgresql://mizan_app:" in compose
-    assert "python /app/scripts/migrate.py" not in compose
-    assert 'entrypoint: ["python", "/app/scripts/migrate.py"]' in compose
-    # Was `assert 'profiles: ["drainer"]' in compose`, and was passing: it asserted the presence
-    # of a service pointing at `mizan-drain-outbox`, a binary that did not exist, behind an
-    # opt-in profile. Without that service `execution.py::_require_receipts` refuses every
-    # `financial_write` with 403 `immutable_receipt_missing`, so the assertion was pinning the
-    # defect in place under the name "the production packaging contract is complete" (T-099).
-    assert 'profiles: ["drainer"]' not in compose
-    assert 'entrypoint: ["mizan-drain-outbox"]' in compose
-    assert "MIZAN_HEALTH_SERVER_CA_FILE: /run/mizan/tls/server-ca.pem" in compose
-
-    chart_values = Path("charts/mizan/values.yaml").read_text(encoding="utf-8")
-    # Same defect in the chart: `enabled: false` on the drainer. A substring test cannot tell
-    # which key it matched, which is half of why this went unnoticed -- T-100 replaces the whole
-    # function with `helm template` and assertions against rendered objects.
-    assert "drainer:\n" in chart_values
-    assert "enabled: false" not in chart_values
-    migration_job = Path("charts/mizan/templates/migration-job.yaml").read_text(
-        encoding="utf-8"
-    )
-    assert "pre-install,pre-upgrade" in migration_job
-
-    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "mizan-sbom.cdx.json" in workflow
-    assert "mizan-trivy.json" in workflow
-    assert "--scanners vuln --skip-version-check --severity HIGH,CRITICAL --exit-code 1" in workflow
