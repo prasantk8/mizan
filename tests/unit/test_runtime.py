@@ -109,6 +109,9 @@ def test_production_refuses_to_start_without_a_real_key_backend(monkeypatch, tmp
             MIZAN_TLS_CERTIFICATE_FILE=str(tmp_path / "server.pem"),
             MIZAN_TLS_PRIVATE_KEY_FILE=str(tmp_path / "server.key"),
             MIZAN_TLS_CLIENT_CA_FILE=str(tmp_path / "client-ca.pem"),
+            # Production also requires an Object Lock bucket (B-21/T-104).
+            MIZAN_EVIDENCE_OBJECT_STORE="s3",
+            MIZAN_AUDIT_ANCHOR_BUCKET="mizan-evidence",
             **overrides,
         )
 
@@ -336,3 +339,37 @@ def test_an_unreadable_token_file_is_refused_rather_than_treated_as_absent(
             MIZAN_VAULT_ADDR="https://vault.test",
             MIZAN_VAULT_TOKEN_FILE=str(tmp_path / "does-not-exist"),
         )
+
+
+def test_every_production_requirement_is_reported_at_once(monkeypatch, tmp_path) -> None:
+    """An operator bringing up a first deployment should not learn these serially.
+
+    Raising on the first violation means fix, restart, next error, restart -- and each restart is
+    a fresh chance to give up. It also let a newly added guard shadow every existing one: three
+    production tests broke exactly that way while B-21's check was being written, each asserting a
+    refusal that a newer guard had started firing before.
+    """
+    for name, value in {
+        "MIZAN_DATABASE_URL": "postgresql://unused",
+        "MIZAN_JWT_ISSUER": "urn:mizan:development:dev-token",
+        "MIZAN_JWT_PUBLIC_KEY": "unused",
+        "MIZAN_ENV": "production",
+        "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(RuntimeError) as refused:
+        Settings.from_environment()
+
+    reported = str(refused.value)
+    assert reported.startswith("production configuration is not usable:")
+    # Six independent things are wrong with this configuration and the operator is told all six.
+    for requirement in (
+        "MIZAN_EVIDENCE_OBJECT_STORE=s3",
+        "development custody",
+        "RFC 3161",
+        "mizan-dev-token issuer",
+        "MIZAN_EXECUTION_TOKEN_ISSUER",
+        "MIZAN_TLS_CERTIFICATE_FILE",
+    ):
+        assert requirement in reported, requirement

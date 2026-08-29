@@ -42,6 +42,10 @@ otel = [
   "opentelemetry-sdk>=1.30,<2",
   "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
 ]
+# Evidence durability under B-21. Optional because a development install signs into a local
+# directory and needs no AWS SDK; a deployment that sets MIZAN_EVIDENCE_OBJECT_STORE=s3 without it
+# is refused at startup rather than served a process that reports ready and cannot write evidence.
+s3 = ["boto3>=1.35,<2"]
 
 [tool.uv.sources]
 mizan-sdk = { path = "sdk/python" }
@@ -56,6 +60,7 @@ dev = [
   # `scripts/validate_deployment_manifests.py` parses compose and `helm template` output as
   # documents rather than text. It was already installed transitively; a transitive pin is not
   # a dependency decision, and a gate whose parser can vanish is not a gate.
+  "boto3>=1.35,<2",
   "pyyaml>=6,<7",
   "ruff>=0.9,<1",
 ]

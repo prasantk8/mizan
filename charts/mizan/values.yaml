@@ -30,6 +30,14 @@ config:
   degradedGrantKeyRef: vault://transit/mizan-degraded-grant#v1
   vaultAddr: ""                              # required; https:// in production
   vaultTokenFile: /run/mizan/vault/token     # a Secret mount or a Vault Agent sink
+  # Evidence durability (B-21). `local` is a directory and production refuses it: a directory
+  # cannot enforce the retention every signed record already claims, and the `emptyDir` this
+  # replaces lost the corpus on every rollout.
+  evidenceObjectStore: s3
+  auditAnchorBucket: ""                      # required; must be created with Object Lock enabled
+  s3EndpointUrl: ""                          # empty for AWS S3; set for an S3-compatible endpoint
+  s3Region: us-east-1
+  objectLockRetentionYears: 7
   tsaEndpoints: https://tsa.example.invalid
 
 drainer:

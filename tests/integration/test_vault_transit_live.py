@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import os
+import ssl
 
 import httpx
 import pytest
@@ -29,6 +30,10 @@ from mizan_control_plane.vault_transit import VaultRefused, VaultTransitBackend
 
 ADDRESS = os.getenv("MIZAN_TEST_VAULT_ADDR", "")
 TOKEN = os.getenv("MIZAN_TEST_VAULT_TOKEN", "")
+# A private CA, for a Vault reached over TLS. The `vault-transit` job talks to a plain-HTTP dev
+# Vault and does not need this; `production-boot` requires https:// and does, and both should be
+# able to share one server (T-104).
+CA = os.getenv("MIZAN_TEST_VAULT_CA_CERT", "")
 
 pytestmark = pytest.mark.skipif(
     not (ADDRESS and TOKEN), reason="Vault not configured (MIZAN_TEST_VAULT_ADDR/TOKEN)"
@@ -38,7 +43,12 @@ ROLES = ("evidence-receipt", "evidence-anchor", "execution-token", "degraded-gra
 
 
 def admin() -> httpx.Client:
-    return httpx.Client(base_url=ADDRESS, headers={"X-Vault-Token": TOKEN}, timeout=10.0)
+    return httpx.Client(
+        base_url=ADDRESS,
+        headers={"X-Vault-Token": TOKEN},
+        timeout=10.0,
+        verify=ssl.create_default_context(cafile=CA) if CA else ssl.create_default_context(),
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -70,6 +80,7 @@ def settings(**overrides: str) -> Settings:
         "MIZAN_KEY_CUSTODY_MODE": "vault-transit",
         "MIZAN_VAULT_ADDR": ADDRESS,
         "MIZAN_VAULT_TOKEN": TOKEN,
+        "MIZAN_VAULT_CA_CERT": CA,
         **{
             f"MIZAN_{name}_KEY_REF": f"vault://transit/mizan-{role}#v1"
             for name, role in (
@@ -94,7 +105,7 @@ def settings(**overrides: str) -> Settings:
 
 
 def backend() -> VaultTransitBackend:
-    return VaultTransitBackend(ADDRESS, TOKEN)
+    return VaultTransitBackend(ADDRESS, TOKEN, ca_certificate=CA or None)
 
 
 def test_the_product_boots_with_a_key_backend_that_is_not_development() -> None:
@@ -192,7 +203,9 @@ def test_a_key_of_the_wrong_type_is_refused_before_anything_is_signed() -> None:
 
 def test_a_token_the_policy_does_not_admit_is_a_startup_refusal() -> None:
     with pytest.raises(VaultRefused, match="refused the token"):
-        VaultTransitBackend(ADDRESS, "s.not-a-real-token").public_key(
+        VaultTransitBackend(
+            ADDRESS, "s.not-a-real-token", ca_certificate=CA or None
+        ).public_key(
             "vault://transit/mizan-evidence-receipt#v1"
         )
 

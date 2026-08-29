@@ -64,6 +64,17 @@ class Settings:
     vault_token: str = ""
     vault_namespace: str = ""
     vault_ca_certificate: str = ""
+    # Evidence durability under B-21. `local` is a directory and is a development WORM *analogue*
+    # by its own docstring; `s3` is a bucket whose immutability the storage layer enforces.
+    # `MIZAN_AUDIT_ANCHOR_BUCKET` has been registered in SPEC §8 and read by nothing since the
+    # spec was written -- one of the twenty-one keys T-109 counts.
+    evidence_object_store: str = "local"
+    audit_anchor_bucket: str = ""
+    s3_endpoint_url: str = ""
+    s3_region: str = "us-east-1"
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    object_lock_retention_years: int = 7
 
     @property
     def metrics_enabled(self) -> bool:
@@ -86,6 +97,13 @@ class Settings:
         if missing:
             raise RuntimeError(f"missing required configuration: {', '.join(missing)}")
         environment = environ.get("MIZAN_ENV", "development")
+        # Production requirements are collected and reported together rather than raised one at a
+        # time. An operator bringing up a first deployment otherwise learns about them serially --
+        # fix, restart, next error, restart -- and each restart is a fresh chance to give up. It
+        # also stops a newly added check from shadowing every existing one: three production tests
+        # broke that way while this file was being written, each asserting a refusal that a newer
+        # guard had started firing before.
+        production_problems: list[str] = []
         refs = (
             environ.get("MIZAN_EVIDENCE_RECEIPT_KEY_REF", "local://evidence-receipt/dev-1"),
             environ.get("MIZAN_EVIDENCE_ANCHOR_KEY_REF", "local://evidence-anchor/dev-1"),
@@ -130,8 +148,24 @@ class Settings:
             if environment == "production" and not vault_address.startswith("https://"):
                 # The token is a bearer credential for every key that signs this tenant's evidence.
                 # Over plaintext it is readable by anything on the path, and the same reasoning
-                # already refuses a plaintext TSA endpoint two checks below.
-                raise RuntimeError("production requires an https:// MIZAN_VAULT_ADDR")
+                # already refuses a plaintext TSA endpoint further down.
+                production_problems.append("production requires an https:// MIZAN_VAULT_ADDR")
+        object_store = environ.get("MIZAN_EVIDENCE_OBJECT_STORE", "local").lower()
+        if object_store not in ("local", "s3"):
+            raise RuntimeError("MIZAN_EVIDENCE_OBJECT_STORE must be 'local' or 's3'")
+        audit_anchor_bucket = environ.get("MIZAN_AUDIT_ANCHOR_BUCKET", "")
+        retention_years = int(environ.get("MIZAN_OBJECT_LOCK_RETENTION_YEARS", "7"))
+        if object_store == "s3" and not audit_anchor_bucket:
+            raise RuntimeError("MIZAN_EVIDENCE_OBJECT_STORE=s3 requires MIZAN_AUDIT_ANCHOR_BUCKET")
+        if environment == "production" and object_store != "s3":  # noqa: SIM102
+            # `LocalImmutableObjectStore` calls itself a development WORM *analogue* in its own
+            # docstring, and every record this system signs carries `"retention_class":
+            # "regulatory_7y"`. A directory cannot enforce that, and the chart's `emptyDir` under
+            # `replicaCount: 2` actively contradicted it: a rollout destroyed the corpus (B-21).
+            production_problems.append(
+                "production requires MIZAN_EVIDENCE_OBJECT_STORE=s3 with Object Lock; a directory "
+                "cannot enforce the retention every signed record already claims (B-21)"
+            )
         anchor_provider = environ.get("MIZAN_ANCHOR_PROVIDER", "development-unattested")
         tsa_endpoints = tuple(
             item for item in environ.get("MIZAN_ANCHOR_TSA_ENDPOINTS", "").split(",") if item
@@ -144,17 +178,19 @@ class Settings:
         if environment == "production" and (custody == "development" or any(
             item.startswith("local://") for item in refs
         )):
-            raise RuntimeError("production refuses development custody and local:// signing keys")
+            production_problems.append(
+                "production refuses development custody and local:// signing keys"
+            )
         if environment == "production" and (
             anchor_provider != "rfc3161" or not tsa_endpoints or not tsa_trust_anchors
         ):
-            raise RuntimeError(
+            production_problems.append(
                 "production requires RFC 3161 anchor provider, TSA endpoint, and trust anchor"
             )
         if environment == "production" and any(
             not endpoint.startswith("https://") for endpoint in tsa_endpoints
         ):
-            raise RuntimeError("production requires HTTPS RFC 3161 TSA endpoints")
+            production_problems.append("production requires HTTPS RFC 3161 TSA endpoints")
         execution_token_issuer = environ.get("MIZAN_EXECUTION_TOKEN_ISSUER", "")
         tls_certificate_file = environ.get("MIZAN_TLS_CERTIFICATE_FILE") or None
         tls_private_key_file = environ.get("MIZAN_TLS_PRIVATE_KEY_FILE") or None
@@ -163,22 +199,22 @@ class Settings:
         configuration_hash = environ.get("MIZAN_EVALUATOR_CONFIGURATION_HASH", "0" * 64)
         if environment == "production":
             if environ["MIZAN_JWT_ISSUER"].startswith("urn:mizan:development:"):
-                raise RuntimeError(
+                production_problems.append(
                     "production refuses the mizan-dev-token issuer; a demo credential minter is "
                     "not an identity provider"
                 )
             if not execution_token_issuer:
-                raise RuntimeError(
+                production_problems.append(
                     "production requires MIZAN_EXECUTION_TOKEN_ISSUER; tokens may not select "
                     "their own trust domain"
                 )
             if evaluator_build == "development" or configuration_hash == "0" * 64:
-                raise RuntimeError(
+                production_problems.append(
                     "production requires a real MIZAN_EVALUATOR_BUILD and "
                     "MIZAN_EVALUATOR_CONFIGURATION_HASH; every ADR_Record pins them as evidence"
                 )
             if not (tls_certificate_file and tls_private_key_file and tls_client_ca_file):
-                raise RuntimeError(
+                production_problems.append(
                     "production requires MIZAN_TLS_CERTIFICATE_FILE, MIZAN_TLS_PRIVATE_KEY_FILE "
                     "and MIZAN_TLS_CLIENT_CA_FILE; execution endpoints authenticate the workload "
                     "from the verified TLS peer only (ADR-001 Amendment B)"
@@ -200,6 +236,10 @@ class Settings:
         drain_tenants = tuple(
             item.strip() for item in environ.get("MIZAN_DRAIN_TENANTS", "").split(",") if item.strip()
         )
+        if production_problems:
+            raise RuntimeError(
+                "production configuration is not usable:\n  - " + "\n  - ".join(production_problems)
+            )
         return cls(
             database_url=environ["MIZAN_DATABASE_URL"],
             jwt_issuer=environ["MIZAN_JWT_ISSUER"],
@@ -221,6 +261,13 @@ class Settings:
             vault_token=vault_token,
             vault_namespace=vault_namespace,
             vault_ca_certificate=vault_ca_certificate,
+            evidence_object_store=object_store,
+            audit_anchor_bucket=audit_anchor_bucket,
+            s3_endpoint_url=environ.get("MIZAN_S3_ENDPOINT_URL", ""),
+            s3_region=environ.get("MIZAN_S3_REGION", "us-east-1"),
+            s3_access_key_id=environ.get("MIZAN_S3_ACCESS_KEY_ID", ""),
+            s3_secret_access_key=environ.get("MIZAN_S3_SECRET_ACCESS_KEY", ""),
+            object_lock_retention_years=retention_years,
             anchor_provider=anchor_provider,
             anchor_tsa_endpoints=tsa_endpoints,
             anchor_tsa_trust_anchors=tsa_trust_anchors,

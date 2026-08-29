@@ -46,6 +46,11 @@ spec:
             - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
             - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}
             - {name: MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF, value: {{ .Values.config.degradedGrantKeyRef | quote }}}
+            - {name: MIZAN_EVIDENCE_OBJECT_STORE, value: {{ .Values.config.evidenceObjectStore | quote }}}
+            - {name: MIZAN_AUDIT_ANCHOR_BUCKET, value: {{ .Values.config.auditAnchorBucket | quote }}}
+            - {name: MIZAN_S3_ENDPOINT_URL, value: {{ .Values.config.s3EndpointUrl | quote }}}
+            - {name: MIZAN_S3_REGION, value: {{ .Values.config.s3Region | quote }}}
+            - {name: MIZAN_OBJECT_LOCK_RETENTION_YEARS, value: {{ .Values.config.objectLockRetentionYears | quote }}}
             - {name: MIZAN_ANCHOR_PROVIDER, value: rfc3161}
             - {name: MIZAN_ANCHOR_TSA_ENDPOINTS, value: {{ .Values.config.tsaEndpoints | quote }}}
             - {name: MIZAN_ANCHOR_TSA_TRUST_ANCHORS, value: /run/mizan/tls/tsa-root.pem}
@@ -62,7 +67,6 @@ spec:
             - {name: MIZAN_HTTP_PORT, value: "8443"}
           volumeMounts:
             - {name: tls, mountPath: /run/mizan/tls, readOnly: true}
-            - {name: evidence, mountPath: /app/var/evidence}
           readinessProbe:
             exec:
               command: ["python", "-c", "import ssl,urllib.request; c=ssl.create_default_context(cafile='/run/mizan/tls/server-ca.pem'); c.load_cert_chain('/run/mizan/tls/health-client.pem','/run/mizan/tls/health-client-key.pem'); urllib.request.urlopen('https://127.0.0.1:8443/health/ready',context=c,timeout=4).read()"]
@@ -83,5 +87,8 @@ spec:
         - name: tls
           secret:
             secretName: {{ .Values.secrets.tls }}
-        - name: evidence
-          emptyDir: {}
+        # No evidence volume. It was an `emptyDir` under `replicaCount: 2`, so a bundle
+        # exported by one pod could not read segments published by another and a rollout destroyed
+        # the corpus -- while every record written carried `"retention_class": "regulatory_7y"`.
+        # Evidence now goes to an Object Lock bucket, which is shared by construction and which no
+        # principal can delete from before the retention date (B-21).

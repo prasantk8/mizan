@@ -31,11 +31,33 @@ DATABASE = os.getenv("MIZAN_TEST_DATABASE_URL", "")
 VAULT = os.getenv("MIZAN_TEST_VAULT_ADDR", "")
 TOKEN = os.getenv("MIZAN_TEST_VAULT_TOKEN", "")
 CA = os.getenv("MIZAN_TEST_VAULT_CA_CERT", "")
+S3_ENDPOINT = os.getenv("MIZAN_TEST_S3_ENDPOINT_URL", "")
+S3_ACCESS_KEY = os.getenv("MIZAN_TEST_S3_ACCESS_KEY_ID", "")
+S3_SECRET_KEY = os.getenv("MIZAN_TEST_S3_SECRET_ACCESS_KEY", "")
+BUCKET = "mizan-production-boot"
 
 pytestmark = pytest.mark.skipif(
-    not (DATABASE and VAULT and TOKEN),
-    reason="production boot needs PostgreSQL and Vault (MIZAN_TEST_DATABASE_URL/VAULT_ADDR/TOKEN)",
+    not (DATABASE and VAULT and TOKEN and S3_ENDPOINT),
+    reason="production boot needs PostgreSQL, Vault and an Object Lock bucket",
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def evidence_bucket() -> None:
+    """Production refuses a directory (B-21), so the boot gate needs a real Object Lock bucket.
+
+    That is the correct coupling rather than an inconvenience: `"retention_class": "regulatory_7y"`
+    is inside every record this system signs, and a gate that booted production onto an `emptyDir`
+    would be proving that the configuration we refuse to ship still starts.
+    """
+    from mizan_control_plane.object_store import build_s3_client
+
+    client = build_s3_client(S3_ENDPOINT, "us-east-1", S3_ACCESS_KEY, S3_SECRET_KEY)
+    try:
+        client.create_bucket(Bucket=BUCKET, ObjectLockEnabledForBucket=True)
+    except Exception as error:
+        if "BucketAlreadyOwnedByYou" not in str(error) and "BucketAlreadyExists" not in str(error):
+            raise
 
 
 def production_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
@@ -68,6 +90,11 @@ def production_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "MIZAN_TLS_PRIVATE_KEY_FILE": str(tmp_path / "server-key.pem"),
         "MIZAN_TLS_CLIENT_CA_FILE": str(tmp_path / "client-ca.pem"),
         "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
+        "MIZAN_EVIDENCE_OBJECT_STORE": "s3",
+        "MIZAN_AUDIT_ANCHOR_BUCKET": BUCKET,
+        "MIZAN_S3_ENDPOINT_URL": S3_ENDPOINT,
+        "MIZAN_S3_ACCESS_KEY_ID": S3_ACCESS_KEY,
+        "MIZAN_S3_SECRET_ACCESS_KEY": S3_SECRET_KEY,
     }
     environment.update(overrides)
     return environment
@@ -107,6 +134,16 @@ def test_production_builds_a_runtime(production) -> None:
     finally:
         for pool in getattr(runtime.app.state, "connection_pools", []):
             pool.close()
+
+
+def test_production_refuses_a_directory_for_evidence(production) -> None:
+    """B-21. `LocalImmutableObjectStore` calls itself a development WORM analogue in its docstring.
+
+    The chart mounted it as an `emptyDir` under `replicaCount: 2`, so a rollout destroyed the
+    corpus -- while every record written claimed `regulatory_7y`.
+    """
+    with pytest.raises(RuntimeError, match="MIZAN_EVIDENCE_OBJECT_STORE=s3"):
+        production(MIZAN_EVIDENCE_OBJECT_STORE="local")
 
 
 def test_production_still_refuses_development_custody(production) -> None:

@@ -23,6 +23,12 @@ from .config import Settings
 from .evidence import EvidenceRepository, LocalImmutableObjectStore, ObjectEvidenceVerifier
 from .execution import ExecutionService, ExecutionTokenCodec
 from .keys import KEY_ROLES, KeyProvider, KeyVersion, KmsHsmKeyProvider, LocalKeyProvider
+from .object_store import (
+    ImmutableObjectStore,
+    ObjectStoreRefused,
+    S3ObjectLockStore,
+    build_s3_client,
+)
 from .observability import (
     Metrics,
     MetricsServer,
@@ -76,6 +82,39 @@ def build_key_provider(settings: Settings) -> KeyProvider:
     )
 
 
+def build_object_store(settings: Settings) -> ImmutableObjectStore:
+    """Where evidence goes, and whether anything but our own care keeps it there.
+
+    `local` is a directory. Its own docstring calls it a development WORM *analogue*, and the chart
+    mounted it as an `emptyDir` under `replicaCount: 2` -- so a bundle exported by pod A could not
+    read segments published by pod B, and a rollout destroyed the corpus. Meanwhile every record
+    this system signs carries `"retention_class": "regulatory_7y"`.
+
+    `s3` is B-21's answer: a bucket with Object Lock in COMPLIANCE mode, where no principal --
+    including us -- can delete or overwrite an object before its retention date. The bucket is
+    checked here, at startup, because Object Lock can only be enabled when a bucket is *created*:
+    a deployment pointed at an ordinary bucket cannot be repaired in place, and until it is
+    replaced every record it writes claims a retention nothing enforces.
+    """
+    if settings.evidence_object_store == "local":
+        return LocalImmutableObjectStore(Path(settings.evidence_object_store_root))
+    try:
+        store = S3ObjectLockStore(
+            settings.audit_anchor_bucket,
+            client=build_s3_client(
+                settings.s3_endpoint_url,
+                settings.s3_region,
+                settings.s3_access_key_id,
+                settings.s3_secret_access_key,
+            ),
+            retention_years=settings.object_lock_retention_years,
+        )
+        store.assert_object_lock_enabled()
+    except ObjectStoreRefused as refused:
+        raise StartupRefused(f"evidence object store is not usable: {refused}") from refused
+    return store
+
+
 def verification_public_keys(provider: KeyProvider) -> dict[str, Ed25519PublicKey]:
     return {
         document["key_id"]: Ed25519PublicKey.from_public_bytes(
@@ -89,7 +128,7 @@ def build_evidence_verifier(
     settings: Settings, provider: KeyProvider
 ) -> tuple[ObjectEvidenceVerifier, EvidenceRepository]:
     repository = EvidenceRepository(settings.database_url)
-    store = LocalImmutableObjectStore(Path(settings.evidence_object_store_root))
+    store = build_object_store(settings)
     return (
         ObjectEvidenceVerifier(
             repository,
