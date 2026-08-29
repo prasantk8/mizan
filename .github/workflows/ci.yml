@@ -236,6 +236,102 @@ jobs:
               ;;
           esac
 
+  production-boot:
+    # T-101. Every other production assertion in this repository is a *refusal*, and a complete set
+    # of refusals with nothing left that starts is indistinguishable from a system that refuses
+    # everything. CI's only container boot passes `--env MIZAN_ENV=development`, so `app.py`'s
+    # production readiness branch had never executed anywhere.
+    #
+    # Vault runs as a step rather than a service because production requires https:// to Vault and
+    # a `services:` block cannot override the image command, which is what `-dev-tls` needs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+        env:
+          POSTGRES_DB: mizan
+          POSTGRES_USER: mizan_owner
+          POSTGRES_PASSWORD: integration-only-owner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mizan_owner -d mizan"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
+      - name: Provision the schema and the runtime login
+        env:
+          PGPASSWORD: integration-only-owner
+        run: |
+          # A `services:` PostgreSQL has no `docker-entrypoint-initdb.d` mount, so the migrations
+          # have to be applied here -- `schema_contract.sql` only *asserts* the tables exist and
+          # fails with "28 required tables missing" against an empty database. Globbed rather than
+          # listed so a new migration is applied without editing this file, which is how migration
+          # 0004 came to be absent from a gate that claimed to provision the schema.
+          for migration in $(ls infra/postgres/migrations/*.sql | sort); do
+            psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 \
+              --quiet --file "$migration"
+          done
+          psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 \
+            --file tests/integration/postgres/schema_contract.sql
+          psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 \
+            --command "ALTER ROLE mizan_app LOGIN PASSWORD 'integration-only-mizan'"
+      - name: Start Vault with TLS
+        run: |
+          # `mkdir` inside the container: `-dev-tls` refuses a cert directory that does not exist,
+          # and panics on one bind-mounted from the host because it tries to remove files that are
+          # not there. Certificates are copied out afterwards rather than shared in.
+          docker run -d --name mizan-ci-vault --cap-add=IPC_LOCK -p 8200:8200 \
+            -e VAULT_DEV_ROOT_TOKEN_ID=ci-only-root --entrypoint sh \
+            hashicorp/vault:1.18@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166 \
+            -c 'mkdir -p /vault-tls && exec vault server -dev -dev-tls \
+                -dev-listen-address=0.0.0.0:8200 -dev-tls-cert-dir=/vault-tls'
+          for _ in $(seq 1 30); do
+            if docker exec mizan-ci-vault test -f /vault-tls/vault-ca.pem; then break; fi
+            sleep 1
+          done
+          docker cp mizan-ci-vault:/vault-tls/vault-ca.pem "$RUNNER_TEMP/vault-ca.pem"
+          curl -sS --cacert "$RUNNER_TEMP/vault-ca.pem" \
+            -H "X-Vault-Token: ci-only-root" https://127.0.0.1:8200/v1/sys/health > /dev/null
+      - name: Provision Transit with the script operators run
+        env:
+          VAULT_ADDR: https://127.0.0.1:8200
+          VAULT_TOKEN: ci-only-root
+        run: VAULT_CACERT="$RUNNER_TEMP/vault-ca.pem" bash scripts/provision_vault.sh
+      - name: Boot the control plane with MIZAN_ENV=production
+        env:
+          MIZAN_TEST_DATABASE_URL: postgresql://mizan_app:integration-only-mizan@127.0.0.1:5432/mizan
+          MIZAN_TEST_VAULT_ADDR: https://127.0.0.1:8200
+          MIZAN_TEST_VAULT_TOKEN: ci-only-root
+        run: |
+          export MIZAN_TEST_VAULT_CA_CERT="$RUNNER_TEMP/vault-ca.pem"
+          # Skipped is not passed: this file skips itself without a database and a Vault, so a job
+          # that lost either would go green having proved nothing (R-008 F-11).
+          if ! output=$(uv run --frozen pytest -q tests/integration/test_production_boot.py 2>&1); then
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          case "$(printf '%s\n' "$output" | tail -1)" in
+            *skipped*|*"no tests ran"*)
+              echo "::error::production boot did not run against a real database and Vault"
+              exit 1
+              ;;
+          esac
+      - name: Stop Vault
+        if: always()
+        run: docker rm -f mizan-ci-vault || true
+
   production-image:
     runs-on: ubuntu-latest
     timeout-minutes: 20

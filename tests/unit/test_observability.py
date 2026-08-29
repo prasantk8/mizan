@@ -465,3 +465,24 @@ def test_an_unserialisable_field_is_rendered_rather_than_losing_the_line() -> No
 
     payload = json.loads(_emit(JsonFormatter(), thing=Opaque()))
     assert payload["thing"] == "<opaque>"
+
+
+def test_a_library_that_logs_every_request_does_not_drown_the_lines_that_matter() -> None:
+    """Every Vault Transit signature is an HTTP request, and `httpx` logs one INFO line each.
+
+    Found while booting production for the first time (T-101): four key reads produced four
+    `HTTP Request: GET https://vault.../v1/transit/keys/... 200 OK` lines before the process had
+    served anything. A drain worker publishing a thousand receipts would emit a thousand more --
+    burying the lines that mean something, and naming the key used to sign evidence on every write.
+    """
+    configure_logging("INFO")
+    assert logging.getLogger("httpx").level == logging.WARNING
+
+    # DEBUG passes straight through: the first thing anyone debugging a Vault problem wants is
+    # exactly the request log this suppresses.
+    configure_logging("DEBUG")
+    assert logging.getLogger("httpx").level == logging.DEBUG
+
+    # And raising the floor can never make a library noisier than the level that was asked for.
+    configure_logging("ERROR")
+    assert logging.getLogger("httpx").level == logging.ERROR

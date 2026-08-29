@@ -248,6 +248,15 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(document, default=str, separators=(",", ":"))
 
 
+# Libraries that log one INFO line per operation. `httpx` is the one that matters: every Vault
+# Transit signature is an HTTP request, so at INFO a drain worker publishing a thousand receipts
+# emits a thousand lines reading `HTTP Request: POST https://vault.../v1/transit/sign/... 200 OK`.
+# That is not observability -- it buries the lines that mean something, and it puts the key name
+# being used to sign evidence into the log on every write. Raised to WARNING, where a failing
+# Vault still says so.
+NOISY_LIBRARIES = ("httpx", "httpcore", "urllib3")
+
+
 def configure_logging(level: str = "INFO", *, json_output: bool = True, stream: Any = None) -> None:
     """Install one handler on the root logger. Idempotent: re-running replaces, never stacks."""
     handler = logging.StreamHandler(stream)
@@ -262,6 +271,12 @@ def configure_logging(level: str = "INFO", *, json_output: bool = True, stream: 
         root.removeHandler(existing)
     root.addHandler(handler)
     root.setLevel(level.upper())
+    # WARNING by default; DEBUG passes straight through, because the first thing anyone debugging
+    # a Vault or database problem wants is exactly the request log this suppresses. Above WARNING
+    # the root level wins, so raising this floor can never make a library *noisier* than asked.
+    library_level = root.level if root.level == logging.DEBUG else max(logging.WARNING, root.level)
+    for library in NOISY_LIBRARIES:
+        logging.getLogger(library).setLevel(library_level)
 
 
 # ---------------------------------------------------------------------------------------------
