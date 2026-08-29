@@ -18,7 +18,9 @@ import httpx
 import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "control-plane"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import dev_pki  # noqa: E402
 from mizan_control_plane.canonical import canonical_hash  # noqa: E402
 from mizan_control_plane.dev_token import ensure_keypair, mint  # noqa: E402
 
@@ -262,12 +264,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-url", default="http://127.0.0.1:8080")
     parser.add_argument("--owner-database-url", required=True)
     parser.add_argument("--key-dir", type=Path, default=Path("var/demo-keys"))
+    parser.add_argument(
+        "--tls-dir",
+        type=Path,
+        help="the development PKI from scripts/dev_pki.py. The demo control plane serves mutual "
+        "TLS -- execution endpoints require a verified peer SPIFFE identity -- and a listener "
+        "with a client CA configured demands a certificate on every connection, seeding and "
+        "/health/ready included. Omit for a plain-HTTP control plane.",
+    )
     arguments = parser.parse_args(argv)
 
     seed_owner_rows(arguments.owner_database_url)
     author = operator_token(arguments.key_dir, AUTHOR, ["registry.admin", "risk"])
     approver = operator_token(arguments.key_dir, APPROVER, ["registry.admin", "manager"])
-    with httpx.Client(base_url=arguments.api_url, timeout=15) as client:
+    client_kwargs: dict = {"base_url": arguments.api_url, "timeout": 15}
+    if arguments.tls_dir is not None:
+        client_kwargs["verify"] = dev_pki.client_ssl_context(arguments.tls_dir)
+    with httpx.Client(**client_kwargs) as client:
         # Tools first: mizan.agent_tools has a foreign key to both sides, and the agent document
         # is the side that names the permission, so the tools must already exist.
         for document in TOOLS:
