@@ -273,6 +273,15 @@ jobs:
         env:
           PGPASSWORD: integration-only-owner
         run: |
+          # A `services:` PostgreSQL has no `docker-entrypoint-initdb.d` mount, so the migrations
+          # have to be applied here -- `schema_contract.sql` only *asserts* the tables exist and
+          # fails with "28 required tables missing" against an empty database. Globbed rather than
+          # listed so a new migration is applied without editing this file, which is how migration
+          # 0004 came to be absent from a gate that claimed to provision the schema.
+          for migration in $(ls infra/postgres/migrations/*.sql | sort); do
+            psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 \
+              --quiet --file "$migration"
+          done
           psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 \
             --file tests/integration/postgres/schema_contract.sql
           psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 \
