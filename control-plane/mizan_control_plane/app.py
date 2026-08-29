@@ -21,6 +21,7 @@ from .config import Settings
 from .evidence import EvidenceRepository, ObjectEvidenceVerifier
 from .execution import ExecutionService
 from .keys import KEY_ROLES, KeyProvider
+from .limits import RequestBodyLimitMiddleware
 from .models import (
     AgentPatchRequest,
     ApprovalVoteRequest,
@@ -55,7 +56,12 @@ def create_app(
     key_provider: KeyProvider | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
-    verifier = TokenVerifier(settings.jwt_issuer, settings.jwt_audience, settings.jwt_public_key)
+    verifier = TokenVerifier(
+        settings.jwt_issuer,
+        settings.jwt_audience,
+        settings.jwt_public_key,
+        settings.identity_token_max_ttl_seconds,
+    )
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
     evidence_repository = EvidenceRepository(settings.database_url)
@@ -88,6 +94,7 @@ def create_app(
     ]
     app.state.settings = settings
     app.add_middleware(VerifiedPeerSpiffeMiddleware)
+    app.add_middleware(RequestBodyLimitMiddleware, limit=settings.max_request_body_bytes)
     app.add_exception_handler(Problem, problem_response)
 
     @app.post("/v1/authorize", response_model=AuthorizationResponse)

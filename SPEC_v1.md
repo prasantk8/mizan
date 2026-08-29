@@ -1655,6 +1655,8 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_JWT_ISSUER` | *(required)* | deployment | Exact accepted `iss` for identity tokens. |
 | `MIZAN_JWT_AUDIENCE` | `mizan-control-plane` | deployment | Exact accepted `aud` for identity tokens. |
 | `MIZAN_JWT_PUBLIC_KEY` | *(required)* | deployment | Asymmetric verification key. Symmetric algorithms are never accepted. |
+| `MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS` | `3600` | deployment | Maximum accepted `exp - iat` for an identity token. `exp` in the future is not a bounded lifetime, and there is no revocation path for identity tokens, so a token's lifetime is the whole of its blast radius. Refused as 401 `identity_token_ttl_excessive`. |
+| `MIZAN_MAX_REQUEST_BODY_BYTES` | `1048576` | deployment | Largest accepted request body. Applied at the ASGI layer, before the body is parsed and before any caller is authenticated. Refused as 413 `request_body_too_large`. |
 | `MIZAN_EVALUATOR_BUILD` | `development` | deployment | Recorded in every ADR_Record's `evaluator.build`. Production refuses the `development` placeholder: an unpinned evaluator makes the record unreplayable. |
 | `MIZAN_EVALUATOR_CONFIGURATION_HASH` | 64 zeros | deployment | Recorded in every ADR_Record's `evaluator.configuration_hash`. Production refuses the all-zero placeholder for the same reason. |
 | `MIZAN_EVIDENCE_OBJECT_STORE_ROOT` | `var/evidence` | deployment | Root of the immutable object store the verifier reads. In v1 this is the create-only local WORM analogue; a real WORM target is `MIZAN_AUDIT_ANCHOR_BUCKET`. |

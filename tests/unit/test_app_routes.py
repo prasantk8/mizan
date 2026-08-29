@@ -279,14 +279,26 @@ TOOL_DOCUMENT = {
 
 
 def test_an_agent_token_cannot_register_a_tool_over_http(wired) -> None:
+    """The refusal moved earlier, and is now at the identity layer rather than the authority one.
+
+    T-077a made this a 403 `registry_write_auth_insufficient`: the token authenticated fine and
+    was then refused for lacking registry authority. T-112 refuses it a step sooner with 401
+    `token_class_mismatch`, because an agent token is not a principal credential at all -- the
+    same token used to satisfy both `verify` and `verify_principal`, so one bearer was the agent
+    making the request *and* a human holding a role.
+
+    Both refusals are real and both remain: the authority check still fires for a token that
+    passes the class check, which `test_a_weak_operator_cannot_reach_the_registry` covers. What
+    matters here is unchanged -- the registry is never reached.
+    """
     client, repositories, private_key = wired
     response = client.post(
         "/v1/tools",
         json=TOOL_DOCUMENT,
         headers=authorization(private_key, identity_kind="agent", auth_strength="federated"),
     )
-    assert response.status_code == 403
-    assert response.json()["type"].endswith("registry_write_auth_insufficient")
+    assert response.status_code == 401
+    assert response.json()["type"].endswith("token_class_mismatch")
     assert repositories["registry"].calls == []
 
 
@@ -299,6 +311,11 @@ def test_registry_creates_require_a_strongly_authenticated_human(wired, path) ->
 
 
 def test_a_strong_human_operator_reaches_the_registry(wired) -> None:
+    """Also the other half of T-112's TTL bound: a bound that refuses everything is not a bound.
+
+    The token this mints has an ordinary lifetime and must still be accepted, so this test fails
+    if `identity_token_max_ttl_seconds` is ever set low enough to refuse normal credentials.
+    """
     client, repositories, private_key = wired
     response = client.post("/v1/tools", json=TOOL_DOCUMENT, headers=authorization(private_key))
     assert response.status_code == 201, response.text
@@ -352,3 +369,38 @@ def test_metrics_reads_the_counters_at_scrape_time_not_at_wiring_time(wired) -> 
         body = client.get("/metrics").text
 
     assert 'mizan_security_events_total{event="security_event_pool_timeout"} 2' in body
+
+
+def test_a_token_with_an_excessive_lifetime_is_refused(wired) -> None:
+    """T-112(d). `exp` in the future is not a bounded lifetime.
+
+    PyJWT checks that a token has not expired and has no opinion about how long it lives. A
+    ten-year identity token was accepted, and there is no revocation path for identity tokens at
+    all, so one leaked credential was a decade of access.
+    """
+    client, _repositories, private_key = wired
+    decade = token(private_key, ttl_seconds=10 * 365 * 24 * 3600)
+    response = client.get("/v1/agents", headers={"Authorization": f"Bearer {decade}"})
+
+    assert response.status_code == 401
+    assert response.json()["type"].endswith("identity_token_ttl_excessive")
+
+
+
+def test_a_body_larger_than_the_limit_is_refused_before_it_is_parsed(wired) -> None:
+    """T-112(f). Every write route parses its body before anything authenticates the caller.
+
+    The refusal must therefore come from the ASGI layer: a check inside a route handler runs
+    after the allocation it exists to prevent, which is a report rather than a cap. Asserted with
+    no credential at all, because that is the case that matters -- an unauthenticated stranger
+    choosing how much this process allocates.
+    """
+    client, repositories, _private_key = wired
+    oversized = {"padding": "x" * (2 * 1024 * 1024)}
+
+    response = client.post("/v1/tools", json=oversized)
+
+    assert response.status_code == 413
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["type"].endswith("request_body_too_large")
+    assert repositories["registry"].calls == []

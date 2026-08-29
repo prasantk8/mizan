@@ -27,6 +27,12 @@ class Settings:
     # silence, which is the failure that task exists to end.
     evidence_max_unpublished_seconds: int
     outbox_drain_interval_ms: int
+    # An identity token is a bearer credential with no revocation path, so its lifetime is the
+    # whole of its blast radius. `exp` was required and unbounded (T-112).
+    identity_token_max_ttl_seconds: int
+    # A body cap is the difference between a rejected request and an allocation the process makes
+    # on a stranger's behalf before it has authenticated anyone.
+    max_request_body_bytes: int
     evidence_object_store_root: str
     hash_verify_checkpoint_interval: int
     execution_token_issuer: str
@@ -140,6 +146,12 @@ class Settings:
                 environ.get("MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS", "5")
             ),
             outbox_drain_interval_ms=int(environ.get("MIZAN_OUTBOX_DRAIN_INTERVAL_MS", "250")),
+            identity_token_max_ttl_seconds=int(
+                environ.get("MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS", "3600")
+            ),
+            max_request_body_bytes=int(
+                environ.get("MIZAN_MAX_REQUEST_BODY_BYTES", str(1024 * 1024))
+            ),
             evidence_object_store_root=environ.get(
                 "MIZAN_EVIDENCE_OBJECT_STORE_ROOT", "var/evidence"
             ),
