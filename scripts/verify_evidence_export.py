@@ -634,28 +634,114 @@ def verify_bundle(
     }
 
 
+# What a bundle does not prove, regardless of verdict. These were one sentence here and four
+# separate statements in `verifier-two`, which was written from the specification alone -- so the
+# independent implementation disclosed two facts the reference did not: that an RFC 3161 token
+# proves an anchor existed by a time and never that no later anchor exists, and that verification
+# past the declared horizon supports only chaining and imprint, never the asserted time (ADR-004
+# G.19). Nothing normative says what a verifier must disclose, so each implementation invented
+# its own list; that gap is recorded for B-24 rather than decided here. Bringing this side up to
+# parity discloses more and forbids nothing, so it needs no ruling.
+UNIVERSAL_LIMITATIONS = (
+    "A valid bundle does NOT prove that a record was not omitted before it entered the chain "
+    "(TM-001 pre-chain omission).",
+    "A valid bundle does NOT prove that the exporting party did not withhold an entire final "
+    "anchor or history suffix.",
+    "RFC 3161 proves an included anchor existed by a time. It does not prove that no later "
+    "anchor exists.",
+    "A bundle does NOT prove when it was recorded after its declared expires_at. Bundle 1.0 "
+    "claims offline verifiability for the lifetime of the timestamp authority's certificate and "
+    "no longer (ADR-004 G.19); past the horizon a re-check supports only that the signer chains "
+    "to the operator's trust root and the imprint is this anchor, never the time the token "
+    "asserts.",
+)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a self-contained Mizan evidence bundle")
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--tsa-trust-anchor", action="append", type=Path, default=[])
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the verdict as a machine-readable document instead of prose. The shape is "
+        "`verifier-two`'s, which derived it from the specification -- so the two verifiers can "
+        "be compared on their claims rather than on their wording (scripts/compare_verifiers.py).",
+    )
     args = parser.parse_args()
+
+    def emit(verdict: str, status: int, findings: list[str]) -> int:
+        """A refusal, in whichever form the caller asked for."""
+        if args.json:
+            json.dump(
+                {
+                    "verdict": verdict,
+                    "exit_status": status,
+                    "derived_assurance": None,
+                    "findings": findings,
+                    "warnings": [],
+                    # Empty deliberately. These limitations qualify a *successful*
+                    # verification; a MALFORMED document is not a bundle and an INVALID one
+                    # failed its checks, so "what this does not additionally prove" would be
+                    # noise attached to a refusal. `verifier-two` reached the same conclusion
+                    # independently and this side had it wrong -- which is the seal earning
+                    # its keep rather than a coincidence.
+                    "notes": [],
+                },
+                sys.stdout,
+                indent=2,
+            )
+            print()
+        return status
+
     try:
         result = verify_bundle(args.bundle, args.tsa_trust_anchor)
     except CannotCheck as exc:
-        print(f"CANNOT CHECK: {exc}", file=sys.stderr)
-        print(
-            "ASSURANCE NOT DERIVED: RFC 3161 evidence was not evaluated; "
-            "this is weaker than a successful verification.",
-            file=sys.stderr,
-        )
-        return 2
+        if not args.json:
+            print(f"CANNOT CHECK: {exc}", file=sys.stderr)
+            print(
+                "ASSURANCE NOT DERIVED: RFC 3161 evidence was not evaluated; "
+                "this is weaker than a successful verification.",
+                file=sys.stderr,
+            )
+        return emit("CANNOT CHECK", 2, [str(exc)])
     except MalformedBundle as exc:
-        print(f"MALFORMED: {exc}", file=sys.stderr)
-        return 3
+        if not args.json:
+            print(f"MALFORMED: {exc}", file=sys.stderr)
+        return emit("MALFORMED", 3, [str(exc)])
     except VerificationFailure as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
-        return 1
+        if not args.json:
+            print(f"FAIL: {exc}", file=sys.stderr)
+        return emit("INVALID", 1, [str(exc)])
     expired = result["derived_assurance"] == "expired"
+    if args.json:
+        warnings: list[str] = []
+        for key_id, revoked_at in result["revoked_keys"]:
+            warnings.append(f"KEY STATUS: valid signature, key {key_id} revoked at {revoked_at}.")
+        if result["development_custody"]:
+            warnings.append(
+                "KEY CUSTODY: publicly derivable development key — "
+                "this bundle is forgeable by anyone who reads it."
+            )
+        if result["derived_assurance"] not in {"rfc3161", "expired"}:
+            warnings.append(
+                "ATTESTATION: STREAM NOT EXTERNALLY ANCHORED — at least one anchor lacks a "
+                "verified RFC 3161 token."
+            )
+        json.dump(
+            {
+                "verdict": "EXPIRED" if expired else "VALID",
+                "exit_status": 4 if expired else 0,
+                "derived_assurance": result["derived_assurance"],
+                "findings": [],
+                "warnings": warnings,
+                "notes": list(UNIVERSAL_LIMITATIONS),
+            },
+            sys.stdout,
+            indent=2,
+        )
+        print()
+        return 4 if expired else 0
     checked = (
         "The exported records, signed receipts, and complete signed anchor chain verified; "
         "unsigned checkpoints were used only as a parallel-verification performance aid "
@@ -709,7 +795,9 @@ def main() -> int:
         )
     if result["derived_assurance"] not in {"rfc3161", "expired"}:
         print("LIMITATION: The anchor signature is Mizan's own. No complete independent timestamp coverage is present, so a party holding Mizan's database and signing key could rebuild and re-sign this history.")
-    print("NOT COVERED: Records omitted before chaining and an entire final anchor withheld before export leave no proof in this bundle.")
+    print("NOT COVERED:")
+    for limitation in UNIVERSAL_LIMITATIONS:
+        print(f"  - {limitation}")
     return 4 if expired else 0
 
 

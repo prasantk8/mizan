@@ -5,4 +5,8 @@ ASSURANCE DERIVED: rfc3161.
 TIMESTAMP HORIZON: 2040-02-02T19:44:22Z — the date this bundle stops being independently verifiable, read from the timestamp authority's own certificate. Mizan claims offline verifiability up to that date and no further.
 TRUST ROOTS USED: tests/fixtures/evidence_export/public-tsa/freetsa-root.pem, tests/fixtures/evidence_export/public-tsa/usertrust-rsa-root.pem
 WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.
-NOT COVERED: Records omitted before chaining and an entire final anchor withheld before export leave no proof in this bundle.
+NOT COVERED:
+  - A valid bundle does NOT prove that a record was not omitted before it entered the chain (TM-001 pre-chain omission).
+  - A valid bundle does NOT prove that the exporting party did not withhold an entire final anchor or history suffix.
+  - RFC 3161 proves an included anchor existed by a time. It does not prove that no later anchor exists.
+  - A bundle does NOT prove when it was recorded after its declared expires_at. Bundle 1.0 claims offline verifiability for the lifetime of the timestamp authority's certificate and no longer (ADR-004 G.19); past the horizon a re-check supports only that the signer chains to the operator's trust root and the imprint is this anchor, never the time the token asserts.
