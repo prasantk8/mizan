@@ -4,11 +4,16 @@ x-control-environment: &control-environment
   MIZAN_JWT_ISSUER: ${MIZAN_JWT_ISSUER}
   MIZAN_JWT_AUDIENCE: ${MIZAN_JWT_AUDIENCE:-mizan-control-plane}
   MIZAN_JWT_PUBLIC_KEY: ${MIZAN_JWT_PUBLIC_KEY}
-  MIZAN_KEY_CUSTODY_MODE: ${MIZAN_KEY_CUSTODY_MODE:-kms}
-  MIZAN_EVIDENCE_RECEIPT_KEY_REF: ${MIZAN_EVIDENCE_RECEIPT_KEY_REF:-kms://mizan/evidence-receipt/prod-1}
-  MIZAN_EVIDENCE_ANCHOR_KEY_REF: ${MIZAN_EVIDENCE_ANCHOR_KEY_REF:-kms://mizan/evidence-anchor/prod-1}
-  MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF: ${MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF:-kms://mizan/execution-token/prod-1}
-  MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF: ${MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF:-kms://mizan/degraded-grant/prod-1}
+  # `kms` and the `kms://` references here named a backend that did not exist and a URI scheme
+  # nothing parsed: this file shipped a production configuration that could not start. B-18 chose
+  # Vault Transit and T-102 built it; `scripts/provision_vault.sh` prints these four values.
+  MIZAN_KEY_CUSTODY_MODE: ${MIZAN_KEY_CUSTODY_MODE:-vault-transit}
+  MIZAN_VAULT_ADDR: ${MIZAN_VAULT_ADDR}
+  MIZAN_VAULT_TOKEN_FILE: ${MIZAN_VAULT_TOKEN_FILE:-/run/mizan/vault/token}
+  MIZAN_EVIDENCE_RECEIPT_KEY_REF: ${MIZAN_EVIDENCE_RECEIPT_KEY_REF:-vault://transit/mizan-evidence-receipt#v1}
+  MIZAN_EVIDENCE_ANCHOR_KEY_REF: ${MIZAN_EVIDENCE_ANCHOR_KEY_REF:-vault://transit/mizan-evidence-anchor#v1}
+  MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF: ${MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF:-vault://transit/mizan-execution-token#v1}
+  MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF: ${MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF:-vault://transit/mizan-degraded-grant#v1}
   MIZAN_ANCHOR_PROVIDER: rfc3161
   MIZAN_ANCHOR_TSA_ENDPOINTS: ${MIZAN_ANCHOR_TSA_ENDPOINTS}
   MIZAN_ANCHOR_TSA_TRUST_ANCHORS: /run/mizan/tls/tsa-root.pem

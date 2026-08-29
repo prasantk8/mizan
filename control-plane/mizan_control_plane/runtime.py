@@ -22,7 +22,7 @@ from .app import create_app
 from .config import Settings
 from .evidence import EvidenceRepository, LocalImmutableObjectStore, ObjectEvidenceVerifier
 from .execution import ExecutionService, ExecutionTokenCodec
-from .keys import KEY_ROLES, KeyProvider, KeyVersion, LocalKeyProvider
+from .keys import KEY_ROLES, KeyProvider, KeyVersion, KmsHsmKeyProvider, LocalKeyProvider
 from .observability import (
     Metrics,
     MetricsServer,
@@ -31,6 +31,7 @@ from .observability import (
     build_tracer,
     configure_logging,
 )
+from .vault_transit import VaultRefused, VaultTransitBackend
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,10 +48,31 @@ def build_key_provider(settings: Settings) -> KeyProvider:
     ]
     if settings.key_custody_mode == "development":
         return LocalKeyProvider(versions, settings.environment)
+    if settings.key_custody_mode == "vault-transit":
+        try:
+            backend = VaultTransitBackend(
+                settings.vault_address,
+                settings.vault_token,
+                namespace=settings.vault_namespace or None,
+                ca_certificate=settings.vault_ca_certificate or None,
+            )
+            provider = KmsHsmKeyProvider(versions, backend, custody="kms")
+            # Every role is resolved and its public key read here, at startup, rather than at the
+            # first signature. A missing key, a wrong key type, an unreachable Vault and a policy
+            # that does not permit `sign` are all configuration errors, and the difference between
+            # finding one now and finding one later is the difference between a process that
+            # refuses to start and a drain worker that refuses every financial write at three in
+            # the morning with a message about HTTP. It also makes `verification_keyset()` --
+            # copied verbatim into every exported bundle -- known-good before anything is signed.
+            provider.verification_keyset()
+        except (VaultRefused, RuntimeError) as refused:
+            raise StartupRefused(f"vault-transit key backend is not usable: {refused}") from refused
+        return provider
     raise StartupRefused(
         f"key custody mode {settings.key_custody_mode!r} names no built backend. "
-        "KmsHsmKeyProvider exists but has no implementation to inject; see T-076 and blocker B-18. "
-        "Refusing to start rather than signing evidence with publicly derivable development keys."
+        "'vault-transit' is the one KMS backend that exists (B-18, delivered by T-102); PKCS#11 "
+        "is not built. Refusing to start rather than signing evidence with publicly derivable "
+        "development keys."
     )
 
 

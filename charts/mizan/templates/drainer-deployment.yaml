@@ -42,6 +42,8 @@ spec:
             # 78 before its first cycle. The evidence volume and TLS material are deliberately
             # still absent: those ride on B-21 under T-104, and this pod does not serve traffic.
             - {name: MIZAN_KEY_CUSTODY_MODE, value: {{ .Values.config.keyCustodyMode | quote }}}
+            - {name: MIZAN_VAULT_ADDR, value: {{ .Values.config.vaultAddr | quote }}}
+            - {name: MIZAN_VAULT_TOKEN_FILE, value: {{ .Values.config.vaultTokenFile | quote }}}
             - {name: MIZAN_EVIDENCE_RECEIPT_KEY_REF, value: {{ .Values.config.evidenceReceiptKeyRef | quote }}}
             - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
             - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}

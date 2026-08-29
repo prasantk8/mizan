@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from os import environ
+from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,13 @@ class Settings:
     metrics_port: int = 0
     otel_exporter_endpoint: str = ""
     otel_service_name: str = "mizan-control-plane"
+    # Vault Transit (B-18). Defaulted because the development backend needs none of them, and
+    # `from_environment` refuses `vault-transit` without an address and a token rather than
+    # letting an empty string reach an HTTP client.
+    vault_address: str = ""
+    vault_token: str = ""
+    vault_namespace: str = ""
+    vault_ca_certificate: str = ""
 
     @property
     def metrics_enabled(self) -> bool:
@@ -85,6 +93,45 @@ class Settings:
             environ.get("MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF", "local://degraded-grant/dev-1"),
         )
         custody = environ.get("MIZAN_KEY_CUSTODY_MODE", "development")
+        # B-20 stamped the vocabulary as `development-derived | kms | hsm` for a *key document*.
+        # This setting names the **backend** rather than the custody of one key, and the two were
+        # being spelled with the same words in three places (SPEC §8 said `kms_hsm`, `keys.py` said
+        # `kms`, `compose.production.yaml` said `kms`). Accepted values are enumerated here so an
+        # operator who writes `kms_hsm` is told, at startup, that the control they set is not read.
+        if custody not in ("development", "vault-transit"):
+            raise RuntimeError(
+                f"MIZAN_KEY_CUSTODY_MODE={custody!r} names no built backend. "
+                "'development' signs with publicly derivable keys and is refused in production; "
+                "'vault-transit' is the one KMS backend that exists (B-18). PKCS#11 is not built."
+            )
+        vault_address = environ.get("MIZAN_VAULT_ADDR", "")
+        vault_namespace = environ.get("MIZAN_VAULT_NAMESPACE", "")
+        vault_ca_certificate = environ.get("MIZAN_VAULT_CA_CERT", "")
+        vault_token = environ.get("MIZAN_VAULT_TOKEN", "")
+        token_file = environ.get("MIZAN_VAULT_TOKEN_FILE", "")
+        if token_file:
+            # A file, so a Kubernetes Secret or a Vault Agent sink can supply the token without it
+            # appearing in a pod spec, a `docker inspect`, or this process's environment -- where
+            # anything that dumps `os.environ` into a log would carry it.
+            try:
+                vault_token = Path(token_file).read_text(encoding="utf-8").strip()
+            except OSError as error:
+                raise RuntimeError(
+                    f"MIZAN_VAULT_TOKEN_FILE={token_file!r} could not be read: {error.strerror}"
+                ) from error
+        if custody == "vault-transit":
+            if not vault_address:
+                raise RuntimeError("MIZAN_KEY_CUSTODY_MODE=vault-transit requires MIZAN_VAULT_ADDR")
+            if not vault_token:
+                raise RuntimeError(
+                    "MIZAN_KEY_CUSTODY_MODE=vault-transit requires MIZAN_VAULT_TOKEN or "
+                    "MIZAN_VAULT_TOKEN_FILE"
+                )
+            if environment == "production" and not vault_address.startswith("https://"):
+                # The token is a bearer credential for every key that signs this tenant's evidence.
+                # Over plaintext it is readable by anything on the path, and the same reasoning
+                # already refuses a plaintext TSA endpoint two checks below.
+                raise RuntimeError("production requires an https:// MIZAN_VAULT_ADDR")
         anchor_provider = environ.get("MIZAN_ANCHOR_PROVIDER", "development-unattested")
         tsa_endpoints = tuple(
             item for item in environ.get("MIZAN_ANCHOR_TSA_ENDPOINTS", "").split(",") if item
@@ -170,6 +217,10 @@ class Settings:
             environment=environment,
             key_custody_mode=custody,
             signing_key_refs=refs,
+            vault_address=vault_address,
+            vault_token=vault_token,
+            vault_namespace=vault_namespace,
+            vault_ca_certificate=vault_ca_certificate,
             anchor_provider=anchor_provider,
             anchor_tsa_endpoints=tsa_endpoints,
             anchor_tsa_trust_anchors=tsa_trust_anchors,

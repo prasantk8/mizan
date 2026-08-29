@@ -21,11 +21,15 @@ config:
   executionTokenIssuer: https://mizan.example.invalid
   evaluatorBuild: "replace-with-release-id"
   evaluatorConfigurationHash: "replace-with-64-hex-characters"
-  keyCustodyMode: kms
-  evidenceReceiptKeyRef: kms://mizan/evidence-receipt/prod-1
-  evidenceAnchorKeyRef: kms://mizan/evidence-anchor/prod-1
-  executionTokenKeyRef: kms://mizan/execution-token/prod-1
-  degradedGrantKeyRef: kms://mizan/degraded-grant/prod-1
+  # `kms` named no backend and `kms://` no parser -- this chart rendered a deployment that could
+  # not start. B-18 chose Vault Transit; `scripts/provision_vault.sh` prints these values.
+  keyCustodyMode: vault-transit
+  evidenceReceiptKeyRef: vault://transit/mizan-evidence-receipt#v1
+  evidenceAnchorKeyRef: vault://transit/mizan-evidence-anchor#v1
+  executionTokenKeyRef: vault://transit/mizan-execution-token#v1
+  degradedGrantKeyRef: vault://transit/mizan-degraded-grant#v1
+  vaultAddr: ""                              # required; https:// in production
+  vaultTokenFile: /run/mizan/vault/token     # a Secret mount or a Vault Agent sink
   tsaEndpoints: https://tsa.example.invalid
 
 drainer:

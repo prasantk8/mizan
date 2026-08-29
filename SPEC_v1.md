@@ -1669,11 +1669,28 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_BENCHMARK_COMMIT_SHA` | checked-out `HEAD` | build/test | Optional assertion only: when set it must exactly equal `HEAD`; it cannot relabel a run. Artifacts also record `worktree_clean`, and provenance validation rejects dirty runs or SHAs that do not resolve to commits in this repository. |
 | `MIZAN_ANCHOR_PROVIDER` | `development-unattested` | deployment | `development-unattested` or `rfc3161`; production requires `rfc3161`. Development anchors are explicitly `none_development`/`unattested`. |
 | `MIZAN_ENV` | `development` | deployment | `production` enables mandatory startup custody assertions; production refuses development custody or any `local://` signing reference. |
-| `MIZAN_KEY_CUSTODY_MODE` | `development` | deployment | `development` or deployment-provided `kms_hsm`; production requires `kms_hsm`. |
+| `MIZAN_KEY_CUSTODY_MODE` | `development` | deployment | The signing **backend**, enumerated where it is read: `development` (publicly derivable keys, refused in production) or `vault-transit` (HashiCorp Vault Transit, native Ed25519, B-18). Any other value is refused at startup naming the modes that exist. The retired spelling `kms_hsm` was read by nothing — an operator who set it got a process that started and signed with development keys, which is the one outcome the control exists to prevent (B-20). Distinct from a key document's `custody` field, which stays `development-derived` \| `kms` \| `hsm`. |
+| `MIZAN_VAULT_ADDR` | *(required for `vault-transit`)* | deployment | Vault base URL. Production requires `https://`: the token is a bearer credential for every key that signs this tenant's evidence, and over plaintext it is readable by anything on the path. |
+| `MIZAN_VAULT_TOKEN` | *(empty)* | deployment | Vault token. Prefer `MIZAN_VAULT_TOKEN_FILE` — a token in the environment is a token in anything that dumps the environment into a log. |
+| `MIZAN_VAULT_TOKEN_FILE` | *(empty)* | deployment | Path to a file holding the Vault token, as a Kubernetes Secret mount or a Vault Agent sink produces. Trailing whitespace is stripped. An unreadable path is refused rather than treated as absent, which would silently fall back to `MIZAN_VAULT_TOKEN`. |
+| `MIZAN_VAULT_NAMESPACE` | *(empty)* | deployment | `X-Vault-Namespace` for Vault Enterprise. |
+| `MIZAN_VAULT_CA_CERT` | *(empty)* | deployment | PEM bundle used to verify Vault's TLS certificate. Empty means the system trust store. |
 | `MIZAN_EVIDENCE_RECEIPT_KEY_REF` | `local://evidence-receipt/dev-1` | deployment | Active `evidence-receipt` signing key; must be distinct from every other role. |
 | `MIZAN_EVIDENCE_ANCHOR_KEY_REF` | `local://evidence-anchor/dev-1` | deployment | Active `evidence-anchor` signing key; rotation is additive and never re-signs history. |
 | `MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF` | `local://execution-token/dev-1` | deployment | Active `execution-token` signing key. |
 | `MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF` | `local://degraded-grant/dev-1` | deployment | Active `degraded-grant` signing key; separate from the degraded WAL encryption key. |
+
+> **Signing key reference grammar.** Under `MIZAN_KEY_CUSTODY_MODE=vault-transit` each of the four
+> role references above is `vault://<mount>/<key-name>#v<version>`, and the version is **required**.
+> Transit keeps every version of a key for ever and signs with the newest by default, so a reference
+> without one would silently change who signs at the operator's next rotation while the exported
+> `keys.json` still named the old key — and a corpus that does not verify against its published
+> keyset is indistinguishable from a forged one. ADR-004 G.1 makes rotation additive for exactly
+> this reason: rotating creates a new version and changes nothing until the reference is moved.
+> `scripts/provision_vault.sh` creates the keys and prints the four references with the versions it
+> made. Under `development` the references stay `local://<role>/<label>`, whose private material is
+> `sha256(key_id)` and is therefore derivable by anyone holding a bundle.
+
 | `MIZAN_ANCHOR_TSA_ENDPOINTS` | *(required in production)* | deployment | Comma-separated RFC 3161 authorities. The request contains only the SHA-256 anchor digest; multiple authorities are supported. |
 | `MIZAN_ANCHOR_TSA_TRUST_ANCHORS` | *(required in production)* | deployment | Comma-separated local PEM trust-root paths used by the asynchronous attestation worker to validate each timestamp token before recording `attested`; these roots are operator-supplied and never exported in a bundle. |
 | `MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS` | `900` | deployment | Maximum pending age before the evidence breaker opens; pending streams cannot be described as externally anchored. |

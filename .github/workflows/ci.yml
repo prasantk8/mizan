@@ -178,6 +178,64 @@ jobs:
         if: always()
         run: docker compose -f compose.yaml -f compose.test.yaml -p mizan-adversarial-faults down --volumes
 
+  vault-transit:
+    # T-102's gate, and the work order forbids a mock here: "a mocked key backend in a stage whose
+    # thesis is 'the gate must reproduce the result' would be self-refuting". So this is a real
+    # Vault, provisioned by the script an operator runs, signing with a real Ed25519 key it will
+    # not release. Its own job because it is the only one that needs Vault, and because a key
+    # backend that stops being exercised is a key backend that stops working.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      vault:
+        image: hashicorp/vault:1.18@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: ci-only-root
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add=IPC_LOCK
+          --health-cmd "wget -q -O- http://127.0.0.1:8200/v1/sys/health || exit 1"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
+      - name: Provision Transit with the script operators run
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+          VAULT_TOKEN: ci-only-root
+        run: bash scripts/provision_vault.sh
+      - name: Sign, verify and rotate against the real Vault
+        env:
+          MIZAN_TEST_VAULT_ADDR: http://127.0.0.1:8200
+          MIZAN_TEST_VAULT_TOKEN: ci-only-root
+        run: |
+          # Skipped is not passed. This file skips itself when Vault is unconfigured, so a job
+          # whose service container failed to come up would otherwise go green having executed
+          # nothing -- the exact failure mode R-008 F-11 and T-035 exist to catch, in the newest
+          # place it could appear. The check reads the *run* summary rather than a collected
+          # count: collection cannot tell a test that ran from one that was skipped, and a count
+          # would make this job fail every time someone adds a test.
+          if ! output=$(uv run --frozen pytest -q tests/integration/test_vault_transit_live.py 2>&1); then
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          summary=$(printf '%s\n' "$output" | tail -1)
+          case "$summary" in
+            *skipped*|*"no tests ran"*)
+              echo "::error::the Vault suite did not run against a real Vault: $summary"
+              exit 1
+              ;;
+          esac
+
   production-image:
     runs-on: ubuntu-latest
     timeout-minutes: 20
