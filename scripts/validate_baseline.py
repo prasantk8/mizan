@@ -14,20 +14,19 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
 ROOT = Path(__file__).resolve().parents[1]
+# This list used to require twenty-three further README files -- one per directory under
+# `control-plane/`, `security/`, `integrations/`, `sdk/` and `examples/` that contained nothing
+# but a one-line claim. `security/pii/README.md` said "CLAUDE-owned PII classification and
+# protection boundary" and there is no such code; `control-plane/decisions/README.md` described
+# work that actually lives in `control-plane/mizan_control_plane/evidence.py`, one level up. A
+# browsing design partner reads a directory as shipped surface, and a gate that *required* those
+# directories to exist was enforcing the roadmap rather than the product (T-115). The directories
+# are deleted and `docs/product/MODULE_LEDGER.md` now names, for each claimed module, the code
+# that backs it -- or says none.
 REQUIRED_PATHS = (
     "AGENT_ALLOCATION.md", "SPEC_v1.md", "WORK_LOG.md",
-    "control-plane/agents/README.md", "control-plane/tools/README.md",
-    "control-plane/authorization/README.md", "control-plane/policies/README.md",
-    "control-plane/approvals/README.md", "control-plane/decisions/README.md",
-    "control-plane/execution/README.md", "security/pii/README.md",
-    "security/redaction/README.md", "security/prompt-security/README.md",
-    "security/threat-engine/README.md", "security/behavioral/README.md",
-    "integrations/kafka/README.md", "integrations/redis/README.md",
-    "integrations/iam/README.md", "integrations/siem/README.md",
-    "integrations/workflow/README.md", "integrations/external/README.md",
-    "sdk/python/README.md", "sdk/java/README.md", "sdk/typescript/README.md",
-    "examples/customer-support/README.md", "examples/wealth-agent/README.md",
-    "policies/README.md", "threat-models/README.md", "ui/README.md", "tests/README.md",
+    "docs/product/MODULE_LEDGER.md",
+    "sdk/python/README.md", "threat-models/README.md", "ui/README.md", "tests/README.md",
 )
 BEHAVIOURAL_TOKENS = (
     "NOT_IMPLEMENTED", "system_fail_closed", "default_deny", "degraded_grant",
