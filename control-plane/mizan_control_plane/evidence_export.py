@@ -4,6 +4,7 @@ import argparse
 import base64
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,36 @@ def load_public_keyset(path: Path) -> tuple[dict[str, Ed25519PublicKey], list[di
     return keys, documents
 
 
+# A key whose private half is `sha256(key_id)` and whose `key_id` ships inside every bundle. A
+# holder of such a bundle can forge an indistinguishable one, so it is not evidence of anything.
+DEVELOPMENT_CUSTODY = "development-derived"
+
+
+class DevelopmentCustodyRefused(Exception):
+    """Export refused because the signing keys are publicly derivable.
+
+    T-053 made custody *honest* -- the keyset says `development-derived` and the verifier prints
+    a warning above the verdict. But a warning is advice, and the exporter never read the field
+    at all: `evidence_export.py` contained no mention of custody before T-065. So a bundle that
+    anyone could forge was produced, written to disk and handed over, with nothing but prose
+    between it and an auditor.
+
+    This is the difference between "no bundle leaves the building" as a process rule and as a
+    property of the system. The override exists because development bundles are genuinely needed
+    -- `make demo` produces one, and the conformance corpus is made of them -- but it has to be
+    asked for by name, and the bundle then carries the fact that it was.
+    """
+
+
+def development_custody_key_ids(key_documents: list[dict[str, Any]]) -> list[str]:
+    """Key IDs in this keyset whose private half is publicly derivable."""
+    return sorted(
+        document["key_id"]
+        for document in key_documents
+        if document.get("custody") == DEVELOPMENT_CUSTODY
+    )
+
+
 def _write(path: Path, value: Any) -> str:
     payload = rfc8785.dumps(value)
     path.write_bytes(payload)
@@ -51,8 +82,25 @@ def export_evidence_bundle(
     end: int | None = None,
     checkpoint_interval: int = 1000,
     key_documents: list[dict[str, Any]] | None = None,
+    development_custody_reason: str | None = None,
 ) -> Path:
-    """Export authoritative object evidence; Postgres record documents are not trusted."""
+    """Export authoritative object evidence; Postgres record documents are not trusted.
+
+    Refuses outright when any signing key is `development-derived`, unless
+    `development_custody_reason` names why -- in which case the reason is written into the
+    manifest, so the bundle itself carries the fact that someone decided to export it anyway.
+    """
+    development_keys = development_custody_key_ids(key_documents or [])
+    if development_keys and development_custody_reason is None:
+        raise DevelopmentCustodyRefused(
+            "signing keys "
+            + ", ".join(development_keys)
+            + " are development-derived: their private halves are sha256(key_id) and the key_id "
+            "ships inside this bundle, so anyone who reads it can forge an indistinguishable "
+            "one. Pass --allow-development-custody with a reason to export anyway; the reason "
+            "is recorded in the manifest and reported by the verifier."
+        )
+
     target.mkdir(parents=True, exist_ok=False)
     receipts = repository.receipt_rows(tenant_id, stream_id, start, end)
     records_by_sequence: dict[int, dict[str, Any]] = {}
@@ -154,6 +202,15 @@ def export_evidence_bundle(
             "external_timestamp": externally_attested,
         },
     }
+    if development_keys:
+        # Additive and optional: a bundle without this field is unchanged, and its absence means
+        # what it always meant. Present, it is the record that a refusal was overridden -- which
+        # a holder should see without having to know to ask.
+        manifest["custody_override"] = {
+            "custody": DEVELOPMENT_CUSTODY,
+            "key_ids": development_keys,
+            "reason": development_custody_reason,
+        }
     _write(target / "manifest.json", manifest)
     return target
 
@@ -169,7 +226,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from-sequence", type=int)
     parser.add_argument("--to-sequence", type=int)
     parser.add_argument("--checkpoint-interval", type=int, default=1000)
+    parser.add_argument(
+        "--allow-development-custody",
+        metavar="REASON",
+        help="export even though the signing keys are publicly derivable, and record this reason "
+        "in the manifest. Required for any bundle signed with development custody -- the demo and "
+        "the conformance corpus both need it. A bundle exported this way is not evidence: anyone "
+        "who reads it can forge an indistinguishable one.",
+    )
     args = parser.parse_args(argv)
+    if args.allow_development_custody is not None and not args.allow_development_custody.strip():
+        parser.error("--allow-development-custody requires a reason, not an empty string")
     if args.checkpoint_interval < 1:
         parser.error("--checkpoint-interval must be positive")
     repository = EvidenceRepository(args.database_url)
@@ -186,9 +253,22 @@ def main(argv: list[str] | None = None) -> int:
             end=args.to_sequence,
             checkpoint_interval=args.checkpoint_interval,
             key_documents=key_documents,
+            development_custody_reason=args.allow_development_custody,
         )
+    except DevelopmentCustodyRefused as refusal:
+        print(f"EXPORT REFUSED: {refusal}", file=sys.stderr)
+        return 3
     finally:
         repository.pool.close()
+    if args.allow_development_custody:
+        # Loud on the way out, because the operator who typed the flag is not the person who
+        # will be holding the bundle a week later.
+        print(
+            f"WARNING: exported under development custody by explicit override "
+            f"({args.allow_development_custody}). This bundle is forgeable by anyone who reads "
+            f"it and is not evidence.",
+            file=sys.stderr,
+        )
     print(target)
     return 0
 
