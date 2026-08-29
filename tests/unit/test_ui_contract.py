@@ -168,7 +168,7 @@ def inbox(monkeypatch, tmp_path):
     repositories: dict[str, FakeRepository] = {}
 
     def factory(name: str, constructor):
-        def build(database_url: str):
+        def build(database_url: str, *arguments: object):
             repositories[name] = constructor(database_url)
             return repositories[name]
 

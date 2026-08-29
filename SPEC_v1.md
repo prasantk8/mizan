@@ -1718,8 +1718,44 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_EXTERNAL_PAYLOAD_MAX_DEPTH` | `32` | deployment | Parser nesting limit; breach is a controlled tool error. |
 | `MIZAN_EXTERNAL_PAYLOAD_MAX_KEYS` | `4096` | deployment | Total keys across the parsed document, not merely top-level keys. |
 | `MIZAN_EXTERNAL_ADAPTER_TIMEOUT_MS` | `2000` | deployment | Adapter breach → controlled tool error (I-17). |
-| `MIZAN_OUTBOX_DRAIN_INTERVAL_MS` | `250` | deployment | Outbox → Kafka/object-store publisher. |
-| `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` | `5` | deployment | Non-financial asynchronous publication SLO; breach opens the evidence breaker. Financial writes always require a receipt before redemption (I-25). |
+| `MIZAN_OUTBOX_DRAIN_INTERVAL_MS` | `250` | deployment | `mizan-drain-outbox` tick interval. A saturated batch is drained again immediately rather than waiting out the interval. |
+| `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` | `5` | deployment | Non-financial asynchronous publication SLO; breach opens the evidence breaker. Financial writes always require a receipt before redemption (I-25). Quarantined rows are excluded from the measurement and raise `outbox_poisoned` instead, so one stuck row cannot hold this alarm permanently open. |
+| `MIZAN_AUDIT_ANCHOR_INTERVAL_RECORDS` | `10000` | deployment | Records published per stream before an anchor is due, whichever comes first with `MIZAN_AUDIT_ANCHOR_INTERVAL_SECONDS`. |
+| `MIZAN_OUTBOX_BATCH_LIMIT` | `100` | deployment | Rows per drain batch. Bounds the size of one published evidence segment. |
+| `MIZAN_OUTBOX_MAX_ATTEMPTS` | `5` | deployment | Failed publication attempts before a row is quarantined: excluded from the batch head and from the lag measurement, never deleted, and reported through the evidence breaker. |
+| `MIZAN_EXPIRY_SWEEP_INTERVAL_SECONDS` | `30` | deployment | Cadence of the expiry sweep that reaches `EXPIRED` and `LEASE_EXPIRED` at rest. Each candidate is re-checked under a row lock; a person who acts between scan and lock always wins. |
+| `MIZAN_APPROVAL_EPOCH_EXPIRY` | `enforced` | deployment | Whether an unanswered approval epoch expires by itself — a money-movement policy, not a tuning knob, and both answers are implemented. `enforced`: the sweeper closes an elapsed epoch as `EXPIRED`, emits `mizan.approval.expired`, and the vote route refuses a late vote with 409 `approval_epoch_expired` — an approval nobody answered is a refusal. `advisory`: nothing is written at rest, an elapsed epoch stays `OPEN`, and a late vote is **accepted** — a deployment choosing this says a human decides every payment and no clock may decide one for them. `expires_at` is recorded and the overdue count is reported under both; the difference is who acts on it. Refusing the late vote while never expiring the epoch would leave an approval that is undecidable by anyone, so the setting reaches the request path and the sweeper together or not at all. |
+| `MIZAN_DRAIN_TENANTS` | *(required for `mizan-drain-outbox`)* | deployment | Comma-separated tenants the drainer serves, or `--tenant-id` repeated. Tenants are **not** discovered: `mizan.tenants` carries FORCE ROW LEVEL SECURITY keyed on the current tenant, so enumeration would require crossing the isolation boundary of ADR-005. A tenant absent from this list is never published and never swept. |
+| `MIZAN_LOG_LEVEL` | `INFO` | deployment | Root log level for `mizan-control-plane` and `mizan-drain-outbox`. |
+| `MIZAN_LOG_FORMAT` | `json` | deployment | `json` or `text`. `json` emits one object per event carrying `request_id`, `tenant_id`, `trace_id`, `span_id` and `decision_id` from the ambient request context. Any other value is refused at startup. |
+| `MIZAN_METRICS_PORT` | `0` (off) | deployment | Port for the private Prometheus listener. Metrics are served on their own listener and never on the API: the API authenticates a *tenant*, and process metrics are cross-tenant, so exposing them behind a tenant credential would either leak across tenants or invent a new authority class. |
+| `MIZAN_METRICS_HOST` | `127.0.0.1` | deployment | Bind address for that listener. It is unauthenticated and publishes per-tenant decision volumes, publication lag and breaker state; binding it off-loopback logs a warning naming exactly that. |
+| `MIZAN_OTEL_EXPORTER_OTLP_ENDPOINT` | *(empty)* | deployment | OTLP/HTTP traces endpoint. Empty means propagate-only: `traceparent` is still continued and still recorded in every ADR_Record (ADR-004 G.22). Set without the `otel` extra installed, startup is **refused** — a process that reports itself ready and exports nothing is the failure found during the incident. |
+| `MIZAN_OTEL_SERVICE_NAME` | `mizan-control-plane` | deployment | `service.name` on exported spans. |
+
+### 8.1 MCP Governance Gateway (`mizan-mcp-gateway`)
+
+A client-side component, configured by one TOML file (`integrations/mcp/example.toml`) with an environment fallback for each identity key. It sets nothing on the control plane and can relax no server default: everything below only decides what the gateway *asks*, and the registry's answer always wins.
+
+| Key | Default | Scope | Notes |
+|---|---|---|---|
+| `[upstream].command` / `.args` / `.env` | *(command required)* | gateway | The MCP tool server this process governs. Env replaces the child's environment when present. |
+| `[mizan].url` (`MIZAN_API_URL`) | *(required)* | gateway | Control plane base URL. |
+| `[mizan].agent_id` (`MIZAN_AGENT_ID`) | *(required)* | gateway | The registered agent the gateway calls as. |
+| `[mizan].agent_token` (`MIZAN_AGENT_TOKEN`) | *(required)* | gateway | Identity token; sent on every call, never logged. The tenant is read from it, never configured (I-3). |
+| `[mizan].agent_version` | `1.0.0` | gateway | Must equal the registered agent version or every authorization is `422`. |
+| `[mizan].operator_token` (`MIZAN_OPERATOR_TOKEN`) | *(none)* | gateway | Human operator credential, required only for `register_unknown_tools`. Registry writes are closed to agent identities (ADR-001 Amendment E). |
+| `[mizan].ca_file` (`MIZAN_CA_FILE`) | *(system trust)* | gateway | Trust roots for the control plane's server certificate. |
+| `[mizan].client_certificate_file` / `client_key_file` | *(none)* | gateway | The gateway's own workload certificate. Required with `executor_spiffe_id` over `https`: the authorized executor is read off the verified peer certificate, never off the body (ADR-001 Amendment B). Startup refuses the combination rather than failing at the first high-risk call. |
+| `[mizan].executor_spiffe_id` (`MIZAN_EXECUTOR_SPIFFE_ID`) | *(none)* | gateway | When set, the gateway is the ADR-008 executor: it redeems the token, holds the lease, and closes it. When unset it governs and records but does not bind execution, and says so in the result. |
+| `[mizan].principal_id` / `principal_type` / `principal_auth_strength` | `prn_mcp-client` / `application` / `federated` | gateway | Who the call is on behalf of when the client does not name an end user. |
+| `[mizan].approval_timeout_seconds` | `900` | gateway | How long a call waits for a human before returning `approval_pending`. Giving up cancels nothing: the approval stays open and the work stays paused. |
+| `[mizan].approval_poll_seconds` | `3` | gateway | Approval poll interval. |
+| `[mizan].execution_binding_retry_seconds` | `15` | gateway | How long an executor keeps waiting on `immutable_receipt_missing` / `approval_receipt_missing` / `receipt_verifier_unavailable`. Publication is asynchronous by design (ADR-004), so arriving early is not being refused. Every other refusal is final on the first answer. |
+| `[mizan].register_unknown_tools` | `false` | gateway | Register upstream tools the registry has never seen, under the operator credential. Existing tools are never overwritten. |
+| `[mizan].tool_id_prefix` | `tool_` | gateway | `read_portfolio` → `tool_read-portfolio`. |
+| `[defaults]` / `[tools.<name>]` `risk_tier` | `HIGH` | gateway | A *floor request* only. An unclassified tool is not a low-risk tool, and the registry's floor always wins. |
+| `[defaults]` / `[tools.<name>]` `bound_pointers` | *(empty)* | gateway | Empty means bind every top-level argument in the tool's own input schema: an argument nobody classified may be the one that decides whether the call is safe. |
 
 ### 8.1 MCP Governance Gateway (`mizan-mcp-gateway`)
 

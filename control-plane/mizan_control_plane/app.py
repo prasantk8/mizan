@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Query, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
@@ -38,7 +38,12 @@ from .models import (
     PolicyTransitionRequest,
 )
 from .mtls import VerifiedPeerSpiffeMiddleware, require_workload_spiffe
-from .observability import CONTENT_TYPE, MetricFamily, render_prometheus
+from .observability import (
+    Metrics,
+    RequestObservabilityMiddleware,
+    Tracer,
+    annotate,
+)
 from .problems import Problem, problem_response
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -54,8 +59,11 @@ def create_app(
     evidence_verifier: ObjectEvidenceVerifier | None = None,
     execution_service: ExecutionService | None = None,
     key_provider: KeyProvider | None = None,
+    metrics: Metrics | None = None,
+    tracer: Tracer | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
+    metrics = metrics or Metrics()
     verifier = TokenVerifier(
         settings.jwt_issuer,
         settings.jwt_audience,
@@ -65,18 +73,24 @@ def create_app(
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
     evidence_repository = EvidenceRepository(settings.database_url)
-    approval_repository = ApprovalRepository(settings.database_url)
+    approval_repository = ApprovalRepository(
+        settings.database_url, settings.approval_epoch_expiry
+    )
     schemas = ContractSchemas(Path(__file__).resolve().parents[2] / "SPEC_v1.md")
     service = AuthorizationService(
         authorization_repository,
         RegistryFloorRiskProvider(),
         settings.evaluator_build,
         settings.evaluator_configuration_hash,
+        metrics=metrics,
     )
 
     @asynccontextmanager
     async def lifespan(instance: FastAPI) -> AsyncIterator[None]:
         yield
+        server = getattr(instance.state, "metrics_server", None)
+        if server is not None:
+            server.close()
         for pool in instance.state.connection_pools:
             try:
                 pool.close()
@@ -93,8 +107,13 @@ def create_app(
         approval_repository.pool,
     ]
     app.state.settings = settings
+    app.state.metrics = metrics
     app.add_middleware(VerifiedPeerSpiffeMiddleware)
     app.add_middleware(RequestBodyLimitMiddleware, limit=settings.max_request_body_bytes)
+    # Added last, so it runs first: the access line and the latency observation must cover
+    # every other middleware, including the ones that refuse a request before any route --
+    # a body rejected at the ASGI layer is still a served request and still gets a line.
+    app.add_middleware(RequestObservabilityMiddleware, metrics=metrics, tracer=tracer)
     app.add_exception_handler(Problem, problem_response)
 
     @app.post("/v1/authorize", response_model=AuthorizationResponse)
@@ -104,13 +123,19 @@ def create_app(
         return service.authorize(verifier.verify(token), context)
 
     def tenant_from_token(token: str = Depends(bearer_token)) -> str:
-        return verifier.verify_tenant(token)
+        tenant_id = verifier.verify_tenant(token)
+        annotate(tenant_id=tenant_id)
+        return tenant_id
 
     def principal_from_token(token: str = Depends(bearer_token)):
-        return verifier.verify_principal(token)
+        principal = verifier.verify_principal(token)
+        annotate(tenant_id=principal.tenant_id)
+        return principal
 
     def agent_from_token(token: str = Depends(bearer_token)) -> AuthenticatedIdentity:
-        return verifier.verify(token)
+        identity = verifier.verify(token)
+        annotate(tenant_id=identity.tenant_id)
+        return identity
 
     def workload_spiffe(request: Request) -> str:
         return require_workload_spiffe(request.scope)
@@ -500,39 +525,10 @@ def create_app(
     def live() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/metrics", include_in_schema=False)
-    def metrics() -> PlainTextResponse:
-        """The counters this process keeps, in a form something can scrape.
-
-        `security_event_counters` and `failure_counters` have accumulated since T-021 and were
-        read by nothing outside tests -- a fail-closed evidence write incremented a number that
-        never left the process.
-
-        These are per-process and reset on restart, which is correct for a counter and worth
-        saying: a scrape gap shows up as a reset rather than being smoothed over. Queue depth
-        and anchor lag are deliberately not here. They are per-tenant quantities and this
-        process cannot enumerate tenants (B-27), so each worker reports its own.
-        """
-        security_events = MetricFamily(
-            "mizan_security_events_total",
-            "counter",
-            "Security-relevant execution events, by event name.",
-            label="event",
-        )
-        # A process with no execution keyset still emits the family, with no samples: a scrape
-        # can then tell "no such events" from "this deployment cannot report them".
-        if execution_service is not None:
-            security_events.extend(execution_service.security_event_counters)
-        families = [
-            security_events,
-            MetricFamily(
-                "mizan_authorization_failures_total",
-                "counter",
-                "Authorization failures that fail closed, by reason.",
-                label="reason",
-            ).extend(service.failure_counters),
-        ]
-        return PlainTextResponse(render_prometheus(families), media_type=CONTENT_TYPE)
+    # `GET /metrics` deliberately does not exist on this app. These counters are cross-tenant
+    # and this listener authenticates a tenant, so serving them here would publish one tenant's
+    # activity to another's credential. They are served by `MetricsServer` on a private,
+    # unauthenticated loopback listener instead -- see `runtime.build_observability`.
 
     @app.get("/health/ready", include_in_schema=False)
     def ready() -> JSONResponse:

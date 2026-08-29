@@ -122,6 +122,7 @@ def cast_vote(
     justification: str | None = None,
     comment: str | None = None,
     now: datetime | None = None,
+    enforce_expiry: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     now = now or datetime.now(UTC)
     updated = copy.deepcopy(approval)
@@ -130,7 +131,14 @@ def cast_vote(
     epoch = current_epoch(updated)
     if epoch["state"] != "OPEN" or epoch["epoch_number"] != epoch_number:
         raise Problem(409, "stale_approval_epoch", f"Current epoch is {epoch['epoch_number']}")
-    if now >= datetime.fromisoformat(epoch["expires_at"].replace("Z", "+00:00")):
+    # `enforce_expiry=False` is `MIZAN_APPROVAL_EPOCH_EXPIRY=advisory` reaching the request path,
+    # and it has to reach it: a deployment that says no clock decides a payment, but still refuses
+    # the late vote, has an epoch that stays OPEN for ever *and* cannot be answered -- both halves
+    # of the wrong behaviour at once. `expires_at` is still recorded and still reported; under
+    # `advisory` it is a deadline for the people, not a rule against them.
+    if enforce_expiry and now >= datetime.fromisoformat(
+        epoch["expires_at"].replace("Z", "+00:00")
+    ):
         raise Problem(409, "approval_epoch_expired", "Approval epoch has expired")
     if approver_id in forbidden_approvers:
         raise Problem(
@@ -242,6 +250,28 @@ def open_next_epoch(
     updated["epochs"].append(epoch)
     updated["current_epoch_id"] = epoch["epoch_id"]
     updated["state"] = "REVIEW_REQUIRED" if kind == "review" else "PENDING"
+    return updated
+
+
+def expire(approval: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    """Close an approval whose open epoch ran out of time.
+
+    Expiry is terminal and fail-closed. SPEC §4 defines `mizan.approval.expired` as "epoch TTL
+    elapsed with no further epoch", so this never escalates on anyone's behalf: an approval nobody
+    answered is a refusal, not a question that quietly keeps ageing. The caller is a sweeper rather
+    than a person, which is why every precondition is re-asserted here — the row it selected may
+    have been voted on between the scan and the lock.
+    """
+    now = now or datetime.now(UTC)
+    updated = copy.deepcopy(approval)
+    if updated["state"] in TERMINAL_STATES:
+        raise Problem(409, "approval_terminal", "Terminal approval cannot expire")
+    epoch = current_epoch(updated)
+    if epoch["state"] != "OPEN":
+        raise Problem(409, "approval_epoch_not_open", "Only an open epoch can expire")
+    if now < datetime.fromisoformat(epoch["expires_at"].replace("Z", "+00:00")):
+        raise Problem(409, "approval_epoch_live", "Approval epoch has not expired")
+    _close(updated, epoch, "EXPIRED", "EXPIRED", now)
     return updated
 
 

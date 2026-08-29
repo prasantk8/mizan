@@ -9,6 +9,7 @@ degraded Mizan, it is a different product.
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,16 @@ from .config import Settings
 from .evidence import EvidenceRepository, LocalImmutableObjectStore, ObjectEvidenceVerifier
 from .execution import ExecutionService, ExecutionTokenCodec
 from .keys import KEY_ROLES, KeyProvider, KeyVersion, LocalKeyProvider
+from .observability import (
+    Metrics,
+    MetricsServer,
+    Tracer,
+    TracingRefused,
+    build_tracer,
+    configure_logging,
+)
+
+LOGGER = logging.getLogger(__name__)
 
 
 class StartupRefused(RuntimeError):
@@ -69,7 +80,7 @@ def build_evidence_verifier(
 
 
 def build_execution_service(
-    settings: Settings, provider: KeyProvider, receipt_gate: Any
+    settings: Settings, provider: KeyProvider, receipt_gate: Any, metrics: Metrics | None = None
 ) -> ExecutionService:
     codec = ExecutionTokenCodec(
         settings.execution_token_issuer,
@@ -83,7 +94,33 @@ def build_execution_service(
         security_event_pool_max_size=settings.security_event_pool_max_size,
         security_event_pool_timeout_seconds=settings.security_event_pool_timeout_seconds,
         default_token_ttl_seconds=settings.execution_token_default_ttl_seconds,
+        metrics=metrics,
     )
+
+
+def build_observability(settings: Settings) -> tuple[Metrics, Tracer, MetricsServer | None]:
+    """Logs, metrics and trace context, decided once, before anything can emit any of them.
+
+    A configured OTLP endpoint with no exporter installed raises `TracingRefused` here rather
+    than degrading quietly — see `observability.build_tracer`.
+    """
+    configure_logging(settings.log_level, json_output=settings.log_format == "json")
+    metrics = Metrics()
+    tracer = build_tracer(
+        settings.otel_exporter_endpoint, settings.otel_service_name, settings.environment
+    )
+    server: MetricsServer | None = None
+    if settings.metrics_enabled:
+        server = MetricsServer(metrics, settings.metrics_host, settings.metrics_port).start()
+        if settings.metrics_host not in ("127.0.0.1", "::1", "localhost"):
+            LOGGER.warning(
+                "metrics listener is bound off-loopback and is unauthenticated: it publishes "
+                "per-tenant decision volumes, publication lag and breaker state to anything that "
+                "can reach it. Restrict it at the network, or bind it to loopback and scrape via "
+                "a sidecar.",
+                extra={"metrics_host": settings.metrics_host, "metrics_port": server.port},
+            )
+    return metrics, tracer, server
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,18 +130,27 @@ class Runtime:
     key_provider: KeyProvider
     evidence_verifier: ObjectEvidenceVerifier
     execution_service: ExecutionService
+    metrics: Metrics
+    metrics_server: MetricsServer | None = None
 
 
 def build_runtime(settings: Settings | None = None) -> Runtime:
     settings = settings or Settings.from_environment()
+    try:
+        metrics, tracer, metrics_server = build_observability(settings)
+    except TracingRefused as refused:
+        raise StartupRefused(str(refused)) from refused
     provider = build_key_provider(settings)
     verifier, evidence_repository = build_evidence_verifier(settings, provider)
-    execution_service = build_execution_service(settings, provider, verifier)
-    app = create_app(settings, verifier, execution_service, provider)
+    execution_service = build_execution_service(settings, provider, verifier, metrics)
+    app = create_app(settings, verifier, execution_service, provider, metrics, tracer)
     app.state.connection_pools.extend(
         [evidence_repository.pool, execution_service.pool, execution_service.security_event_pool]
     )
-    return Runtime(app, settings, provider, verifier, execution_service)
+    app.state.metrics_server = metrics_server
+    return Runtime(
+        app, settings, provider, verifier, execution_service, metrics, metrics_server
+    )
 
 
 def spiffe_scope_protocol_class() -> type:

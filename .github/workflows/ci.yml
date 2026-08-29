@@ -105,6 +105,8 @@ jobs:
         run: uv run --frozen pytest -q tests/unit
       - name: Verify contract coverage references are collected
         run: uv run --frozen python scripts/validate_contract_coverage.py
+      - name: Gate execution security module unit coverage
+        run: uv run --frozen pytest -q tests/unit/test_execution.py --cov=mizan_control_plane.execution --cov-fail-under=50
       - name: Gate control-plane unit coverage
         run: uv run --frozen pytest -q tests/unit --cov=mizan_control_plane --cov-fail-under=62
       - name: Gate identity and route coverage
@@ -113,6 +115,8 @@ jobs:
             --cov=mizan_control_plane.auth --cov-fail-under=75
           uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_runtime.py \
             --cov=mizan_control_plane.app --cov-fail-under=68
+      - name: Reproduce the CP-B attestation review
+        run: uv run --frozen python docs/reviews/reproductions/R-007-cpb-attestation.py
       - name: Verify 100k-record chain performance
         env:
           MIZAN_BENCHMARK_RESULTS_DIR: ${{ runner.temp }}/benchmark-results

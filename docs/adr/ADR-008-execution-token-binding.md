@@ -186,3 +186,18 @@ first answer. Retrying anything else would convert a denial into a poll.
 Neither property changes the control plane. Both are obligations on anything that redeems a
 capability, and belong here rather than in the gateway, because the next executor will need them
 too.
+
+## Implementation Amendment — a lapsed lease lapses without being asked (T-074)
+
+Amendment A states that a lapsed lease "becomes `LEASE_EXPIRED` and emits an event; it does not
+silently become an untracked running job." Until T-074 it did exactly that. The only writer of
+`LEASE_EXPIRED` was `_transition_lease`, reached when an executor called `heartbeat` or `complete`
+— so a lease whose executor crashed, was killed, or simply never came back stayed `LEASED` forever.
+The lease was untracked and the row said it was running.
+
+The expiry sweeper reaches the state at rest, through `save_lease_tx` — the same write the
+redemption path performs, promoted to module level rather than copied, because two writers with two
+shapes for one row is how a state machine acquires a second opinion. It emits the `LEASE_EXPIRED`
+DecisionEvent and the `mizan.execution.lease_expired` outbox row (SPEC §4, previously emitted by
+nothing) in that same transaction, and re-checks state and deadline under the row lock so an
+executor completing between scan and write keeps its result.

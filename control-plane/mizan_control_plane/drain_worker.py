@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 
+from .approval_repository import ApprovalRepository
 from .config import Settings, resolve_served_tenants
 from .evidence import (
     Ed25519EvidenceSigner,
@@ -76,15 +77,28 @@ DEFAULT_MAX_BATCHES_PER_CYCLE = 20
 @dataclass
 class DrainReport:
     published: int = 0
+    relayed: int = 0
     anchored: int = 0
     quarantined: int = 0
     expired: int = 0
+    approvals_expired: int = 0
+    # Elapsed approval epochs found and deliberately not acted on, because this deployment runs
+    # `MIZAN_APPROVAL_EPOCH_EXPIRY=advisory`. Counted rather than ignored: the whole difference
+    # between "we chose not to expire these" and "expiry is broken" is this number existing.
+    approvals_overdue: int = 0
     failed: int = 0
     lag_breaches: list[tuple[str, float]] = field(default_factory=list)
 
     @property
     def did_work(self) -> bool:
-        return bool(self.published or self.anchored or self.quarantined or self.expired)
+        return bool(
+            self.published
+            or self.relayed
+            or self.anchored
+            or self.quarantined
+            or self.expired
+            or self.approvals_expired
+        )
 
 
 @dataclass
@@ -113,7 +127,7 @@ class StopSignal:
 
 def build_publisher(
     settings: Settings,
-) -> tuple[OutboxPublisher, EvidenceRepository, ExecutionService]:
+) -> tuple[OutboxPublisher, EvidenceRepository, ExecutionService, ApprovalRepository]:
     provider = build_key_provider(settings)
     repository = EvidenceRepository(settings.database_url)
     store = LocalImmutableObjectStore(Path(settings.evidence_object_store_root))
@@ -128,7 +142,12 @@ def build_publisher(
     # come to disagree about what a terminal lease means. `receipt_gate=None` is deliberate --
     # the sweep reads and expires leases and never admits an execution, so it needs no verifier.
     execution = build_execution_service(settings, provider, None)
-    return publisher, repository, execution
+    # Same reasoning as the lease sweeper: approval state and its transitions already live on
+    # `ApprovalRepository`, and `approval.expire` is the one function that decides whether an
+    # epoch may close. A second implementation here is how the worker and the request path come
+    # to disagree about what a terminal approval means.
+    approvals = ApprovalRepository(settings.database_url, settings.approval_epoch_expiry)
+    return publisher, repository, execution, approvals
 
 
 def drain_tenant(
@@ -172,6 +191,122 @@ def drain_tenant(
         # next batch should start now rather than after the poll interval.
         if published < batch_size or stop.requested:
             break
+
+
+def relay_tenant(
+    publisher: OutboxPublisher,
+    repository: EvidenceRepository,
+    tenant_id: str,
+    report: DrainReport,
+    batch_size: int,
+    quarantine_at_attempts: int,
+) -> None:
+    """Deliver the SPEC §4 events that never become receipts.
+
+    `approval`, `policy`, `agent`, `execution` and `security` rows have external subscribers and
+    no evidence receipt, so `OutboxPublisher.drain` -- which selects `evidence_only=True` -- has
+    always skipped them. They were written, they counted against the publication lag, and they
+    were delivered to nothing: a SIEM integration subscribed to `mizan.approval.expired` would
+    have received silence while the rows accumulated, and the only visible symptom would have
+    been an evidence lag alarm blamed on the drainer.
+
+    Delivery is **at-least-once**: the sink is called before the row is marked published, so a
+    subscriber must tolerate a repeat. Marking first would make it at-most-once, and a silently
+    dropped security event is worse than a duplicated one.
+    """
+    for item in repository.unpublished(tenant_id, batch_size, relay_only=True):
+        outbox_id = int(item["outbox_id"])
+        try:
+            publisher.delivery.publish(
+                item["event_type"], str(item["aggregate_type"]), item["payload"]
+            )
+        except Exception as error:
+            detail = f"{type(error).__name__}: {error}"
+            if repository.record_publication_failure(
+                tenant_id, outbox_id, detail, quarantine_at_attempts
+            ):
+                report.quarantined += 1
+                LOGGER.error(
+                    "quarantined undeliverable event after %s attempts",
+                    quarantine_at_attempts,
+                    extra={
+                        "tenant_id": tenant_id,
+                        "outbox_id": outbox_id,
+                        "event_type": item["event_type"],
+                        "error": detail,
+                    },
+                )
+            else:
+                report.failed += 1
+                LOGGER.warning(
+                    "event delivery failed, will retry",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "outbox_id": outbox_id,
+                        "event_type": item["event_type"],
+                        "error": detail,
+                    },
+                )
+            continue
+        if repository.record_delivery(tenant_id, outbox_id):
+            report.relayed += 1
+
+
+def sweep_approvals(
+    approvals: ApprovalRepository | None,
+    tenant_id: str,
+    report: DrainReport,
+    mode: str,
+) -> None:
+    """Close elapsed approval epochs, or count them and leave them, per the deployment's mode.
+
+    `MIZAN_APPROVAL_EPOCH_EXPIRY` is a money-movement policy rather than a tuning knob, which is
+    why both modes are implemented rather than one being the other with the sweeper switched off:
+
+      * `enforced` -- an unanswered approval is a refusal. The epoch closes as `EXPIRED` at rest
+        and `mizan.approval.expired` is emitted, so a payment cannot sit pending indefinitely
+        because nobody looked at it.
+      * `advisory` -- no clock decides a payment. Nothing is written, elapsed epochs stay `OPEN`
+        and a late vote is still accepted; the overdue count is reported every cycle so the
+        condition is visible to the people whose decision it now is.
+
+    An institution that wants the second and is given the first has had an approval decision made
+    for it by a background process, which is exactly the class of thing H-7 exists to keep out of
+    an engineer's hands.
+    """
+    if approvals is None:
+        return
+    try:
+        if mode == "enforced":
+            expired = approvals.sweep_expired_epochs(tenant_id)
+            report.approvals_expired += len(expired)
+            for approval_id in expired:
+                LOGGER.warning(
+                    "approval epoch expired at rest",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "approval_id": approval_id,
+                        "detected_by": "sweep",
+                    },
+                )
+        else:
+            overdue = approvals.overdue_epochs(tenant_id)
+            report.approvals_overdue += len(overdue)
+            if overdue:
+                LOGGER.warning(
+                    "approval epochs are past their deadline and this deployment does not "
+                    "expire them",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "overdue": len(overdue),
+                        "approval_epoch_expiry": mode,
+                    },
+                )
+    except Exception:
+        # Same reasoning as the anchor and lease paths: one tenant's sweep must not stop the
+        # others or kill the process every financial write depends on.
+        LOGGER.exception("approval sweep failed", extra={"tenant_id": tenant_id})
+        report.failed += 1
 
 
 def anchor_tenant(
@@ -254,6 +389,8 @@ def run_once(
     max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
     stop: StopSignal | None = None,
     execution: ExecutionService | None = None,
+    approvals: ApprovalRepository | None = None,
+    approval_epoch_expiry: str = "enforced",
 ) -> DrainReport:
     stop = stop or StopSignal()
     report = DrainReport()
@@ -261,6 +398,7 @@ def run_once(
         if stop.requested:
             break
         sweep_tenant(execution, tenant_id, report)
+        sweep_approvals(approvals, tenant_id, report, approval_epoch_expiry)
         drain_tenant(
             publisher,
             repository,
@@ -270,6 +408,11 @@ def run_once(
             quarantine_at_attempts,
             max_batches,
             stop,
+        )
+        # After draining, so an expiry recorded by this cycle's sweep is delivered by this cycle
+        # rather than waiting for the next one.
+        relay_tenant(
+            publisher, repository, tenant_id, report, batch_size, quarantine_at_attempts
         )
         anchor_tenant(publisher, repository, tenant_id, report, stop)
         # Measured after draining: the number that matters is what is still waiting once the
@@ -329,13 +472,14 @@ def main(argv: list[str] | None = None) -> int:
     stop = StopSignal()
     stop.install()
 
-    publisher, repository, execution = build_publisher(settings)
+    publisher, repository, execution, approvals = build_publisher(settings)
     LOGGER.info(
-        "draining %s tenant(s) every %.3fs, batch=%s, SLO=%ss",
+        "draining %s tenant(s) every %.3fs, batch=%s, SLO=%ss, approval-epoch-expiry=%s",
         len(tenants),
         interval,
         arguments.batch_size,
         settings.evidence_max_unpublished_seconds,
+        settings.approval_epoch_expiry,
     )
     breached = False
     try:
@@ -350,15 +494,21 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.max_batches_per_cycle,
                 stop,
                 execution,
+                approvals,
+                settings.approval_epoch_expiry,
             )
             breached = breached or bool(report.lag_breaches)
             if report.did_work or report.failed:
                 LOGGER.info(
-                    "published=%s anchored=%s quarantined=%s expired=%s failed=%s",
+                    "published=%s relayed=%s anchored=%s quarantined=%s leases_expired=%s "
+                    "approvals_expired=%s approvals_overdue=%s failed=%s",
                     report.published,
+                    report.relayed,
                     report.anchored,
                     report.quarantined,
                     report.expired,
+                    report.approvals_expired,
+                    report.approvals_overdue,
                     report.failed,
                 )
             if arguments.once:
@@ -369,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(interval)
     finally:
         repository.pool.close()
+        approvals.pool.close()
 
 
 if __name__ == "__main__":

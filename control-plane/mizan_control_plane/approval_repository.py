@@ -1,18 +1,34 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from psycopg_pool import ConnectionPool
 
-from .approval import cast_vote, create_approval, current_epoch, open_next_epoch, withdraw
+from .approval import (
+    TERMINAL_STATES,
+    cast_vote,
+    create_approval,
+    current_epoch,
+    expire,
+    open_next_epoch,
+    withdraw,
+)
 from .evidence import append_decision_event_tx
 from .models import AuthenticatedPrincipal
 from .pagination import decode_cursor, encode_cursor
 from .problems import Problem
 
+LOGGER = logging.getLogger("mizan.approval")
+
 SYSTEM_ACTOR = {"kind": "system", "id": "mizan-approval-service", "authenticated_workload": None}
+
+# A separate identity from SYSTEM_ACTOR on purpose. An expiry reached at rest was performed by no
+# request and by no person, and the audit trail has to be able to say which of the two closed an
+# approval -- "the service" covers both and answers neither.
+SWEEPER_ACTOR = {"kind": "system", "id": "mizan-approval-sweeper", "authenticated_workload": None}
 
 
 def authority_snapshot_tx(connection: Any, tenant_id: str, roles: list[str]) -> dict:
@@ -56,6 +72,38 @@ def insert_epoch_tx(
             epoch["opened_at"],
             epoch["expires_at"],
             epoch.get("closed_at"),
+        ),
+    )
+
+
+def update_approval_tx(connection: Any, tenant_id: str, approval: dict[str, Any]) -> None:
+    """Write an approval and its current epoch back on an existing connection.
+
+    Module-level because the expiry sweeper (T-074) reaches `EXPIRED` at rest, with no approver
+    calling in, and has to persist an approval the same way a vote does — same two rows, same
+    order, same transaction as the event it emits.
+    """
+    epoch = current_epoch(approval)
+    connection.execute(
+        "UPDATE mizan.approvals SET state=%s,active_epoch_id=%s,document=%s "
+        "WHERE tenant_id=%s AND approval_id=%s",
+        (
+            approval["state"],
+            epoch["epoch_id"],
+            json.dumps(approval),
+            tenant_id,
+            approval["approval_id"],
+        ),
+    )
+    connection.execute(
+        "UPDATE mizan.approval_epochs SET state=%s,document=%s,closed_at=%s "
+        "WHERE tenant_id=%s AND epoch_id=%s",
+        (
+            epoch["state"],
+            json.dumps(epoch),
+            epoch.get("closed_at"),
+            tenant_id,
+            epoch["epoch_id"],
         ),
     )
 
@@ -135,8 +183,16 @@ def open_approval_tx(
 
 
 class ApprovalRepository:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, approval_epoch_expiry: str = "enforced") -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
+        # `MIZAN_APPROVAL_EPOCH_EXPIRY`. Held here rather than read from the environment at each
+        # call so that the request path and the sweeper cannot end up on opposite sides of a
+        # config change: both take it from the `Settings` their process was built with.
+        self.approval_epoch_expiry = approval_epoch_expiry
+
+    @property
+    def expiry_enforced(self) -> bool:
+        return self.approval_epoch_expiry == "enforced"
 
     @staticmethod
     def _scope(connection: Any, tenant_id: str) -> None:
@@ -251,6 +307,7 @@ class ApprovalRepository:
                 role_claim=request.get("role_claim"),
                 justification=request.get("justification"),
                 comment=request.get("comment"),
+                enforce_expiry=self.expiry_enforced,
             )
             connection.execute(
                 """INSERT INTO mizan.approval_votes(
@@ -446,6 +503,123 @@ class ApprovalRepository:
             )
             return updated
 
+    def overdue_epochs(self, tenant_id: str, limit: int = 100, now: datetime | None = None) -> list[str]:
+        """Approvals whose open epoch is past `expires_at`, oldest deadline first.
+
+        A read, deliberately: it is the same query under both `MIZAN_APPROVAL_EPOCH_EXPIRY` modes,
+        and it is what makes `advisory` an operating mode rather than a way of not noticing. Under
+        `enforced` it selects the sweep's candidates; under `advisory` nothing acts on it and the
+        count is reported so someone can.
+        """
+        now = now or datetime.now(UTC)
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            rows = connection.execute(
+                "SELECT e.approval_id FROM mizan.approval_epochs e "
+                "JOIN mizan.approvals a ON a.tenant_id=e.tenant_id "
+                "  AND a.approval_id=e.approval_id AND a.active_epoch_id=e.epoch_id "
+                "WHERE e.tenant_id=%s AND e.state='OPEN' AND e.expires_at<=%s "
+                "  AND a.state <> ALL(%s) "
+                "ORDER BY e.expires_at LIMIT %s",
+                (tenant_id, now, list(TERMINAL_STATES), limit),
+            ).fetchall()
+            return [row[0] for row in rows]
+
+    def sweep_expired_epochs(
+        self, tenant_id: str, limit: int = 100, now: datetime | None = None
+    ) -> list[str]:
+        """Close elapsed epochs as EXPIRED at rest. Returns the approval ids expired.
+
+        `EXPIRED` was declared by SPEC §4, gated on by ADR-007, and reachable from nowhere: the
+        only code that could produce it ran when the *next* voter called in, so an approval nobody
+        answered again stayed `PENDING` for ever and the state was a description of a system that
+        did not exist. This is the same defect T-108 fixed for leases, in the other state machine.
+
+        Each approval is expired in **its own transaction**, and the row is re-read `FOR UPDATE`
+        inside it, because a person may have voted between the scan and the write -- in which case
+        `approval.expire` refuses and the person's outcome stands. The scan is a hint about where
+        to look, never a decision.
+
+        The write is outbox-transactional by construction: the DecisionEvent, its chain links and
+        the `mizan.approval.expired` row are inserted in the same transaction as the state change,
+        so an expiry that is recorded is one that will be published.
+
+        Only a deployment set to `MIZAN_APPROVAL_EPOCH_EXPIRY=enforced` calls this. The caller
+        enforces that, not this method: a repository that silently did nothing would make the
+        `advisory` mode indistinguishable from a broken sweeper.
+        """
+        if not self.expiry_enforced:
+            raise RuntimeError(
+                "sweep_expired_epochs called under MIZAN_APPROVAL_EPOCH_EXPIRY="
+                f"{self.approval_epoch_expiry}; a repository that quietly did nothing here would "
+                "make the advisory mode indistinguishable from a broken sweeper"
+            )
+        now = now or datetime.now(UTC)
+        expired: list[str] = []
+        for approval_id in self.overdue_epochs(tenant_id, limit, now):
+            if self._expire_one(tenant_id, approval_id, now):
+                expired.append(approval_id)
+        return expired
+
+    def _expire_one(self, tenant_id: str, approval_id: str, now: datetime) -> bool:
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT document FROM mizan.approvals WHERE tenant_id=%s AND approval_id=%s "
+                "FOR UPDATE",
+                (tenant_id, approval_id),
+            ).fetchone()
+            if not row:
+                return False
+            try:
+                updated = expire(row[0], now)
+            except Problem as raced:
+                # Someone voted, escalated or withdrew between the scan and this lock. That is the
+                # ordinary outcome of a sweeper racing a person, and the person wins.
+                LOGGER.info(
+                    "approval was not expired",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "approval_id": approval_id,
+                        "reason": raced.code,
+                    },
+                )
+                return False
+            self._update(connection, tenant_id, updated)
+            epoch = current_epoch(updated)
+            append_decision_event_tx(
+                connection,
+                tenant_id,
+                updated["decision_id"],
+                "APPROVAL_RESOLVED",
+                SWEEPER_ACTOR,
+                {
+                    "approval_id": approval_id,
+                    "epoch_id": epoch["epoch_id"],
+                    "approval_state": "EXPIRED",
+                    "detected_by": "sweep",
+                },
+                now,
+            )
+            connection.execute(
+                "INSERT INTO mizan.outbox(tenant_id,aggregate_type,aggregate_id,event_type,payload) "
+                "VALUES (%s,'approval',%s,'mizan.approval.expired',%s)",
+                (
+                    tenant_id,
+                    approval_id,
+                    json.dumps(
+                        {
+                            "approval_id": approval_id,
+                            "decision_id": updated["decision_id"],
+                            "epoch_id": epoch["epoch_id"],
+                            "epoch_number": epoch["epoch_number"],
+                            "expires_at": epoch["expires_at"],
+                        }
+                    ),
+                ),
+            )
+            return True
+
     @staticmethod
     def _locked(connection: Any, tenant_id: str, approval_id: str) -> dict[str, Any]:
         row = connection.execute(
@@ -464,31 +638,7 @@ class ApprovalRepository:
 
     _insert_epoch = staticmethod(insert_epoch_tx)
 
-    @staticmethod
-    def _update(connection: Any, tenant_id: str, approval: dict[str, Any]) -> None:
-        epoch = current_epoch(approval)
-        connection.execute(
-            "UPDATE mizan.approvals SET state=%s,active_epoch_id=%s,document=%s "
-            "WHERE tenant_id=%s AND approval_id=%s",
-            (
-                approval["state"],
-                epoch["epoch_id"],
-                json.dumps(approval),
-                tenant_id,
-                approval["approval_id"],
-            ),
-        )
-        connection.execute(
-            "UPDATE mizan.approval_epochs SET state=%s,document=%s,closed_at=%s "
-            "WHERE tenant_id=%s AND epoch_id=%s",
-            (
-                epoch["state"],
-                json.dumps(epoch),
-                epoch.get("closed_at"),
-                tenant_id,
-                epoch["epoch_id"],
-            ),
-        )
+    _update = staticmethod(update_approval_tx)
 
     def _update_with_new_epoch(
         self, connection: Any, tenant_id: str, approval: dict[str, Any]

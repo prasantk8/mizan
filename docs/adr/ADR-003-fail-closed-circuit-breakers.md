@@ -118,3 +118,37 @@ If the fail-closed evidence write itself fails, the service returns 503
 `system_fail_closed_evidence_write_failed` counter, and emits a critical structured log event. This
 is the sole honest no-record terminal case. Expected evidence-store errors are translated; unrelated
 exception types are not swallowed by a blanket handler and retain their diagnostic identity.
+
+## Amendment D — the audit sink may not decide the answer it is auditing (T-073)
+
+**Date:** 2026-08-27 · **Trigger:** T-073 · **Spec anchors:** SPEC §4, ADR-008 Amendment A
+
+Security events (`mizan.security.*`) are written on a dedicated bounded connection pool so that
+recording one cannot take the connection the decision itself needs. That much was already true.
+What was not true is that recording one cannot *change* the decision.
+
+`ExecutionService._record_security_event` runs inside the token-redemption transaction. It caught
+`PoolTimeout` and nothing else, so any other fault of the sink — a dropped connection, a
+serialization failure, a revoked grant — escaped the handler, rolled the redemption back, and
+turned a detected replay of an execution capability into HTTP 500. That inverts the control being
+exercised: the caller is told the request failed and may be retried, by the mechanism whose whole
+purpose was to refuse it, and the refusal that was correctly reached is discarded on the way out.
+
+Normative for every security-event sink in the control plane:
+
+**No failure of an audit sink may alter the outcome it observes.** Every exception raised while
+recording a security event is absorbed at the point of recording. The decision stands as reached.
+This is the one place where a deliberately broad `except Exception` is correct, and it is correct
+precisely because the alternative is a fail-open path dressed as an error.
+
+**A dropped event is lost, not deferred, and must say so.** There is no queue behind this sink. The
+event that could not be written is therefore emitted in full as a structured ERROR log record —
+carrying the same identifiers and hashes the outbox row would have carried, so the pipeline that
+ships logs to the SIEM remains a path to recovering it — and counted under
+`mizan_security_events_dropped_total{event_type,cause}`, where an alert can reach it. Silence about
+a lost audit record is the failure; the loss itself is survivable and the silence is not.
+
+**Breaker state is a sample, not an edge.** A breaker that writes its state only on the transition
+reads as closed to anything that connected afterwards — every scraper restart, every rollout, every
+new alert rule. `mizan_breaker_open{tenant_id,reason}` is therefore re-asserted while the breaker is
+open, while the human-facing log line still fires once on the way open and once on the way closed.
