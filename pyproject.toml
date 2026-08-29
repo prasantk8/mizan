@@ -27,7 +27,13 @@ mizan-attest-anchors = "mizan_control_plane.attestation_runner:main"
 mizan-mcp-gateway = "mizan_mcp_gateway.__main__:main"
 
 [project.optional-dependencies]
-mcp = ["mcp>=2.1,<3"]
+# `mizan_mcp_gateway.governance` imports `mizan` (the `mizan-sdk` distribution) at module import,
+# so the gateway cannot start without it. It was reachable only because pytest's `pythonpath`
+# below puts `sdk/python` on `sys.path`; nothing declared it, so no installation ever had it.
+mcp = ["mcp>=2.1,<3", "mizan-sdk"]
+
+[tool.uv.sources]
+mizan-sdk = { path = "sdk/python" }
 
 [dependency-groups]
 dev = [
@@ -55,4 +61,19 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["control-plane/mizan_control_plane", "security/mizan_security", "integrations/mizan_integrations", "integrations/mcp/mizan_mcp_gateway"]
+# `mizan_mcp_gateway` is deliberately absent from `packages` and force-included below.
+# `packages` derives one source-strip prefix per entry, and hatchling sorts those prefixes
+# (`BuilderConfig.sources` ends in `dict(sorted(...))`), so `integrations/` is always tried
+# before `integrations/mcp/` and always matches first. Listing the gateway here stripped only
+# `integrations/`, shipping it as a top-level `mcp/` package: unimportable as
+# `mizan_mcp_gateway`, so `mizan-mcp-gateway` could not start, and shadowing the `mcp`
+# distribution this project itself depends on. Ordering the sources by hand does not help --
+# the sort discards the order. force-include bypasses source stripping entirely.
+packages = [
+  "control-plane/mizan_control_plane",
+  "security/mizan_security",
+  "integrations/mizan_integrations",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"integrations/mcp/mizan_mcp_gateway" = "mizan_mcp_gateway"
