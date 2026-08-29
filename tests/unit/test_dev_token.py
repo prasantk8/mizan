@@ -61,6 +61,10 @@ def test_the_control_plane_refuses_the_development_issuer_in_production(
     monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "vault-transit")
     monkeypatch.setenv("MIZAN_VAULT_ADDR", "https://vault.test")
     monkeypatch.setenv("MIZAN_VAULT_TOKEN", "s.unused-by-this-test")
+    # Production now also requires an Object Lock bucket (B-21/T-104); set here so the
+    # refusal this test is about is the one being asserted rather than the newest guard.
+    monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE", "s3")
+    monkeypatch.setenv("MIZAN_AUDIT_ANCHOR_BUCKET", "mizan-evidence")
     for name, role in (
         ("MIZAN_EVIDENCE_RECEIPT_KEY_REF", "receipt"),
         ("MIZAN_EVIDENCE_ANCHOR_KEY_REF", "anchor"),

@@ -54,6 +54,10 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "vault-transit")
     monkeypatch.setenv("MIZAN_VAULT_ADDR", "https://vault.test")
     monkeypatch.setenv("MIZAN_VAULT_TOKEN", "s.unused-by-this-test")
+    # Production now also requires an Object Lock bucket (B-21/T-104); set here so the
+    # refusal this test is about is the one being asserted rather than the newest guard.
+    monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE", "s3")
+    monkeypatch.setenv("MIZAN_AUDIT_ANCHOR_BUCKET", "mizan-evidence")
     refs = {
         "MIZAN_EVIDENCE_RECEIPT_KEY_REF": "kms://vault/receipt",
         "MIZAN_EVIDENCE_ANCHOR_KEY_REF": "kms://vault/anchor",
@@ -95,6 +99,10 @@ def test_production_refuses_non_tls_tsa_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "vault-transit")
     monkeypatch.setenv("MIZAN_VAULT_ADDR", "https://vault.test")
     monkeypatch.setenv("MIZAN_VAULT_TOKEN", "s.unused-by-this-test")
+    # Production now also requires an Object Lock bucket (B-21/T-104); set here so the
+    # refusal this test is about is the one being asserted rather than the newest guard.
+    monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE", "s3")
+    monkeypatch.setenv("MIZAN_AUDIT_ANCHOR_BUCKET", "mizan-evidence")
     for role, name in zip(KEY_ROLES, (
         "MIZAN_EVIDENCE_RECEIPT_KEY_REF", "MIZAN_EVIDENCE_ANCHOR_KEY_REF",
         "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF", "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF",

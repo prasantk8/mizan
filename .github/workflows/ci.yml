@@ -236,6 +236,59 @@ jobs:
               ;;
           esac
 
+  evidence-object-lock:
+    # T-104 / B-21. `"retention_class": "regulatory_7y"` is a string this system signs into records,
+    # and until now the only thing behind it was a directory the chart mounted as an `emptyDir`
+    # under `replicaCount: 2`. Tested against a real S3 implementation rather than a double,
+    # because the guarantee *is* the implementation: a mock that refuses a delete proves only that
+    # a mock refuses a delete.
+    #
+    # MinIO runs as a step rather than a service for the same reason Vault does -- its image needs
+    # the `server /data` command, and a `services:` block cannot override one.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
+      - name: Start an S3-compatible store that supports Object Lock
+        run: |
+          docker run -d --name mizan-ci-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=mizan-ci-access \
+            -e MINIO_ROOT_PASSWORD=mizan-ci-secret-key \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null
+      - name: Write, lock, and fail to delete
+        env:
+          MIZAN_TEST_S3_ENDPOINT_URL: http://127.0.0.1:9000
+          MIZAN_TEST_S3_ACCESS_KEY_ID: mizan-ci-access
+          MIZAN_TEST_S3_SECRET_ACCESS_KEY: mizan-ci-secret-key
+        run: |
+          # Skipped is not passed (R-008 F-11): this file skips itself without an endpoint, so a
+          # job whose store failed to start would go green having proved nothing.
+          if ! output=$(uv run --frozen pytest -q tests/integration/test_object_lock_store.py 2>&1); then
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          case "$(printf '%s\n' "$output" | tail -1)" in
+            *skipped*|*"no tests ran"*)
+              echo "::error::the Object Lock suite did not run against a real object store"
+              exit 1
+              ;;
+          esac
+      - name: Stop the object store
+        if: always()
+        run: docker rm -f mizan-ci-minio || true
+
   production-boot:
     # T-101. Every other production assertion in this repository is a *refusal*, and a complete set
     # of refusals with nothing left that starts is indistinguishable from a system that refuses
@@ -308,11 +361,29 @@ jobs:
           VAULT_ADDR: https://127.0.0.1:8200
           VAULT_TOKEN: ci-only-root
         run: VAULT_CACERT="$RUNNER_TEMP/vault-ca.pem" bash scripts/provision_vault.sh
+      - name: Start an S3-compatible store with Object Lock
+        run: |
+          # Production refuses a directory for evidence (B-21), so booting production needs a real
+          # bucket. A gate that booted onto an emptyDir would prove that the configuration we
+          # refuse to ship still starts.
+          docker run -d --name mizan-boot-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=mizan-ci-access \
+            -e MINIO_ROOT_PASSWORD=mizan-ci-secret-key \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null
       - name: Boot the control plane with MIZAN_ENV=production
         env:
           MIZAN_TEST_DATABASE_URL: postgresql://mizan_app:integration-only-mizan@127.0.0.1:5432/mizan
           MIZAN_TEST_VAULT_ADDR: https://127.0.0.1:8200
           MIZAN_TEST_VAULT_TOKEN: ci-only-root
+          MIZAN_TEST_S3_ENDPOINT_URL: http://127.0.0.1:9000
+          MIZAN_TEST_S3_ACCESS_KEY_ID: mizan-ci-access
+          MIZAN_TEST_S3_SECRET_ACCESS_KEY: mizan-ci-secret-key
         run: |
           export MIZAN_TEST_VAULT_CA_CERT="$RUNNER_TEMP/vault-ca.pem"
           # Skipped is not passed: this file skips itself without a database and a Vault, so a job
@@ -328,9 +399,9 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Stop Vault
+      - name: Stop Vault and the object store
         if: always()
-        run: docker rm -f mizan-ci-vault || true
+        run: docker rm -f mizan-ci-vault mizan-boot-minio || true
 
   production-image:
     runs-on: ubuntu-latest

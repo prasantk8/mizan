@@ -50,7 +50,6 @@ import signal
 import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import FrameType
 
 from .approval_repository import ApprovalRepository
@@ -58,13 +57,12 @@ from .config import Settings, resolve_served_tenants
 from .evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
-    LocalImmutableObjectStore,
     OutboxPublisher,
 )
 from .execution import ExecutionService
 from .observability import configure_logging
 from .problems import Problem
-from .runtime import build_execution_service, build_key_provider
+from .runtime import build_execution_service, build_key_provider, build_object_store
 
 LOGGER = logging.getLogger("mizan.drain")
 
@@ -130,7 +128,9 @@ def build_publisher(
 ) -> tuple[OutboxPublisher, EvidenceRepository, ExecutionService, ApprovalRepository]:
     provider = build_key_provider(settings)
     repository = EvidenceRepository(settings.database_url)
-    store = LocalImmutableObjectStore(Path(settings.evidence_object_store_root))
+    # The same store the API reads through. A drainer writing to its own pod's directory while the
+    # API exports from another's is how a bundle comes to reference segments nobody can fetch.
+    store = build_object_store(settings)
     publisher = OutboxPublisher(
         repository,
         store,
