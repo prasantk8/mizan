@@ -317,3 +317,82 @@ def test_one_unanchorable_stream_does_not_kill_the_worker(tmp_path: Path) -> Non
     assert calls == [STREAM, f"{TENANT}:adr:1"]
     # And the rows still published: draining is not held hostage by an anchoring fault.
     assert report.published == 1
+
+
+class FakeExecutionService:
+    """Just the sweep surface the worker uses, so the cycle's wiring is what is under test."""
+
+    def __init__(self, expired: list[str] | None = None, raises: Exception | None = None) -> None:
+        self.expired = expired or []
+        self.raises = raises
+        self.swept: list[str] = []
+
+    def sweep_expired_leases(self, tenant_id, limit=100, now=None):
+        self.swept.append(tenant_id)
+        if self.raises is not None:
+            raise self.raises
+        return list(self.expired)
+
+
+def test_the_cycle_expires_leases_before_it_drains(tmp_path: Path) -> None:
+    """Order matters, and it is not arbitrary.
+
+    The sweep writes its DecisionEvents and their outbox rows in one transaction, so sweeping
+    first means the expiries it records are published by the *same* cycle. Sweeping after the
+    drain would leave every expiry sitting unpublished until the next pass.
+    """
+    repository = FakeDrainRepository([outbox_row(0, 0)])
+    execution = FakeExecutionService(expired=["lse_abandoned"])
+
+    report = run_once(
+        publisher_for(repository, tmp_path), repository, [TENANT], 100, 5, execution=execution
+    )
+
+    assert report.expired == 1
+    assert execution.swept == [TENANT]
+    # Published in the same cycle, not the next one.
+    assert report.published == 1
+
+
+def test_a_sweep_that_fails_does_not_stop_the_drain(tmp_path: Path) -> None:
+    """The drainer is what every financial write depends on. A sweep fault must not stop it."""
+    repository = FakeDrainRepository([outbox_row(0, 0)])
+    execution = FakeExecutionService(raises=RuntimeError("lease table unavailable"))
+
+    report = run_once(
+        publisher_for(repository, tmp_path), repository, [TENANT], 100, 5, execution=execution
+    )
+
+    assert report.failed == 1 and report.expired == 0
+    assert report.published == 1
+
+
+def test_a_worker_with_no_execution_service_simply_does_not_sweep(tmp_path: Path) -> None:
+    repository = FakeDrainRepository([outbox_row(0, 0)])
+    report = run_once(publisher_for(repository, tmp_path), repository, [TENANT], 100, 5)
+    assert report.expired == 0 and report.failed == 0 and report.published == 1
+
+
+def test_every_served_tenant_is_swept(tmp_path: Path) -> None:
+    repository = FakeDrainRepository([])
+    execution = FakeExecutionService()
+    run_once(
+        publisher_for(repository, tmp_path),
+        repository,
+        [TENANT, "tnt_bank-b"],
+        100,
+        5,
+        execution=execution,
+    )
+    assert execution.swept == [TENANT, "tnt_bank-b"]
+
+
+def test_an_expiry_counts_as_work_even_when_nothing_published(tmp_path: Path) -> None:
+    """`did_work` drives the cycle's log line. An expiry nobody logged is most of the way to
+    an expiry nobody noticed."""
+    repository = FakeDrainRepository([])
+    execution = FakeExecutionService(expired=["lse_abandoned"])
+    report = run_once(
+        publisher_for(repository, tmp_path), repository, [TENANT], 100, 5, execution=execution
+    )
+    assert report.did_work and report.published == 0

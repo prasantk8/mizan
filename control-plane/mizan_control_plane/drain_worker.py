@@ -28,6 +28,11 @@ This process is what closes that. Each cycle, for each tenant it was told to ser
   4. **Measure the lag** against `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS` and open the evidence
      breaker on breach, which ADR-004 requires be more than an observability warning.
 
+It also **expires leases at rest**, before draining, so the expiries it records are published by
+the same cycle. `LEASE_EXPIRED` used to be reachable only from an inbound call by the lease's own
+holder, so an executor that crashed left its lease `LEASED` for ever and the decision never
+reached a terminal state (T-108).
+
 **Tenants are named, never discovered, and that is deliberate.** `mizan.tenants` carries
 `FORCE ROW LEVEL SECURITY` with `USING (tenant_id = mizan.current_tenant_id())`, and there is not
 one `SECURITY DEFINER` function in the schema, so `mizan_app` cannot enumerate tenants and no
@@ -55,9 +60,10 @@ from .evidence import (
     LocalImmutableObjectStore,
     OutboxPublisher,
 )
+from .execution import ExecutionService
 from .observability import configure_logging
 from .problems import Problem
-from .runtime import build_key_provider
+from .runtime import build_execution_service, build_key_provider
 
 LOGGER = logging.getLogger("mizan.drain")
 
@@ -72,12 +78,13 @@ class DrainReport:
     published: int = 0
     anchored: int = 0
     quarantined: int = 0
+    expired: int = 0
     failed: int = 0
     lag_breaches: list[tuple[str, float]] = field(default_factory=list)
 
     @property
     def did_work(self) -> bool:
-        return bool(self.published or self.anchored or self.quarantined)
+        return bool(self.published or self.anchored or self.quarantined or self.expired)
 
 
 @dataclass
@@ -104,7 +111,9 @@ class StopSignal:
         self.requested = True
 
 
-def build_publisher(settings: Settings) -> tuple[OutboxPublisher, EvidenceRepository]:
+def build_publisher(
+    settings: Settings,
+) -> tuple[OutboxPublisher, EvidenceRepository, ExecutionService]:
     provider = build_key_provider(settings)
     repository = EvidenceRepository(settings.database_url)
     store = LocalImmutableObjectStore(Path(settings.evidence_object_store_root))
@@ -114,7 +123,12 @@ def build_publisher(settings: Settings) -> tuple[OutboxPublisher, EvidenceReposi
         Ed25519EvidenceSigner(provider.active_key("evidence-receipt")),
         Ed25519EvidenceSigner(provider.active_key("evidence-anchor")),
     )
-    return publisher, repository
+    # The lease sweeper lives on the execution service because that is where lease state and its
+    # transitions already are; a second implementation of `LEASE_EXPIRED` is how two components
+    # come to disagree about what a terminal lease means. `receipt_gate=None` is deliberate --
+    # the sweep reads and expires leases and never admits an execution, so it needs no verifier.
+    execution = build_execution_service(settings, provider, None)
+    return publisher, repository, execution
 
 
 def drain_tenant(
@@ -201,6 +215,35 @@ def anchor_tenant(
         )
 
 
+def sweep_tenant(
+    execution: ExecutionService | None,
+    tenant_id: str,
+    report: DrainReport,
+) -> None:
+    """Expire leases whose holder never came back.
+
+    Ordered **before** draining in the cycle deliberately: the sweep writes DecisionEvents and
+    their outbox rows in the same transaction as the state change, so running it first means the
+    expiries it records are published by the very same cycle rather than waiting for the next
+    one. An expiry an operator cannot see is most of the way to no expiry at all.
+    """
+    if execution is None:
+        return
+    try:
+        expired = execution.sweep_expired_leases(tenant_id)
+    except Exception:
+        # Same reasoning as the anchor path: this worker is what every financial write depends
+        # on, and one tenant's sweep failing must not stop the others or kill the process.
+        LOGGER.exception("lease sweep failed: tenant=%s", tenant_id)
+        report.failed += 1
+        return
+    report.expired += len(expired)
+    for lease_id in expired:
+        LOGGER.warning(
+            "lease expired at rest: tenant=%s lease_id=%s detected_by=sweep", tenant_id, lease_id
+        )
+
+
 def run_once(
     publisher: OutboxPublisher,
     repository: EvidenceRepository,
@@ -210,12 +253,14 @@ def run_once(
     quarantine_at_attempts: int = DEFAULT_QUARANTINE_ATTEMPTS,
     max_batches: int = DEFAULT_MAX_BATCHES_PER_CYCLE,
     stop: StopSignal | None = None,
+    execution: ExecutionService | None = None,
 ) -> DrainReport:
     stop = stop or StopSignal()
     report = DrainReport()
     for tenant_id in tenants:
         if stop.requested:
             break
+        sweep_tenant(execution, tenant_id, report)
         drain_tenant(
             publisher,
             repository,
@@ -284,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     stop = StopSignal()
     stop.install()
 
-    publisher, repository = build_publisher(settings)
+    publisher, repository, execution = build_publisher(settings)
     LOGGER.info(
         "draining %s tenant(s) every %.3fs, batch=%s, SLO=%ss",
         len(tenants),
@@ -304,14 +349,16 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.quarantine_after,
                 arguments.max_batches_per_cycle,
                 stop,
+                execution,
             )
             breached = breached or bool(report.lag_breaches)
             if report.did_work or report.failed:
                 LOGGER.info(
-                    "published=%s anchored=%s quarantined=%s failed=%s",
+                    "published=%s anchored=%s quarantined=%s expired=%s failed=%s",
                     report.published,
                     report.anchored,
                     report.quarantined,
+                    report.expired,
                     report.failed,
                 )
             if arguments.once:
