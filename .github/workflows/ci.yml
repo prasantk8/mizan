@@ -217,12 +217,24 @@ jobs:
           MIZAN_TEST_VAULT_ADDR: http://127.0.0.1:8200
           MIZAN_TEST_VAULT_TOKEN: ci-only-root
         run: |
-          uv run --frozen pytest -q tests/integration/test_vault_transit_live.py
-          # Skipped is not passed. The suite skips this file when Vault is unconfigured, so
-          # without this the job could go green having run nothing at all -- which is the exact
-          # failure mode T-035 and R-008 F-11 exist to catch, in the newest place it could appear.
-          uv run --frozen pytest -q tests/integration/test_vault_transit_live.py \
-            --collect-only -q | tail -1 | grep -qE '^7 tests collected'
+          # Skipped is not passed. This file skips itself when Vault is unconfigured, so a job
+          # whose service container failed to come up would otherwise go green having executed
+          # nothing -- the exact failure mode R-008 F-11 and T-035 exist to catch, in the newest
+          # place it could appear. The check reads the *run* summary rather than a collected
+          # count: collection cannot tell a test that ran from one that was skipped, and a count
+          # would make this job fail every time someone adds a test.
+          if ! output=$(uv run --frozen pytest -q tests/integration/test_vault_transit_live.py 2>&1); then
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          summary=$(printf '%s\n' "$output" | tail -1)
+          case "$summary" in
+            *skipped*|*"no tests ran"*)
+              echo "::error::the Vault suite did not run against a real Vault: $summary"
+              exit 1
+              ;;
+          esac
 
   production-image:
     runs-on: ubuntu-latest
