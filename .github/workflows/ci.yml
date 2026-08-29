@@ -304,6 +304,23 @@ jobs:
             scripts/check_evidence_conformance.py
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/check_evidence_mutations.py
+      # `verifier-two/` has existed since T-062 and CI has never run it. It was written from the
+      # specification alone, under a seal, precisely so its verdicts could be diffed against the
+      # reference -- and until now that diff was a thing a human did once, by hand, and wrote up.
+      # Node 20+ and zero dependencies: an auditor's environment, not a build environment.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: verifier-two's own suite
+        # 69 tests that CI has never run. `node --test` resolves its own test directory, so this
+        # runs from the package root exactly as its `npm test` script does.
+        run: cd verifier-two && node --test
+      - name: Both verifiers agree on every conformance bundle
+        # Offline like every other check in this job: an auditor verifies a bundle with the
+        # network off, and a comparison that needed the network would not be comparing what they
+        # would run. No fallback -- a gate with an escape hatch is not a gate.
+        run: |
+          sudo unshare --net -- .offline-verifier/bin/python scripts/compare_verifiers.py
 
   implementation-gates:
     runs-on: ubuntu-latest
