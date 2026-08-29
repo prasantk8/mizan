@@ -4,7 +4,7 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
@@ -848,6 +848,96 @@ def test_the_shipped_drain_worker_is_what_lets_a_financial_write_execute(tmp_pat
         token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
     )
     assert lease["state"] == "LEASED"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_a_lease_whose_holder_never_returns_expires_at_rest(tmp_path: Path) -> None:
+    """T-108. Kill the holder, advance the clock, assert the state.
+
+    `LEASE_EXPIRED` was reachable only from `_transition_lease`, which first requires
+    `lease["authorized_executor"] == peer_spiffe` -- so the only party who could expire a lease
+    was the party holding it. An executor that crashed never called again and its lease stayed
+    `LEASED` for ever, on a decision that therefore never reached a terminal state. There was no
+    background task of any kind in this process to notice.
+
+    The holder is never called again after redemption here: that is the crash. Time is advanced
+    by passing `now` rather than by sleeping, so the test asserts the state machine and not the
+    scheduler.
+    """
+    _repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000209")
+    codec = ExecutionTokenCodec(
+        "https://issuer.mizan.test", local_private_key_for_testing("integration-execution-10")
+    )
+    execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, SimpleNamespace())
+    token = execution.issue("tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth")
+
+    evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
+    store = LocalImmutableObjectStore(tmp_path)
+    publisher = OutboxPublisher(evidence, store, receipt_signer, anchor_signer)
+    drain_run_once(publisher, evidence, ["tnt_bank-a"], batch_size=100, max_unpublished_seconds=5)
+    # The receipt gate is stubbed, deliberately and narrowly. Getting a real verifier to pass
+    # here would mean sharing one object store across every test in this module, because the
+    # verifier walks the whole anchor chain and earlier tests anchored into their own tmp_path.
+    # That coupling would buy nothing: this test's subject is what happens to a lease after its
+    # holder disappears, and
+    # `test_the_shipped_drain_worker_is_what_lets_a_financial_write_execute` already exercises
+    # the real gate end to end. The receipt row itself is real -- the drain above wrote it -- so
+    # `immutable_receipt_missing` is still genuinely cleared.
+    execution.receipt_gate = SimpleNamespace(verify_record_receipt=lambda *arguments: True)
+    lease = execution.redeem(
+        token,
+        response.decision_id,
+        "spiffe://mizan/executor/wealth",
+        {"amount": 12500, "request_time": "lease-sweep"},
+    )
+    assert lease["state"] == "LEASED"
+
+    # Nothing expires this lease while it is live -- a sweeper that expires healthy leases is
+    # worse than no sweeper, so this half matters as much as the other. Asserted about *this*
+    # lease rather than about an empty result, because other tests in this module legitimately
+    # leave their own leases behind and the sweeper is right to find them.
+    assert lease["lease_id"] not in execution.sweep_expired_leases(
+        "tnt_bank-a", now=datetime.now(UTC)
+    )
+
+    # The holder is gone. Advance past the lease TTL.
+    after = datetime.fromisoformat(lease["expires_at"].replace("Z", "+00:00")) + timedelta(seconds=1)
+    assert lease["lease_id"] in execution.sweep_expired_leases("tnt_bank-a", now=after)
+
+    with execution.pool.connection() as connection, connection.transaction():
+        connection.execute(
+            "SELECT set_config('app.tenant_id', %s, true)", ("tnt_bank-a",)
+        )
+        state = connection.execute(
+            "SELECT state FROM mizan.execution_leases WHERE tenant_id=%s AND lease_id=%s",
+            ("tnt_bank-a", lease["lease_id"]),
+        ).fetchone()[0]
+        # The DecisionEvent is what an auditor reads, and it must name how the expiry was found.
+        event = connection.execute(
+            "SELECT document FROM mizan.decision_events WHERE tenant_id=%s AND decision_id=%s "
+            "AND event_type='LEASE_EXPIRED' ORDER BY decision_sequence DESC LIMIT 1",
+            ("tnt_bank-a", response.decision_id),
+        ).fetchone()[0]
+        # Outbox-transactional: the event and its publication row are written together, so an
+        # expiry that is recorded is one that will be published.
+        queued = connection.execute(
+            "SELECT count(*) FROM mizan.outbox WHERE tenant_id=%s AND aggregate_type='decision_event' "
+            "AND event_type='mizan.decision.lease_expired'",
+            ("tnt_bank-a",),
+        ).fetchone()[0]
+
+    assert state == "LEASE_EXPIRED"
+    assert event["actor"]["id"] == "mizan-lease-sweeper"
+    assert event["payload"]["detected_by"] == "sweep"
+    assert queued >= 1
+
+    # Sweeping again does not expire it twice: the lease is terminal and the state filter
+    # excludes it, so a second pass cannot append a second LEASE_EXPIRED event.
+    assert lease["lease_id"] not in execution.sweep_expired_leases("tnt_bank-a", now=after)
+    evidence.pool.close()
+    execution.pool.close()
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")

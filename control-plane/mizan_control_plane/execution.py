@@ -625,6 +625,77 @@ class ExecutionService:
             raise terminal_error
         return lease
 
+    def sweep_expired_leases(
+        self, tenant_id: str, limit: int = 100, now: datetime | None = None
+    ) -> list[str]:
+        """Expire leases whose holder never came back. Returns the lease ids expired.
+
+        `LEASE_EXPIRED` was reachable from exactly one place -- `_transition_lease`, which first
+        requires `lease["authorized_executor"] == peer_spiffe`. So the only party who could
+        expire a lease was the party holding it, and an executor that crashed simply never called
+        again: the lease stayed `LEASED` or `EXECUTING` for ever, the decision never reached a
+        terminal state, and SPEC 5.6's *"no heartbeat within lease_ttl -> LEASE_EXPIRED"* was a
+        sentence no code path could execute. The cause was structural rather than a missed
+        branch -- this process had no background task of any kind.
+
+        Each lease is expired in **its own transaction**, so one that cannot be written does not
+        roll back the others, and the row is re-read `FOR UPDATE` inside that transaction because
+        the holder may have completed or extended it between the scan and the write -- in which
+        case the state check drops it and the holder's own outcome stands.
+
+        The write is outbox-transactional by construction: `append_decision_event_tx` inserts the
+        DecisionEvent, its chain links and the `mizan.outbox` row in the same transaction as the
+        state change, so an expiry that is recorded is one that will be published, and one that
+        fails leaves nothing behind to reconcile.
+        """
+        now = now or datetime.now(UTC)
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            candidates = [
+                (row[0], row[1])
+                for row in connection.execute(
+                    "SELECT lease_id,decision_id FROM mizan.execution_leases "
+                    "WHERE tenant_id=%s AND state IN ('LEASED','EXECUTING') AND expires_at<=%s "
+                    "ORDER BY expires_at LIMIT %s",
+                    (tenant_id, now, limit),
+                ).fetchall()
+            ]
+
+        expired: list[str] = []
+        for lease_id, decision_id in candidates:
+            with self.pool.connection() as connection, connection.transaction():
+                self._scope(connection, tenant_id)
+                row = connection.execute(
+                    "SELECT document FROM mizan.execution_leases "
+                    "WHERE tenant_id=%s AND lease_id=%s AND state IN ('LEASED','EXECUTING') "
+                    "AND expires_at<=%s FOR UPDATE",
+                    (tenant_id, lease_id, now),
+                ).fetchone()
+                if row is None:
+                    # Completed, failed or extended between the scan and here. The holder wins.
+                    continue
+                lease = row[0]
+                lease["state"] = "LEASE_EXPIRED"
+                self._save_lease(connection, tenant_id, lease)
+                append_decision_event_tx(
+                    connection,
+                    tenant_id,
+                    decision_id,
+                    "LEASE_EXPIRED",
+                    {
+                        "kind": "system",
+                        "id": "mizan-lease-sweeper",
+                        "authenticated_workload": None,
+                    },
+                    # Named so an auditor can tell an expiry nobody was present for from one a
+                    # holder discovered by calling in. Both are LEASE_EXPIRED; only one of them
+                    # means the executor vanished.
+                    {"lease_id": lease_id, "detected_by": "sweep"},
+                    now,
+                )
+                expired.append(lease_id)
+        return expired
+
     @staticmethod
     def _save_lease(connection: Any, tenant_id: str, lease: dict[str, Any]) -> None:
         connection.execute(
