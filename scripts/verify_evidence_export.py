@@ -625,6 +625,9 @@ def verify_bundle(
         "development_custody": any(
             item["custody"] == "development-derived" for item in key_metadata.values()
         ),
+        # Optional and additive (T-065). Absent on every bundle exported before the export gate
+        # existed, and its absence means exactly what it always meant.
+        "custody_override": manifest.get("custody_override"),
         "derived_assurance": derived_assurance,
         "horizon": min(
             (horizon for *_, horizon in anchor_assurance if horizon is not None),
@@ -642,6 +645,22 @@ def verify_bundle(
 # G.19). Nothing normative says what a verifier must disclose, so each implementation invented
 # its own list; that gap is recorded for B-24 rather than decided here. Bringing this side up to
 # parity discloses more and forbids nothing, so it needs no ruling.
+def _custody_override_line(override: dict) -> str:
+    """The exporter refused and a human overrode it. The holder should not have to ask.
+
+    T-065: export now refuses a development-custody bundle outright, so one that exists at all
+    was produced by someone who typed the flag and gave a reason. That reason travels in the
+    manifest and is reported here, at the same prominence as the verdict -- a bundle that had to
+    be forced out of the exporter should say so to whoever is holding it.
+    """
+    return (
+        "CUSTODY OVERRIDE: this bundle was exported despite "
+        f"{override.get('custody')} signing custody on "
+        f"{', '.join(override.get('key_ids') or [])}, by explicit override. "
+        f"Reason given: {override.get('reason')!r}."
+    )
+
+
 UNIVERSAL_LIMITATIONS = (
     "A valid bundle does NOT prove that a record was not omitted before it entered the chain "
     "(TM-001 pre-chain omission).",
@@ -723,6 +742,8 @@ def main() -> int:
                 "KEY CUSTODY: publicly derivable development key — "
                 "this bundle is forgeable by anyone who reads it."
             )
+        if result.get("custody_override"):
+            warnings.append(_custody_override_line(result["custody_override"]))
         if result["derived_assurance"] not in {"rfc3161", "expired"}:
             warnings.append(
                 "ATTESTATION: STREAM NOT EXTERNALLY ANCHORED — at least one anchor lacks a "
@@ -775,6 +796,8 @@ def main() -> int:
             "KEY CUSTODY: publicly derivable development key — "
             "this bundle is forgeable by anyone who reads it."
         )
+    if result.get("custody_override"):
+        print(_custody_override_line(result["custody_override"]))
     print(f"ASSURANCE DERIVED: {result['derived_assurance']}.")
     if result["horizon"] is not None:
         tense = "stopped" if expired else "stops"

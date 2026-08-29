@@ -168,6 +168,12 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
             STREAM,
             "--output",
             str(bundle),
+            # This pipeline signs with development custody, which T-065 made a refusal rather
+            # than a printed warning. Naming the reason is the point of the flag, and the bundle
+            # carries it -- asserted below, because a bundle forced out of the exporter must
+            # tell its holder so.
+            "--allow-development-custody",
+            "integration fixture: local development keys, not evidence",
         ],
         check=False,
         capture_output=True,
@@ -176,6 +182,10 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
     )
     assert exported.returncode == 0, exported.stderr
     assert exported.stdout.strip() == str(bundle)
+    assert "WARNING: exported under development custody" in exported.stderr
+    override = json.loads((bundle / "manifest.json").read_bytes())["custody_override"]
+    assert override["custody"] == "development-derived"
+    assert override["reason"].startswith("integration fixture")
     verified = subprocess.run(
         [sys.executable, "scripts/verify_evidence_export.py", str(bundle)],
         check=False,
@@ -184,3 +194,6 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
     )
     assert verified.returncode == 0, verified.stderr
     assert "2 records, 1 anchors" in verified.stdout
+    # The whole point of recording the override: the verifier reports it to whoever is holding
+    # the bundle, without them having to know to look in the manifest.
+    assert "CUSTODY OVERRIDE:" in verified.stdout

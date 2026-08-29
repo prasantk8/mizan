@@ -138,9 +138,14 @@ auditor_token="$(uv run mizan-dev-token --key-dir "$KEY_DIR" --subject prn_ops-m
 "${curl_mtls[@]}" -H "Authorization: Bearer $auditor_token" "$API_URL/v1/audit/keys" \
   | uv run python -c 'import json,sys; json.dump(json.load(sys.stdin)["items"], sys.stdout)' \
   > "$STATE_DIR/keyset.json"
+# The demo signs with development custody, and T-065 made that a refusal rather than a warning:
+# a bundle whose private keys are sha256(key_id) is forgeable by anyone who reads it, so the
+# exporter will not produce one unless a human names the reason. The flag is the demo's answer,
+# and the bundle carries it -- the verifier prints it back below.
 uv run mizan-export-evidence \
   --database-url "$APP_DSN" --object-store "$EVIDENCE_DIR" --keyset "$STATE_DIR/keyset.json" \
-  --tenant-id tnt_demo-bank --stream-id "$DEMO_STREAM" --output "$BUNDLE_DIR"
+  --tenant-id tnt_demo-bank --stream-id "$DEMO_STREAM" --output "$BUNDLE_DIR" \
+  --allow-development-custody "make demo: local development keys, not evidence"
 uv run python scripts/verify_evidence_export.py "$BUNDLE_DIR"
 cat <<INFO
 

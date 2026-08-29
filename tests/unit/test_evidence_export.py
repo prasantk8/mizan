@@ -8,13 +8,17 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import rfc8785
 from cryptography.hazmat.primitives import serialization
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.evidence import Ed25519EvidenceSigner, LocalImmutableObjectStore
-from mizan_control_plane.evidence_export import export_evidence_bundle
+from mizan_control_plane.evidence_export import (
+    DevelopmentCustodyRefused,
+    export_evidence_bundle,
+)
 
 from scripts.verify_evidence_export import (
     CannotCheck,
@@ -51,6 +55,10 @@ def build_bundle(
     include_attestations: bool = True,
     revoked_receipt_at: str | None = None,
     attestation_by_anchor: dict[int, list[dict]] | None = None,
+    # Every fixture in this module signs with development custody, which T-065 turned from a
+    # printed warning into a refusal. The default names the reason so existing tests keep
+    # exporting; passing None is how the refusal itself is tested.
+    development_custody_reason: str | None = "unit test fixture",
 ) -> Path:
     receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
     anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
@@ -149,6 +157,10 @@ def build_bundle(
         start=export_start,
         checkpoint_interval=2,
         key_documents=key_documents,
+        # Every fixture in this module signs with development custody, which T-065 made a
+        # refusal rather than a warning. Naming the reason here is the point of the flag: a
+        # bundle produced under override says so, including this one.
+        development_custody_reason=development_custody_reason,
     )
 
 
@@ -463,3 +475,92 @@ def test_undeclared_sidecar_authority_is_rejected(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "sidecar authority is absent from the signed roster: tsa-injected" in result.stderr
+
+
+def test_export_refuses_development_custody_without_an_explicit_override(tmp_path: Path) -> None:
+    """T-065. A warning is advice; this is the boundary.
+
+    T-053 made custody honest — the keyset says `development-derived` and the verifier prints a
+    warning above the verdict. But `evidence_export.py` contained no mention of custody at all,
+    so a bundle anyone could forge was produced, written to disk and handed over with nothing but
+    prose between it and an auditor. "No bundle leaves the building" was a process rule; this
+    makes it a property of the system.
+    """
+    with pytest.raises(DevelopmentCustodyRefused) as refusal:
+        build_bundle(tmp_path, development_custody_reason=None)
+
+    message = str(refusal.value)
+    # The refusal names the keys, so an operator knows which custody to fix rather than which
+    # flag to add.
+    assert "local://evidence-receipt/dev-1" in message
+    assert "local://evidence-anchor/dev-1" in message
+    assert "sha256(key_id)" in message
+    assert not (tmp_path / "bundle" / "manifest.json").exists()
+
+
+def test_an_overridden_export_carries_the_override_in_its_manifest(tmp_path: Path) -> None:
+    """The other direction: the override works, and the bundle says it was used.
+
+    A bundle that had to be forced out of the exporter should tell whoever is holding it. The
+    operator who typed the flag is not the person reading the bundle a week later.
+    """
+    bundle = build_bundle(tmp_path, development_custody_reason="demo corpus")
+    manifest = json.loads((bundle / "manifest.json").read_bytes())
+
+    override = manifest["custody_override"]
+    assert override["custody"] == "development-derived"
+    assert override["reason"] == "demo corpus"
+    assert override["key_ids"] == [
+        "local://evidence-anchor/dev-1",
+        "local://evidence-receipt/dev-1",
+    ]
+
+
+def test_the_cli_refuses_with_its_own_exit_code_and_says_why(monkeypatch, capsys, tmp_path) -> None:
+    """A refusal that exits 1 is indistinguishable from a crash.
+
+    `mizan-export-evidence` answers 3 for a custody refusal, so a script driving it can tell
+    "you must name a reason" from "the database was unreachable" without parsing prose.
+    """
+    from mizan_control_plane import evidence_export
+
+    monkeypatch.setattr(
+        evidence_export, "EvidenceRepository", lambda url: SimpleNamespace(pool=SimpleNamespace(close=lambda: None))
+    )
+    monkeypatch.setattr(
+        evidence_export, "load_public_keyset", lambda path: ({}, [{"key_id": "k", "custody": "development-derived"}])
+    )
+
+    status = evidence_export.main(
+        [
+            "--database-url", "postgresql://unused",
+            "--object-store", str(tmp_path / "store"),
+            "--keyset", str(tmp_path / "keys.json"),
+            "--tenant-id", "tnt_bank-a",
+            "--stream-id", "tnt_bank-a:adr:0",
+            "--output", str(tmp_path / "bundle"),
+        ]
+    )
+
+    assert status == 3
+    assert "EXPORT REFUSED" in capsys.readouterr().err
+    assert not (tmp_path / "bundle").exists()
+
+
+def test_an_empty_override_reason_is_not_a_reason(capsys, tmp_path) -> None:
+    """`--allow-development-custody ""` would otherwise satisfy the flag while naming nothing."""
+    from mizan_control_plane import evidence_export
+
+    with pytest.raises(SystemExit):
+        evidence_export.main(
+            [
+                "--database-url", "postgresql://unused",
+                "--object-store", str(tmp_path / "store"),
+                "--keyset", str(tmp_path / "keys.json"),
+                "--tenant-id", "tnt_bank-a",
+                "--stream-id", "tnt_bank-a:adr:0",
+                "--output", str(tmp_path / "bundle"),
+                "--allow-development-custody", "   ",
+            ]
+        )
+    assert "requires a reason" in capsys.readouterr().err
