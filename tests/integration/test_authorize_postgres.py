@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from mizan_control_plane.approval_repository import ApprovalRepository
 from mizan_control_plane.attestation import AnchorAttestationWorker
+from mizan_control_plane.drain_worker import run_once as drain_run_once
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -788,6 +789,93 @@ def test_i25_financial_execution_waits_for_immutable_receipt(tmp_path: Path) -> 
         token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
     )
     assert lease["state"] == "LEASED"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_the_shipped_drain_worker_is_what_lets_a_financial_write_execute(tmp_path: Path) -> None:
+    """T-099, rule 8. The gap between "Mizan approved the payment" and "Mizan executed it".
+
+    `mizan-drain-outbox` is the entrypoint named by `compose.production.yaml` and
+    `charts/mizan/templates/drainer-deployment.yaml`, and until this change it did not exist. No
+    worker means `mizan.evidence_receipts` is never written, and `_require_receipts` then refuses
+    every `financial_write` with 403 `immutable_receipt_missing` -- permanently, on a decision a
+    human already approved.
+
+    Every existing test that got past this point hand-rolled `drain()` and `anchor()` itself, so
+    the suite proved the *primitives* worked and never that anything ran them. This one drives
+    the shipped worker's own cycle, which is what production launches.
+    """
+    _repository, response = _focused_authorization("018f47a6-7b42-7c00-8000-000000000207")
+    codec = ExecutionTokenCodec(
+        "https://issuer.mizan.test", local_private_key_for_testing("integration-execution-9")
+    )
+    execution = ExecutionService(os.environ["MIZAN_TEST_DATABASE_URL"], codec, SimpleNamespace())
+    token = execution.issue("tnt_bank-a", response.decision_id, "spiffe://mizan/executor/wealth")
+    arguments = {"amount": 12500, "request_time": "drain-worker-gate"}
+
+    with pytest.raises(Problem) as refused:
+        execution.redeem(token, response.decision_id, "spiffe://mizan/executor/wealth", arguments)
+    assert refused.value.status == 403
+    assert refused.value.code == "immutable_receipt_missing"
+
+    evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    receipt_signer = Ed25519EvidenceSigner.development("evidence-receipt")
+    anchor_signer = Ed25519EvidenceSigner.development("evidence-anchor")
+    store = LocalImmutableObjectStore(tmp_path)
+    publisher = OutboxPublisher(evidence, store, receipt_signer, anchor_signer)
+    report = drain_run_once(
+        publisher, evidence, ["tnt_bank-a"], batch_size=100, max_unpublished_seconds=5
+    )
+
+    assert report.published > 0, "the worker published nothing, so the lease below proves nothing"
+    assert report.anchored > 0, "no anchor means no RFC 3161 token and no exportable bundle"
+    assert report.quarantined == 0 and report.failed == 0
+    # The queue is empty afterwards, so the publication SLO is not breached.
+    assert report.lag_breaches == []
+    # The worker discovered the stream itself rather than being handed one, which is what makes
+    # it a managed workload instead of a one-shot script.
+    assert "tnt_bank-a:adr:0" in evidence.streams("tnt_bank-a")
+
+    execution.receipt_gate = ObjectEvidenceVerifier(
+        evidence,
+        store,
+        {
+            receipt_signer.key_id: receipt_signer.public_key,
+            anchor_signer.key_id: anchor_signer.public_key,
+        },
+    )
+    lease = execution.redeem(
+        token, response.decision_id, "spiffe://mizan/executor/wealth", arguments
+    )
+    assert lease["state"] == "LEASED"
+
+
+@pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
+def test_a_poisoned_outbox_row_is_set_aside_with_its_reason_against_a_live_table() -> None:
+    """The quarantine arithmetic from migration 0004, against the real UPDATE.
+
+    The unit tests model `attempts+1 >= budget` by hand. This runs the statement, because the
+    half that matters is the `CASE WHEN` that sets `quarantined_at` only on the attempt that
+    exhausts the budget -- and because the partial index and the CHECK constraint keeping
+    quarantine and publication distinct exist only in the database.
+    """
+    _focused_authorization("018f47a6-7b42-7c00-8000-000000000208")
+    evidence = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    pending = evidence.unpublished("tnt_bank-a", limit=1)
+    assert pending, "the fixture wrote no outbox row, so this test would assert nothing"
+    outbox_id = pending[0]["outbox_id"]
+
+    assert evidence.record_publication_failure("tnt_bank-a", outbox_id, "boom", 2) is False
+    assert all(row["outbox_id"] != outbox_id for row in evidence.quarantined("tnt_bank-a"))
+    assert evidence.record_publication_failure("tnt_bank-a", outbox_id, "boom again", 2) is True
+
+    held = {row["outbox_id"]: row for row in evidence.quarantined("tnt_bank-a")}
+    assert outbox_id in held
+    assert held[outbox_id]["attempts"] == 2
+    assert held[outbox_id]["last_error"] == "boom again"
+    assert held[outbox_id]["quarantined_at"] is not None
+    # A quarantined row leaves the drain queue, which is what stops it blocking its stream.
+    assert all(row["outbox_id"] != outbox_id for row in evidence.unpublished("tnt_bank-a"))
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")

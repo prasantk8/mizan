@@ -35,6 +35,21 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.runtime }}
                   key: {{ .Values.secrets.appDatabaseUrlKey }}
+            # This pod previously received MIZAN_ENV and MIZAN_DATABASE_URL and nothing else,
+            # which was survivable only while the binary it launches did not exist. The worker
+            # signs a receipt per published record and a payload per anchor, so `Settings` and
+            # `build_key_provider` need the custody mode and all four key references or it exits
+            # 78 before its first cycle. The evidence volume and TLS material are deliberately
+            # still absent: those ride on B-21 under T-104, and this pod does not serve traffic.
+            - {name: MIZAN_KEY_CUSTODY_MODE, value: {{ .Values.config.keyCustodyMode | quote }}}
+            - {name: MIZAN_EVIDENCE_RECEIPT_KEY_REF, value: {{ .Values.config.evidenceReceiptKeyRef | quote }}}
+            - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
+            - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}
+            - {name: MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF, value: {{ .Values.config.degradedGrantKeyRef | quote }}}
+            - {name: MIZAN_ANCHOR_PROVIDER, value: rfc3161}
+            - {name: MIZAN_ANCHOR_TSA_ENDPOINTS, value: {{ .Values.config.tsaEndpoints | quote }}}
+            - {name: MIZAN_ANCHOR_TSA_TRUST_ANCHORS, value: /run/mizan/tls/tsa-root.pem}
+            - {name: MIZAN_DRAIN_TENANTS, value: {{ join "," .Values.drainer.tenants | quote }}}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: ["ALL"]}

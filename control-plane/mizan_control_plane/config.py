@@ -22,6 +22,11 @@ class Settings:
     anchor_tsa_endpoints: tuple[str, ...]
     anchor_tsa_trust_anchors: tuple[str, ...]
     anchor_attestation_max_pending_seconds: int
+    # Both registered in SPEC section 8 and read by nothing until there was a drain worker to
+    # read them -- two of the twenty-one keys T-109 enumerates. An operator who set either got
+    # silence, which is the failure that task exists to end.
+    evidence_max_unpublished_seconds: int
+    outbox_drain_interval_ms: int
     evidence_object_store_root: str
     hash_verify_checkpoint_interval: int
     execution_token_issuer: str
@@ -131,6 +136,10 @@ class Settings:
             anchor_attestation_max_pending_seconds=int(
                 environ.get("MIZAN_ANCHOR_ATTESTATION_MAX_PENDING_SECONDS", "900")
             ),
+            evidence_max_unpublished_seconds=int(
+                environ.get("MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS", "5")
+            ),
+            outbox_drain_interval_ms=int(environ.get("MIZAN_OUTBOX_DRAIN_INTERVAL_MS", "250")),
             evidence_object_store_root=environ.get(
                 "MIZAN_EVIDENCE_OBJECT_STORE_ROOT", "var/evidence"
             ),

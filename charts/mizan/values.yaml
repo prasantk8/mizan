@@ -29,7 +29,15 @@ config:
   tsaEndpoints: https://tsa.example.invalid
 
 drainer:
-  enabled: false
+  # On by default, and the same reasoning as the compose profile: without this workload no
+  # evidence receipt is ever written, and `execution.py::_require_receipts` then refuses every
+  # `financial_write` with 403 immutable_receipt_missing. A chart that installs a Mizan which
+  # cannot execute a payment is not a smaller Mizan, it is a broken one.
+  enabled: true
   replicaCount: 1
+  # Tenants cannot be discovered: mizan.tenants is under FORCE ROW LEVEL SECURITY and the schema
+  # has no SECURITY DEFINER function. Widening that is an H-7 tenant-isolation call, escalated as
+  # B-27. Until it is ruled on, name the tenants this drainer serves.
+  tenants: []
 
 resources: {}

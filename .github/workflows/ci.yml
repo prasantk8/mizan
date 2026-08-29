@@ -182,7 +182,10 @@ jobs:
         env:
           PGPASSWORD: integration-only-owner
         run: |
-          test "$(psql --host 127.0.0.1 --username mizan_owner --dbname mizan --tuples-only --no-align --command 'SELECT count(*) FROM mizan.schema_migrations')" = "3"
+          # Counted against the migration directory rather than a literal, so adding a migration
+          # cannot pass this gate by being forgotten -- it was `= "3"` and 0004 made it wrong.
+          expected="$(ls infra/postgres/migrations/*.sql | wc -l | tr -d ' ')"
+          test "$(psql --host 127.0.0.1 --username mizan_owner --dbname mizan --tuples-only --no-align --command 'SELECT count(*) FROM mizan.schema_migrations')" = "$expected"
           psql --host 127.0.0.1 --username mizan_owner --dbname mizan --set ON_ERROR_STOP=1 --command "ALTER ROLE mizan_app LOGIN PASSWORD 'integration-only-app'"
       - name: Boot the container and require readiness 200
         run: |
