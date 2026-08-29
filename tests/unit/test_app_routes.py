@@ -51,7 +51,9 @@ class FakePool:
 class FakeRepository:
     """Records what the route asked for; asserts nothing about how it asked."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, *_arguments: object) -> None:
+        # `*_arguments` because `ApprovalRepository` also takes the deployment's
+        # `MIZAN_APPROVAL_EPOCH_EXPIRY` mode; these doubles model no expiry behaviour.
         self.pool = FakePool()
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 

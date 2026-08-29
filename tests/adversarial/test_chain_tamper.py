@@ -29,7 +29,9 @@ class _Pool:
 
 
 class _UnusedRepository:
-    def __init__(self, _database_url: str) -> None:
+    def __init__(self, _database_url: str, *_arguments: object) -> None:
+        # `*_arguments` because `ApprovalRepository` also takes the deployment's
+        # `MIZAN_APPROVAL_EPOCH_EXPIRY` mode; these doubles model no expiry behaviour.
         self.pool = _Pool()
 
 

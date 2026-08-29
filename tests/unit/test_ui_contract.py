@@ -111,13 +111,15 @@ class FakePool:
 
 
 class FakeRepository:
-    def __init__(self, _database_url: str) -> None:
+    def __init__(self, _database_url: str, *_arguments: object) -> None:
+        # `*_arguments` because `ApprovalRepository` also takes the deployment's
+        # `MIZAN_APPROVAL_EPOCH_EXPIRY` mode; these doubles model no expiry behaviour.
         self.pool = FakePool()
 
 
 class FakeApprovalRepository(FakeRepository):
-    def __init__(self, database_url: str) -> None:
-        super().__init__(database_url)
+    def __init__(self, database_url: str, *arguments: object) -> None:
+        super().__init__(database_url, *arguments)
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
     def pending(self, *arguments: Any) -> dict[str, Any]:
@@ -154,8 +156,8 @@ class FakeApprovalRepository(FakeRepository):
 
 
 class FakeEvidenceRepository(FakeRepository):
-    def __init__(self, database_url: str) -> None:
-        super().__init__(database_url)
+    def __init__(self, database_url: str, *arguments: object) -> None:
+        super().__init__(database_url, *arguments)
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
     def decision(self, *arguments: Any) -> dict[str, Any]:
