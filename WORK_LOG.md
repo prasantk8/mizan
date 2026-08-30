@@ -6,12 +6,13 @@
 
 ## Active Task
 
-**The repository had two heads, and the trunk was missing two commits' worth of work nobody had noticed.** `main` was rebuilt from `f4f90a2` as a clean PR-gated history (#1..#24) while `track-b/stage-5` kept T-073 and T-074 — ~4,300 lines — that were never replayed. Both heads were independently green, which is why it survived for days: `service.py` on `main` still wrote `sha256(request_id)[:32]` into `ADR_Record.trace_id`, a field SPEC §2 defines as a W3C trace-id, and no gate could see it because the test that rejects that value lived on the other head. **The heads are now one.** PR #2 (`track-b/ui`) is fully landed and carries nothing but the 23 scaffolding READMEs T-115 deliberately deleted; PR #3's remainder is merged here. **Parallel lanes are retired** (founder ruling, 2026-08-29): one trunk, one task per PR. 447 passed with PostgreSQL, ruff clean, `make check` clean, six gate counts unreduced.
+**The two-product pilot programme is entering WS-0 urgent hygiene.** T-120 re-triages the thirteen dated Trivy exceptions before their 2026-09-03 expiry. The task must scan the pinned production image against a current database, upgrade any package with a published fix, and renew only the residual findings with a fresh per-entry justification. One task, one branch, one PR remains the governing delivery shape.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
+| T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | IN_PROGRESS |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
@@ -119,9 +120,9 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-092 | codex | clm_t089_ui_collect_only | 1 | 2026-08-27T18:33:42Z | 2026-08-27T18:33:42Z | 2026-08-27T22:33:42Z | e8ef4cd |
+| T-120 | codex | clm_t120_cve_retriage_v1 | 1 | 2026-08-30T21:30:43Z | 2026-08-30T21:30:43Z | 2026-08-31T01:30:43Z | 837f934 |
 
-T-070 was released on completion (H-2a). Two lanes now run from here on separate branches — `track-b/stage-5` (CLAUDE) and `track-b/ui` (CODEX) — because `validate_claim_ledger.py` admits exactly one live row per commit snapshot. Each branch carries its own single claim and neither edits the other's row; the merge conflict in this table is expected and is resolved by the lane that merges second.
+The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
 ## Blockers & Dependencies
 
@@ -161,43 +162,14 @@ T-070 was released on completion (H-2a). Two lanes now run from here on separate
 
 ## Next Executable Action
 
-> **CLAUDE (`track-b/stage-5`): T-074** — the `mizan-drain-outbox` worker and the expiry
-> sweeper. This is the next thing that blocks, not the next thing on the list: T-070 shipped a
-> gateway whose financial writes wait on publication that nothing drains at rest, so the
-> live gate stands up its own publisher thread. Until T-074 runs as a real worker, a deployed
-> gateway retries for `execution_binding_retry_seconds` and then refuses. Then T-073, T-078.
+> **T-120:** scan the exact pinned production image against a current Trivy database, reconcile every
+> allowlisted HIGH/CRITICAL finding with the Debian security tracker, upgrade where a fixed package is
+> available, and renew only the residual exceptions with dated evidence. The pre-fix artifact is the
+> current allowlist, which the enforced validator rejects after 2026-09-03.
 >
-> **CODEX (`track-b/ui`): the parallel UI/operator order is complete.** T-072/T-081/T-075/T-024
-> are in REVIEW and the lane ledger is released. T-071 is the next unblocked Track B product task;
-> claim it under its owning work order before implementation.
->
-> **Next: Wave 2 T-053 under `docs/handoff/CODEX-CP-C-RUN-2.md` §3.** Make custody honest:
-> `LocalKeyProvider` refuses every production use regardless of URI spelling; publish `custody`
-> (`development-derived`/`kms`/`hsm`) in the keyset and require it in bundle 1.0; print the exact
-> development-key forgeability warning. T-053 gates delivery.
->
-> **Acceptance gate: `uv run python docs/reviews/reproductions/R-007-cpb-attestation.py`** — now
-> **eight** cases. It prints `CP-B ... PASSED` and exits non-zero while case 8 (T-061) is open; the exit
-> code is the CP-C gate. Case 1 must never go red — it is the only place in the tree that executes both
-> halves of the signer/verifier digest agreement. **Cases 7 and 8 are a pair**, as 6 and 7 were: 7 says a
-> refused append must be visible, 8 says it must not be slandered. Do not green 8 by weakening or
-> removing the integrity breaker — the alarm must survive, it must just mean something.
->
-> **Run the full gate at the end of every wave. A previously-green case going red is a stop-and-report,
-> immediately, without starting the next task.** That is the self-service checkpoint that buys the run
-> its lack of a mandatory stop.
->
-> `… → T-036 ✓` **(CP-B PASSED)** `→ T-055 ✓ → T-057 ✓ → T-051 ✓ → T-052 ✓ → T-056 ✓ →`
-> **W1** `T-059 ✓ → T-061 ✓ → T-058 ✓ →` **W2** `T-053 → T-054 → T-065 →` **W3** `T-062 → T-063 →`
-> **W4** `T-038 → T-039 →` **W5** `T-060 → T-064` **(CP-C)**
-> `→ T-031 → T-034 → T-035 → T-024 → T-040 → T-037` **(CP-D)** `→ T-026 → T-023`
->
-> T-053 gates **delivery**: until it ships, any bundle handed to a design partner is forgeable by its
-> recipient and does not say so.
->
-> **Park freely.** Eleven tasks is a lot of surface and at least one will be wrong as specified. Parking
-> with a reason is a result. **Escalate under H-7 rather than deciding:** any contract *change* to
-> `KeyProvider` (T-054), and anything moving approval semantics or tenant isolation.
+> **Then T-121:** make `compose.production.yaml` boot with the S3 evidence store and extend the
+> deployment-manifest gate to launch it. In parallel staffing, the Memtara repository begins M-01;
+> in this single-agent session, finish and merge T-120 before claiming another task.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
