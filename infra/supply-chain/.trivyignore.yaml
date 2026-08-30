@@ -2,68 +2,68 @@
   "vulnerabilities": [
     {
       "id": "CVE-2025-69720",
-      "statement": "Debian 13.6 publishes no fixed ncurses version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie ncurses 6.5+20250216-2 remains vulnerable with no DSA (minor infocmp CLI issue); the pinned non-root runtime never invokes infocmp on untrusted input. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-41992",
-      "statement": "Debian 13.6 publishes no fixed gzip version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie gzip 1.13-1 remains vulnerable with no DSA (minor multi-file LZW/LZH CLI issue); the pinned non-root service exposes no gzip invocation or archive input. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-54369",
-      "statement": "Debian 13.6 publishes no fixed libacl version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie libacl 2.3.2-2 remains vulnerable pending a point release because the fix changes ABI; Mizan runs non-root and does not call pathname ACL mutation APIs. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-11822",
-      "statement": "Debian 13.6 publishes no fixed SQLite version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie SQLite 3.46.1-7+deb13u1 remains vulnerable with no DSA (minor crafted FTS5 database issue); Mizan uses PostgreSQL and never opens tenant-supplied SQLite databases. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-11824",
-      "statement": "Debian 13.6 publishes no fixed SQLite version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie SQLite 3.46.1-7+deb13u1 remains vulnerable with no DSA (minor crafted FTS5 continuation-page issue); Mizan uses PostgreSQL and never opens tenant-supplied SQLite databases. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-13221",
-      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie perl-base 5.40.1-6 remains vulnerable; Mizan is a Python service and never compiles tenant-controlled Perl regular expressions, including the greater-than-65535-branch trigger. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-42496",
-      "statement": "Debian marks the perl-base fix deferred; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie defers the Archive::Tar symlink fix pending upstream regression resolution; the pinned non-root Python service does not extract tenant-supplied archives through Perl. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-8376",
-      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie perl-base 5.40.1-6 remains vulnerable with no DSA; the heap-overflow trigger is limited to 32-bit Perl while supported images are amd64/arm64, and Mizan executes no tenant-controlled Perl. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-42497",
-      "statement": "Debian marks the perl-base fix deferred; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie defers the Archive::Tar hardlink fix pending upstream regression resolution; the pinned non-root Python service does not extract tenant-supplied archives through Perl. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-48962",
-      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie perl-base 5.40.1-6 remains vulnerable with no DSA for IO::Compress File::GlobMapper; Mizan executes no Perl and accepts no Perl output-glob expressions. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-57432",
-      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie perl-base 5.40.1-6 remains vulnerable; the pinned non-root Python service never evaluates tenant-controlled Perl pack/unpack templates. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-57433",
-      "statement": "Debian 13.6 publishes no fixed perl-base version; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie perl-base 5.40.1-6 remains vulnerable; the pinned non-root Python service never deserializes tenant-controlled Perl Storable data. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     },
     {
       "id": "CVE-2026-9538",
-      "statement": "Debian marks the perl-base fix deferred; temporary risk acceptance is limited to the pinned non-root image and must be reassessed weekly.",
-      "expired_at": "2026-09-03T00:00:00Z"
+      "statement": "Reviewed 2026-08-30: Debian 13.6/trixie defers the Archive::Tar allocation fix pending upstream regression resolution; the pinned non-root Python service does not extract tenant-supplied archives through Perl. Reassess weekly.",
+      "expired_at": "2026-09-10T00:00:00Z"
     }
   ],
   "misconfigurations": [],

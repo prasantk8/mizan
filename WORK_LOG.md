@@ -6,12 +6,13 @@
 
 ## Active Task
 
-**The repository had two heads, and the trunk was missing two commits' worth of work nobody had noticed.** `main` was rebuilt from `f4f90a2` as a clean PR-gated history (#1..#24) while `track-b/stage-5` kept T-073 and T-074 — ~4,300 lines — that were never replayed. Both heads were independently green, which is why it survived for days: `service.py` on `main` still wrote `sha256(request_id)[:32]` into `ADR_Record.trace_id`, a field SPEC §2 defines as a W3C trace-id, and no gate could see it because the test that rejects that value lived on the other head. **The heads are now one.** PR #2 (`track-b/ui`) is fully landed and carries nothing but the 23 scaffolding READMEs T-115 deliberately deleted; PR #3's remainder is merged here. **Parallel lanes are retired** (founder ruling, 2026-08-29): one trunk, one task per PR. 447 passed with PostgreSQL, ruff clean, `make check` clean, six gate counts unreduced.
+**The two-product pilot programme is in WS-0 urgent hygiene.** T-120 is in REVIEW on PR #30: the pinned image was rescanned against current Trivy/Debian data, no Trixie fix exists for the thirteen residual CVEs, every exception now carries a dated exploit-path assessment, and CI is green. T-121 is the next task after review and merge.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
+| T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | REVIEW |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
@@ -119,9 +120,8 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-092 | codex | clm_t089_ui_collect_only | 1 | 2026-08-27T18:33:42Z | 2026-08-27T18:33:42Z | 2026-08-27T22:33:42Z | e8ef4cd |
 
-T-070 was released on completion (H-2a). Two lanes now run from here on separate branches — `track-b/stage-5` (CLAUDE) and `track-b/ui` (CODEX) — because `validate_claim_ledger.py` admits exactly one live row per commit snapshot. Each branch carries its own single claim and neither edits the other's row; the merge conflict in this table is expected and is resolved by the lane that merges second.
+The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
 ## Blockers & Dependencies
 
@@ -161,43 +161,11 @@ T-070 was released on completion (H-2a). Two lanes now run from here on separate
 
 ## Next Executable Action
 
-> **CLAUDE (`track-b/stage-5`): T-074** — the `mizan-drain-outbox` worker and the expiry
-> sweeper. This is the next thing that blocks, not the next thing on the list: T-070 shipped a
-> gateway whose financial writes wait on publication that nothing drains at rest, so the
-> live gate stands up its own publisher thread. Until T-074 runs as a real worker, a deployed
-> gateway retries for `execution_binding_retry_seconds` and then refuses. Then T-073, T-078.
+> **Review and merge T-120 through PR #30.** All thirteen CI jobs are green on the implementation
+> head; the PR still requires the protocol's independent `REVIEW:` comment before squash-merge.
 >
-> **CODEX (`track-b/ui`): the parallel UI/operator order is complete.** T-072/T-081/T-075/T-024
-> are in REVIEW and the lane ledger is released. T-071 is the next unblocked Track B product task;
-> claim it under its owning work order before implementation.
->
-> **Next: Wave 2 T-053 under `docs/handoff/CODEX-CP-C-RUN-2.md` §3.** Make custody honest:
-> `LocalKeyProvider` refuses every production use regardless of URI spelling; publish `custody`
-> (`development-derived`/`kms`/`hsm`) in the keyset and require it in bundle 1.0; print the exact
-> development-key forgeability warning. T-053 gates delivery.
->
-> **Acceptance gate: `uv run python docs/reviews/reproductions/R-007-cpb-attestation.py`** — now
-> **eight** cases. It prints `CP-B ... PASSED` and exits non-zero while case 8 (T-061) is open; the exit
-> code is the CP-C gate. Case 1 must never go red — it is the only place in the tree that executes both
-> halves of the signer/verifier digest agreement. **Cases 7 and 8 are a pair**, as 6 and 7 were: 7 says a
-> refused append must be visible, 8 says it must not be slandered. Do not green 8 by weakening or
-> removing the integrity breaker — the alarm must survive, it must just mean something.
->
-> **Run the full gate at the end of every wave. A previously-green case going red is a stop-and-report,
-> immediately, without starting the next task.** That is the self-service checkpoint that buys the run
-> its lack of a mandatory stop.
->
-> `… → T-036 ✓` **(CP-B PASSED)** `→ T-055 ✓ → T-057 ✓ → T-051 ✓ → T-052 ✓ → T-056 ✓ →`
-> **W1** `T-059 ✓ → T-061 ✓ → T-058 ✓ →` **W2** `T-053 → T-054 → T-065 →` **W3** `T-062 → T-063 →`
-> **W4** `T-038 → T-039 →` **W5** `T-060 → T-064` **(CP-C)**
-> `→ T-031 → T-034 → T-035 → T-024 → T-040 → T-037` **(CP-D)** `→ T-026 → T-023`
->
-> T-053 gates **delivery**: until it ships, any bundle handed to a design partner is forgeable by its
-> recipient and does not say so.
->
-> **Park freely.** Eleven tasks is a lot of surface and at least one will be wrong as specified. Parking
-> with a reason is a result. **Escalate under H-7 rather than deciding:** any contract *change* to
-> `KeyProvider` (T-054), and anything moving approval semantics or tenant isolation.
+> **Then T-121:** make `compose.production.yaml` boot with the S3 evidence store and extend the
+> deployment-manifest gate to launch it. In parallel staffing, the Memtara repository begins M-01.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -225,6 +193,7 @@ T-070 was released on completion (H-2a). Two lanes now run from here on separate
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-30 · CODEX · T-120 · Fresh Trivy 0.74.0 scan of the pinned Debian 13.6 image found the same 13 unique CVEs/16 package findings and no Trixie fix; each exception now has a dated package-specific reachability assessment and expires 2026-09-10, while the validator rejects undated statements. Rule 8: the new dated-justification test fails on pre-fix `837f934` because the old validator accepts an undated statement. Rule 10: Colima did not persist a `/tmp` bind, then moving the worktree invalidated the generated virtualenv's absolute paths; an explicit shared mount and `uv venv --clear` corrected the harness. 438 unit tests passed, 1 skipped; Ruff, `make check`, enforced expiry validation, a zero-unsuppressed HIGH/CRITICAL image scan, and all 13 PR jobs green. · next: independent review/merge PR #30, then T-121
 - 2026-08-30 · CLAUDE · T-104 · **`"retention_class": "regulatory_7y"` is a string this system writes into records and then signs, and the only thing standing behind it was a directory.** `LocalImmutableObjectStore` calls itself a *"development WORM analogue"* in its own docstring; the chart mounted it as an `emptyDir` under `replicaCount: 2`. Three things follow and each is worse than it looks: a bundle exported by pod A could not read the segments pod B had published, a rollout destroyed the corpus outright, and every record written in between claimed a seven-year retention that nothing enforced. B-21 is ruled and this delivers it. **S3 Object Lock in COMPLIANCE mode, which is the only substrate here where "immutable" is enforced by something other than our own code being careful** — no principal can delete or overwrite an object before its retention date, including the account root, including us. GOVERNANCE mode was rejected: it can be bypassed by anyone holding `s3:BypassGovernanceRetention`, which makes retention a policy decision rather than a property of the object, and evidence the operator can delete is evidence the operator can be *asked* to delete. **Two properties are asserted at startup rather than trusted**, the same shape as T-102's key-type check. (1) **The bucket really has Object Lock.** It can only be enabled when a bucket is *created*, so a deployment pointed at an ordinary bucket cannot be repaired in place — until it is replaced, every record it writes is a false statement about where that record lives. Refused by name. (2) **Writes are create-only.** Versioning is *mandatory* under Object Lock, so an ordinary PUT to an existing key succeeds and silently creates a second version — the "immutable object collision" this store exists to raise would never have fired on S3, and a re-published segment would shadow the original in every listing while the original stayed reachable only by a `VersionId` no receipt records. `put_once` uses a conditional write and compares bytes on conflict. **Gated against a real S3 implementation, not a double, because the guarantee *is* the implementation** — a mock that refuses a delete proves that a mock refuses a delete. `test_the_storage_layer_refuses_to_delete_what_it_has_locked` asks MinIO to remove a locked object and requires it to say no; the head shows `ObjectLockMode: COMPLIANCE` with a 2033 retention. `object_version` stays content-addressed rather than adopting the S3 `VersionId`, so the same bytes produce the same identifier on either backend and a verifier holding a bundle never has to ask which one wrote it. **Production now refuses a directory**, which is the honest consequence and which broke T-101's own boot gate — correctly: that gate now boots onto Vault *and* an Object Lock bucket, which is what production means. **The finding worth keeping: a new production guard shadowed every older one, for the third time.** These checks raised on the first violation, so an operator bringing up a first deployment learned them serially — fix, restart, next error, restart — and each restart is a fresh chance to give up. They are now collected and reported together: six independent problems produce one message naming all six, with a test that asserts exactly that. Three tests had broken across two PRs for this reason, each asserting a refusal a newer guard had started firing before it. **Also fixed:** T-102's live-Vault tests could not talk to a TLS Vault at all — they built their own `httpx` client with no CA — so the two suites could not share one server, which T-105 will need. **Rule 6:** no numbers claimed. 451 passed / 6 skipped unit+adversarial, 490 with PostgreSQL, 9 Object Lock tests against real MinIO, 6 production-boot tests against Postgres + TLS Vault + Object Lock, ruff clean, `make check` clean, chart renders, gate inventory 13 CI jobs (+1, floor re-recorded). · next: T-113 (backup/restore drill, which T-104 unblocks) and T-105 (CP-F step 7)
 
 - 2026-08-30 · CLAUDE · T-101 · **Production boots, and until this commit nothing in the repository had ever asserted that it could.** Every production test here is a *refusal* — refuses development custody, refuses a plaintext TSA, refuses the dev-token issuer — and a complete set of refusals with no demonstration that anything is left that starts is indistinguishable from a system that refuses everything. CI's only container boot passes `--env MIZAN_ENV=development`, so `app.py`'s production readiness branch had never executed anywhere, on any machine. T-102 removed the cause (`build_key_provider` had no non-development branch); this is the gate that proves the result, against a real PostgreSQL with the real schema and a **real Vault over TLS** holding Ed25519 keys it will not release. `MIZAN_ENV=production` now builds a runtime with 39 routes whose keyset reports `custody: kms`, whose signing key produces a 64-byte signature, and whose `/health/ready` answers `database: ok, signing_keys: ok` — the two checks that had never run. **Attempting the boot found three things no test would have.** (1) **`scripts/provision_vault.sh` could not talk to the deployment it provisions.** Production requires `https://` to Vault, an internal Vault presents a private CA, and the script had no way to trust one — so the provisioning step failed against exactly the configuration the guard exists to enforce. It now honours `VAULT_CACERT`, the same variable Vault's own CLI uses, and prints `MIZAN_VAULT_CA_CERT` alongside the key references. (2) **`httpx` logs one INFO line per request**, and every Vault Transit signature is a request: four key reads produced four `HTTP Request: GET https://vault.../v1/transit/keys/... 200 OK` lines before the process had served anything, and a drain worker publishing a thousand receipts would emit a thousand more — burying the lines that mean something and naming the key used to sign evidence on every write. `configure_logging` now floors `httpx`/`httpcore`/`urllib3` at WARNING, with DEBUG passing straight through because that request log is the first thing anyone debugging Vault wants. (3) **The `verify=<path>` I shipped in T-102 is deprecated in httpx**, which I had flagged for a reviewer in that PR and which the boot surfaced as a warning three hours later. Replaced with an `ssl.SSLContext`. This repository has already been bitten once by httpx quietly not doing what a TLS keyword appeared to say — `verify=<ca path>` beside `cert=(cert,key)` silently declining to present the client certificate (T-103) — so a deprecation on that surface is not cosmetic. **The CI job runs Vault as a step, not a service**, because production requires `https://` and a GitHub `services:` block cannot override the image command, which is what `-dev-tls` needs; `-dev-tls` also refuses a cert directory that does not exist and *panics* on one bind-mounted from the host, so the directory is made inside the container and the CA copied out. **And CI found a fourth**, which is the same shape as the other three: the `production-boot` job provisions its database from a `services:` PostgreSQL, which has no `docker-entrypoint-initdb.d` mount, so applying `schema_contract.sql` to it failed with `28 required tables missing` — the contract *asserts* the schema and does not create it. Every other job that needs a schema gets one from `compose.yaml`'s mount or applies migration 0001 by hand. The migrations are now globbed and sorted rather than listed, because listing them is how migration 0004 would come to be missing from a gate that claims to provision the schema. **Rule 10:** my first attempt at the library log floor was `max(logging.WARNING, root.level)`, which is backwards for the case it was written for — `max(30, 10)` keeps WARNING, so an operator who asked for DEBUG did not get it. The test I wrote alongside it caught that, which is the only reason this reads as a decision rather than a bug. **Rule 6:** no numbers claimed. 450 passed / 6 skipped (unit + adversarial), 5 production-boot tests against real PostgreSQL + TLS Vault, ruff clean, `make check` clean, gate inventory 12 CI jobs (+1, floor re-recorded). · next: T-104 — evidence durability under B-21, then T-105 joins them into CP-F step 7
