@@ -61,7 +61,10 @@ def test_vulnerability_allowlist_rejects_permanent_or_unjustified_exceptions(tmp
 
     document = json.loads(allowlist.read_text(encoding="utf-8"))
     document["vulnerabilities"][0].update(
-        {"statement": "temporary exception", "expired_at": "2026-09-03"}
+        {
+            "statement": "Reviewed 2026-08-27: temporary exception",
+            "expired_at": "2026-09-03",
+        }
     )
     allowlist.write_text(json.dumps(document), encoding="utf-8")
     assert validate(allowlist, today=date(2026, 8, 27)) == (
@@ -83,7 +86,7 @@ def test_vulnerability_allowlist_expiry_blast_radius_is_the_image_scan_job(tmp_p
                 "vulnerabilities": [
                     {
                         "id": "CVE-2020-0001",
-                        "statement": "temporary exception",
+                        "statement": "Reviewed 2026-08-20: temporary exception",
                         "expired_at": "2026-08-20T00:00:00Z",
                     }
                 ],
@@ -117,7 +120,7 @@ def test_vulnerability_allowlist_warns_inside_the_final_week(tmp_path) -> None:
                 "vulnerabilities": [
                     {
                         "id": "CVE-2020-0002",
-                        "statement": "temporary exception",
+                        "statement": "Reviewed 2026-08-27: temporary exception",
                         "expired_at": "2026-09-01T00:00:00Z",
                     }
                 ],
@@ -131,6 +134,35 @@ def test_vulnerability_allowlist_warns_inside_the_final_week(tmp_path) -> None:
     failures, warnings = validate(allowlist, today=date(2026, 8, 27), enforce_expiry=True)
     assert failures == []
     assert warnings == ["vulnerabilities[0] expires 2026-09-01 (5 days remaining)"]
+
+
+def test_vulnerability_allowlist_requires_a_dated_justification(tmp_path) -> None:
+    from scripts.validate_vulnerability_allowlist import validate
+
+    allowlist = tmp_path / ".trivyignore.yaml"
+    allowlist.write_text(
+        json.dumps(
+            {
+                "vulnerabilities": [
+                    {
+                        "id": "CVE-2020-0003",
+                        "statement": "temporary exception with no review date",
+                        "expired_at": "2026-09-10T00:00:00Z",
+                    }
+                ],
+                "misconfigurations": [],
+                "secrets": [],
+                "licenses": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    failures, warnings = validate(allowlist, today=date(2026, 8, 31))
+    assert failures == [
+        "vulnerabilities[0] statement does not begin with Reviewed YYYY-MM-DD:"
+    ]
+    assert warnings == []
 
 
 def test_the_supply_chain_scan_is_wired_and_its_artifacts_are_named() -> None:
