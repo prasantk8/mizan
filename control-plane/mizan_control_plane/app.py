@@ -531,8 +531,9 @@ def create_app(
     # unauthenticated loopback listener instead -- see `runtime.build_observability`.
 
     @app.get("/health/ready", include_in_schema=False)
+    @app.get("/readyz", include_in_schema=False)
     def ready() -> JSONResponse:
-        """Readiness is what this process can actually do, not that it started."""
+        """Readiness is what this process can actually do, under both deployment probe names."""
         checks: dict[str, str] = {}
         try:
             # Bounded: readiness must answer, and a probe that blocks is a probe that lies.

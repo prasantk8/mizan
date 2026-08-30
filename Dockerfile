@@ -11,7 +11,10 @@ COPY control-plane ./control-plane
 COPY integrations ./integrations
 COPY security ./security
 COPY sdk ./sdk
-RUN uv sync --frozen --no-dev
+# Production requires the S3 Object Lock backend, so the production image must carry the SDK that
+# implements it. Keeping `s3` optional for development installs is useful; omitting it here made
+# every S3-configured container refuse at startup with `ModuleNotFoundError: boto3`.
+RUN uv sync --frozen --no-dev --extra s3
 
 FROM python:3.12-slim-trixie@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17 AS runtime
 
@@ -40,5 +43,5 @@ ENV PATH="/app/.venv/bin:$PATH" \
 USER 65532:65532
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=4 \
-  CMD python -c 'import os,ssl,urllib.request; tls=bool(os.getenv("MIZAN_TLS_CERTIFICATE_FILE")); ctx=ssl.create_default_context(cafile=os.getenv("MIZAN_HEALTH_SERVER_CA_FILE")) if tls else None; ctx.load_cert_chain(os.environ["MIZAN_HEALTH_CLIENT_CERTIFICATE_FILE"],os.environ["MIZAN_HEALTH_CLIENT_PRIVATE_KEY_FILE"]) if ctx else None; urllib.request.urlopen(("https" if tls else "http")+"://127.0.0.1:"+os.getenv("MIZAN_HTTP_PORT","8080")+"/health/ready",context=ctx,timeout=4).read()'
+  CMD python -c 'import os,ssl,urllib.request; tls=bool(os.getenv("MIZAN_TLS_CERTIFICATE_FILE")); ctx=ssl.create_default_context(cafile=os.getenv("MIZAN_HEALTH_SERVER_CA_FILE")) if tls else None; ctx.load_cert_chain(os.environ["MIZAN_HEALTH_CLIENT_CERTIFICATE_FILE"],os.environ["MIZAN_HEALTH_CLIENT_PRIVATE_KEY_FILE"]) if ctx else None; urllib.request.urlopen(("https" if tls else "http")+"://127.0.0.1:"+os.getenv("MIZAN_HTTP_PORT","8080")+"/readyz",context=ctx,timeout=4).read()'
 ENTRYPOINT ["mizan-control-plane"]

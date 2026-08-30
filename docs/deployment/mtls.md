@@ -21,3 +21,8 @@ trust bundle must contain only workload-issuing authorities approved for the dep
 is an infrastructure security operation. A readiness probe must exercise a real mutually
 authenticated connection and verify the expected SPIFFE URI reaches an execution route.
 
+The readiness document is available at both `/health/ready` and `/readyz`; they are aliases backed
+by the same handler and return the same status and checks. The production image and supported
+Compose path use `/readyz`. A 200 response means the database, signing keys, evidence verifier,
+execution service, RFC 3161 configuration, and mutual-TLS configuration are all usable; a partial
+configuration returns 503 rather than reporting the process ready.

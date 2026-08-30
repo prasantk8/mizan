@@ -51,7 +51,7 @@ def test_development_boot_wires_every_component_create_app_can_refuse_without(
         assert runtime.evidence_verifier is not None
         assert runtime.execution_service is not None
         routes = {getattr(route, "path", None) for route in runtime.app.routes}
-        assert {"/v1/authorize", "/health/live", "/health/ready"} <= routes
+        assert {"/v1/authorize", "/health/live", "/health/ready", "/readyz"} <= routes
         # The pools this process owns are the ones it must close: four from create_app plus the
         # evidence repository and the execution service's two.
         assert len(runtime.app.state.connection_pools) == 7
@@ -76,7 +76,10 @@ def test_readiness_reports_the_unreachable_database_rather_than_reporting_ok(
     runtime = build_runtime(settings)
     with TestClient(runtime.app) as client:
         response = client.get("/health/ready")
+        readyz = client.get("/readyz")
     assert response.status_code == 503
+    assert readyz.status_code == response.status_code
+    assert readyz.json() == response.json()
     body = response.json()
     assert body["status"] == "not_ready"
     assert body["checks"]["database"].startswith("unavailable")
