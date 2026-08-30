@@ -6,13 +6,14 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-0 urgent hygiene.** T-120 is in REVIEW on PR #30: the pinned image was rescanned against current Trivy/Debian data, no Trixie fix exists for the thirteen residual CVEs, every exception now carries a dated exploit-path assessment, and CI is green. T-121 is the next task after review and merge.
+**The two-product pilot programme is in WS-0 urgent hygiene.** T-120 merged through PR #30. T-121 is in progress: make the production Compose path boot against PostgreSQL, Vault Transit, and an S3-compatible Object Lock store, then require the deployment-manifests gate to reach the production readiness endpoint.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
-| T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | REVIEW |
+| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | IN_PROGRESS |
+| T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
 | T-003 | Postgres schema + migrations for §2 domain models (RLS per ADR-005; typed FKs per I-16; DecisionEvent + chain-head tables) | CODEX | T-001 | DONE |
@@ -120,6 +121,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-121 | CODEX | codex-t121-20260831-a1 | 1 | 2026-08-31T02:10:00+04:00 | 2026-08-31T02:10:00+04:00 | 2026-08-31T06:10:00+04:00 | 7a8e66dda709182b6741eabc64a90d09e7fff5dc |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -161,11 +163,9 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Review and merge T-120 through PR #30.** All thirteen CI jobs are green on the implementation
-> head; the PR still requires the protocol's independent `REVIEW:` comment before squash-merge.
->
-> **Then T-121:** make `compose.production.yaml` boot with the S3 evidence store and extend the
-> deployment-manifest gate to launch it. In parallel staffing, the Memtara repository begins M-01.
+> **Execute T-121 on `t-121-production-compose`.** Supply every production-required setting and
+> managed dependency in `compose.production.yaml`, then extend the deployment-manifests gate to
+> launch the production profile and require the control plane's readiness endpoint to succeed.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
