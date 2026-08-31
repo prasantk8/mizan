@@ -6,15 +6,15 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-122 is in REVIEW on PR #33: identity verification uses a deployment-pinned JWKS, routes by `kid`, supports an additive overlap, refuses a retired key, and has an operator runbook plus CI drill. T-124 is next after review and merge.
+**The two-product pilot programme is in WS-1a hardening.** T-122 is DONE through merged PR #33. T-124 is ACTIVE: complete storage-layer immutability coverage and make readiness fail when database evidence streams disagree with bucket objects.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
-| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | REVIEW |
-| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | READY |
+| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
+| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | ACTIVE |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -124,6 +124,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-124 | CODEX | 0eb92e3b-6948-43c4-98e7-cbbb0d7b9259 | 1 | 2026-08-31T08:57:55Z | 2026-08-31T08:57:55Z | 2026-08-31T12:57:55Z | e64263e608844e27da4de20b68917271dccb7e41 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -165,10 +166,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Review and merge T-122 through PR #33.** Require the protocol's independent `REVIEW:` comment,
-> all thirteen CI jobs green on the final handoff head, and a clean merge state before squash-merge.
-> Then claim T-124: complete storage-layer immutability coverage and add database-to-bucket stream
-> reconciliation in the drain worker.
+> **Execute T-124 through draft PR and CI.** Protect `adr_record_policies` with the existing evidence-table
+> REVOKE + SQLSTATE 55000 trigger pattern, exercise UPDATE and DELETE against every protected table in
+> `postgres-contract`, and make `/readyz` fail when the drain worker detects a database-to-bucket stream
+> reconciliation mismatch.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -195,6 +196,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-31 · CODEX · T-124 · Claimed from merged T-122 base `e64263e`; scope is evidence-table mutation protection plus database-to-bucket reconciliation surfaced through readiness · next: open draft PR, reproduce the pre-fix gaps, then implement and run `postgres-contract`
 
 - 2026-08-31 · CODEX · T-122 · Replaced the single identity-verification PEM with a startup-validated public-only JWKS, mandatory unique `kid` routing, exact RS256/ES256/EdDSA binding, private/symmetric/duplicate/malformed-key refusal, and the additive old-only → old+new → new-only rotation contract. The existing maximum identity-token TTL is the planned overlap floor; emergency compromise retirement remains immediate. Updated Compose, Helm, every live integration caller and `mizan-dev-token`; added SPEC V-24, ADR-001 Amendment F, the operator runbook, and an explicit CI drill whose final stage refuses the retired `kid`. Rule 8: `uv run --frozen python scripts/identity_key_rotation_drill.py --validate tests/fixtures/identity-key-rotation/pre-fix-8047820.json` rejects pre-fix `8047820`'s static-replacement output because it has no overlap state. Rule 10: an initial reproduction used invalid typed IDs; host Perl lacked `C.UTF-8`; the first PostgreSQL run exposed one MCP caller still passing a PEM and cleanup that masked the primary startup refusal; first CI was 12/13 because the auth coverage selector omitted the new test module; malformed-JWK probing found raw `TypeError` diagnostics. Each was corrected and its substantive gate rerun. Full local contract: 452 unit + 35 live PostgreSQL passed before the final three malformed-type cases; final CI run `33371696500` passed all 13 jobs on `8daea48`. No benchmark numbers claimed. H-7 stays within the human-issued task and accepted ADR-001 boundaries: no remote discovery, refresh policy, multi-issuer tenancy or token-selected trust root. · next: independent review and squash-merge PR #33, then T-124
 
