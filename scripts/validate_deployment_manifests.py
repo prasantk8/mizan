@@ -572,14 +572,13 @@ def validate_production_compose_boot() -> None:
                 f"COMPOSE LOGS:\n{logs.stdout}{logs.stderr}"
             )
         finally:
-            if environment.get("MIZAN_KEEP_VALIDATION_STACK") != "1":
-                subprocess.run(
-                    compose + ["down", "--volumes", "--remove-orphans"],
-                    capture_output=True,
-                    text=True,
-                    env=environment,
-                    timeout=120,
-                )
+            subprocess.run(
+                compose + ["down", "--volumes", "--remove-orphans"],
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=120,
+            )
 
 
 def check_image_pins() -> None:

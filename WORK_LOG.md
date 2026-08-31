@@ -6,13 +6,15 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-0 urgent hygiene.** T-120 merged through PR #30. T-121 is in progress: make the production Compose path boot against PostgreSQL, Vault Transit, and an S3-compatible Object Lock store, then require the deployment-manifests gate to reach the production readiness endpoint.
+**The two-product pilot programme has completed its WS-0 implementation.** T-121 is in REVIEW on PR #31: the supported production Compose path now boots against PostgreSQL, Vault Transit, and S3 Object Lock, and `deployment-manifests` reaches `/readyz` over mTLS. T-123 is next in the platform lane after review and merge; T-122 is ready for the security/control-plane lane.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
-| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | IN_PROGRESS |
+| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | READY |
+| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | READY |
+| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | REVIEW |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
@@ -121,7 +123,6 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-121 | CODEX | codex-t121-20260831-a1 | 1 | 2026-08-31T01:58:00+04:00 | 2026-08-31T01:58:00+04:00 | 2026-08-31T05:58:00+04:00 | 7a8e66dda709182b6741eabc64a90d09e7fff5dc |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -163,9 +164,12 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Execute T-121 on `t-121-production-compose`.** Supply every production-required setting and
-> managed dependency in `compose.production.yaml`, then extend the deployment-manifests gate to
-> launch the production profile and require the control plane's readiness endpoint to succeed.
+> **Review and merge T-121 through PR #31.** Require the protocol's independent `REVIEW:` comment,
+> all thirteen CI jobs green on the handoff head, and a clean merge state before squash-merge.
+>
+> **Then claim T-123 in the platform lane:** wire all nine omitted PostgreSQL integration files into
+> `postgres-contract` and make skipped-is-not-passed explicit. T-122 may proceed in parallel only
+> under a separate valid security/control-plane claim.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -193,6 +197,7 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
 
+- 2026-08-31 · CODEX · T-121 · Production Compose now sets S3/Object Lock and every production-required runtime value, mounts the Vault token path it names, removes the local evidence volume, installs the image's declared `s3` extra, and exposes the workplan's `/readyz` alias. `deployment-manifests` now launches the shipped profile against real PostgreSQL, TLS Vault Transit, and MinIO with an Object-Lock bucket, then requires readiness over mTLS; the implementation-head job passed in CI. Rule 8: applied to pre-fix `7a8e66d`, the new structural gate rejects all three runtime services for missing S3 settings/secret mounts and retaining local evidence. Rule 10: the first live launch found the production image omitted `boto3`; a diagnostic run also exposed that cleanup must activate both Compose profiles. 438 unit tests passed, 1 skipped; Ruff, `make check`, the live Compose boot, and all twelve technical PR jobs passed; the draft-body completion check was corrected before this handoff commit. · next: independent `REVIEW:`/merge PR #31, then T-123 in the platform lane
 - 2026-08-30 · CODEX · T-120 · Fresh Trivy 0.74.0 scan of the pinned Debian 13.6 image found the same 13 unique CVEs/16 package findings and no Trixie fix; each exception now has a dated package-specific reachability assessment and expires 2026-09-10, while the validator rejects undated statements. Rule 8: the new dated-justification test fails on pre-fix `837f934` because the old validator accepts an undated statement. Rule 10: Colima did not persist a `/tmp` bind, then moving the worktree invalidated the generated virtualenv's absolute paths; an explicit shared mount and `uv venv --clear` corrected the harness. 438 unit tests passed, 1 skipped; Ruff, `make check`, enforced expiry validation, a zero-unsuppressed HIGH/CRITICAL image scan, and all 13 PR jobs green. · next: independent review/merge PR #30, then T-121
 - 2026-08-30 · CLAUDE · T-104 · **`"retention_class": "regulatory_7y"` is a string this system writes into records and then signs, and the only thing standing behind it was a directory.** `LocalImmutableObjectStore` calls itself a *"development WORM analogue"* in its own docstring; the chart mounted it as an `emptyDir` under `replicaCount: 2`. Three things follow and each is worse than it looks: a bundle exported by pod A could not read the segments pod B had published, a rollout destroyed the corpus outright, and every record written in between claimed a seven-year retention that nothing enforced. B-21 is ruled and this delivers it. **S3 Object Lock in COMPLIANCE mode, which is the only substrate here where "immutable" is enforced by something other than our own code being careful** — no principal can delete or overwrite an object before its retention date, including the account root, including us. GOVERNANCE mode was rejected: it can be bypassed by anyone holding `s3:BypassGovernanceRetention`, which makes retention a policy decision rather than a property of the object, and evidence the operator can delete is evidence the operator can be *asked* to delete. **Two properties are asserted at startup rather than trusted**, the same shape as T-102's key-type check. (1) **The bucket really has Object Lock.** It can only be enabled when a bucket is *created*, so a deployment pointed at an ordinary bucket cannot be repaired in place — until it is replaced, every record it writes is a false statement about where that record lives. Refused by name. (2) **Writes are create-only.** Versioning is *mandatory* under Object Lock, so an ordinary PUT to an existing key succeeds and silently creates a second version — the "immutable object collision" this store exists to raise would never have fired on S3, and a re-published segment would shadow the original in every listing while the original stayed reachable only by a `VersionId` no receipt records. `put_once` uses a conditional write and compares bytes on conflict. **Gated against a real S3 implementation, not a double, because the guarantee *is* the implementation** — a mock that refuses a delete proves that a mock refuses a delete. `test_the_storage_layer_refuses_to_delete_what_it_has_locked` asks MinIO to remove a locked object and requires it to say no; the head shows `ObjectLockMode: COMPLIANCE` with a 2033 retention. `object_version` stays content-addressed rather than adopting the S3 `VersionId`, so the same bytes produce the same identifier on either backend and a verifier holding a bundle never has to ask which one wrote it. **Production now refuses a directory**, which is the honest consequence and which broke T-101's own boot gate — correctly: that gate now boots onto Vault *and* an Object Lock bucket, which is what production means. **The finding worth keeping: a new production guard shadowed every older one, for the third time.** These checks raised on the first violation, so an operator bringing up a first deployment learned them serially — fix, restart, next error, restart — and each restart is a fresh chance to give up. They are now collected and reported together: six independent problems produce one message naming all six, with a test that asserts exactly that. Three tests had broken across two PRs for this reason, each asserting a refusal a newer guard had started firing before it. **Also fixed:** T-102's live-Vault tests could not talk to a TLS Vault at all — they built their own `httpx` client with no CA — so the two suites could not share one server, which T-105 will need. **Rule 6:** no numbers claimed. 451 passed / 6 skipped unit+adversarial, 490 with PostgreSQL, 9 Object Lock tests against real MinIO, 6 production-boot tests against Postgres + TLS Vault + Object Lock, ruff clean, `make check` clean, chart renders, gate inventory 13 CI jobs (+1, floor re-recorded). · next: T-113 (backup/restore drill, which T-104 unblocks) and T-105 (CP-F step 7)
 
