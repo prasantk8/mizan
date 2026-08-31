@@ -34,11 +34,11 @@ spec:
                   key: {{ .Values.secrets.appDatabaseUrlKey }}
             - {name: MIZAN_JWT_ISSUER, value: {{ .Values.config.jwtIssuer | quote }}}
             - {name: MIZAN_JWT_AUDIENCE, value: {{ .Values.config.jwtAudience | quote }}}
-            - name: MIZAN_JWT_PUBLIC_KEY
+            - name: MIZAN_IDENTITY_JWKS
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.runtime }}
-                  key: {{ .Values.secrets.jwtPublicKeyKey }}
+                  key: {{ .Values.secrets.identityJwksKey }}
             - {name: MIZAN_KEY_CUSTODY_MODE, value: {{ .Values.config.keyCustodyMode | quote }}}
             - {name: MIZAN_VAULT_ADDR, value: {{ .Values.config.vaultAddr | quote }}}
             - {name: MIZAN_VAULT_TOKEN_FILE, value: {{ .Values.config.vaultTokenFile | quote }}}

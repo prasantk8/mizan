@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-123 merged through PR #32 at `8047820`; the thread records no independent `REVIEW:` comment. T-122 is in progress: replace the static identity-verification PEM with a locally loaded JWKS-style keyset, route by `kid`, enforce the overlap retirement boundary, and gate the documented rotation drill in CI.
+**The two-product pilot programme is in WS-1a hardening.** T-123 merged through PR #32 at `8047820`; the thread records no independent `REVIEW:` comment. T-122 is in progress on draft PR #33: the local JWKS, `kid` routing, additive overlap, retirement refusal, runbook and CI drill are implemented; full unit and live-PostgreSQL contracts pass locally.
 
 ## Agent Queue
 
@@ -123,7 +123,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-122 | CODEX | 7ad4d2a8-5ebb-4959-8339-346e23ee8656 | 1 | 2026-08-31T11:36:17+04:00 | 2026-08-31T11:36:17+04:00 | 2026-08-31T15:36:17+04:00 | 8047820a8b0c7a1475fddbb7ef2e29a22c71145b |
+| T-122 | CODEX | 7ad4d2a8-5ebb-4959-8339-346e23ee8656 | 1 | 2026-08-31T11:36:17+04:00 | 2026-08-31T11:56:23+04:00 | 2026-08-31T15:56:23+04:00 | 8047820a8b0c7a1475fddbb7ef2e29a22c71145b |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -165,10 +165,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Execute T-122 on `t-122-identity-key-rotation`.** Add the local JWKS-style identity keyset,
-> deterministic `kid` routing, an explicit overlap-expiry boundary, and a CI rotation drill whose
-> adversarial final step refuses a token signed by the retired key. Amend ADR-001 and SPEC §8 in the
-> same change-set; do not introduce remote discovery or a new trust-root policy without an H-7 ruling.
+> **Validate T-122 on draft PR #33.** Require the static-PEM pre-fix artifact to fail the new drill
+> validator, run every CI job on the implementation head, repair any manifest or integration caller
+> that still supplies a PEM, then complete the report and request independent review. Do not add
+> remote discovery or a new trust-root policy without an H-7 ruling.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >

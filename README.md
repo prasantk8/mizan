@@ -5,6 +5,7 @@ Mizan is a governance control plane for autonomous agents operating in regulated
 The implementation contract is [SPEC_v1.md](SPEC_v1.md). Architectural decisions live in [docs/adr](docs/adr), lane ownership is defined by [AGENT_ALLOCATION.md](AGENT_ALLOCATION.md), and all work is coordinated through [WORK_LOG.md](WORK_LOG.md).
 
 Production execution endpoints require the [in-process mTLS deployment contract](docs/deployment/mtls.md).
+Identity verification-key changes follow the [rotation runbook](docs/deployment/identity-key-rotation.md).
 
 ## Repository boundaries
 

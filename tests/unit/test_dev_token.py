@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import json
+
 import jwt
 import pytest
 from mizan_control_plane.config import Settings
-from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, main, mint
+from mizan_control_plane.dev_token import (
+    DEVELOPMENT_ISSUER,
+    ensure_keypair,
+    main,
+    mint,
+    public_jwks,
+)
+
+from tests.support import UNUSED_IDENTITY_JWKS
 
 
 def test_minted_token_carries_every_claim_the_verifier_requires(tmp_path) -> None:
@@ -32,6 +42,8 @@ def test_minted_token_carries_every_claim_the_verifier_requires(tmp_path) -> Non
     assert claims["identity_kind"] == "human"
     assert claims["auth_strength"] == "hardware"
     assert claims["delegation_chain"] == ["agt_wealth-advisor"]
+    assert jwt.get_unverified_header(token)["kid"] == "dev-identity-1"
+    assert json.loads(public_jwks(private_key))["keys"][0]["kid"] == "dev-identity-1"
 
 
 def test_the_private_key_is_written_once_and_not_world_readable(tmp_path) -> None:
@@ -53,7 +65,7 @@ def test_the_control_plane_refuses_the_development_issuer_in_production(
 ) -> None:
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", DEVELOPMENT_ISSUER)
-    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", UNUSED_IDENTITY_JWKS)
     monkeypatch.setenv("MIZAN_ENV", "production")
     # `vault-transit` rather than the retired `kms_hsm` spelling: this test is about a
     # different production refusal, and a custody value the config layer now rejects would

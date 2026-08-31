@@ -3,7 +3,7 @@ x-control-environment: &control-environment
   MIZAN_DATABASE_URL: postgresql://mizan_app:${MIZAN_APP_PASSWORD}@postgres-production:5432/mizan
   MIZAN_JWT_ISSUER: ${MIZAN_JWT_ISSUER}
   MIZAN_JWT_AUDIENCE: ${MIZAN_JWT_AUDIENCE:-mizan-control-plane}
-  MIZAN_JWT_PUBLIC_KEY: ${MIZAN_JWT_PUBLIC_KEY}
+  MIZAN_IDENTITY_JWKS: ${MIZAN_IDENTITY_JWKS}
   # `kms` and the `kms://` references here named a backend that did not exist and a URI scheme
   # nothing parsed: this file shipped a production configuration that could not start. B-18 chose
   # Vault Transit and T-102 built it; `scripts/provision_vault.sh` prints these four values.

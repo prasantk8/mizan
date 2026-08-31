@@ -13,7 +13,7 @@ import httpx
 import pytest
 from mizan import Denied, MizanClient, Principal, Resource
 from mizan.adapters import GovernedTool, GovernedToolRouter
-from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint
+from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint, public_jwks
 
 from tests.integration.test_closed_loop_postgres import activate_policy
 
@@ -36,7 +36,7 @@ def _free_port() -> int:
 @pytest.fixture
 def live_control_plane(tmp_path: Path):
     activate_policy(os.environ["MIZAN_TEST_DATABASE_URL"])
-    identity_key, public_pem = ensure_keypair(tmp_path / "identity")
+    identity_key, _public_pem = ensure_keypair(tmp_path / "identity")
     port = _free_port()
     process = subprocess.Popen(
         [sys.executable, "-m", "mizan_control_plane", "--log-level", "warning"],
@@ -44,7 +44,7 @@ def live_control_plane(tmp_path: Path):
         | {
             "MIZAN_DATABASE_URL": os.environ["MIZAN_TEST_DATABASE_URL"],
             "MIZAN_JWT_ISSUER": DEVELOPMENT_ISSUER,
-            "MIZAN_JWT_PUBLIC_KEY": public_pem,
+            "MIZAN_IDENTITY_JWKS": public_jwks(identity_key),
             "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
             "MIZAN_HTTP_HOST": "127.0.0.1",
             "MIZAN_HTTP_PORT": str(port),

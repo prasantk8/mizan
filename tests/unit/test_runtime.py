@@ -25,10 +25,12 @@ from mizan_control_plane.runtime import (
     verification_public_keys,
 )
 
+from tests.support import UNUSED_IDENTITY_JWKS
+
 DEVELOPMENT_ENVIRONMENT = {
     "MIZAN_DATABASE_URL": "postgresql://mizan_app:unused@127.0.0.1:1/mizan",
     "MIZAN_JWT_ISSUER": "https://issuer.test",
-    "MIZAN_JWT_PUBLIC_KEY": "unused",
+    "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
 }
 
 
@@ -355,7 +357,7 @@ def test_every_production_requirement_is_reported_at_once(monkeypatch, tmp_path)
     for name, value in {
         "MIZAN_DATABASE_URL": "postgresql://unused",
         "MIZAN_JWT_ISSUER": "urn:mizan:development:dev-token",
-        "MIZAN_JWT_PUBLIC_KEY": "unused",
+        "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
         "MIZAN_ENV": "production",
         "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
     }.items():

@@ -4,13 +4,15 @@ from dataclasses import dataclass
 from os import environ
 from pathlib import Path
 
+from .auth import IdentityKeySet
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
     database_url: str
     jwt_issuer: str
     jwt_audience: str
-    jwt_public_key: str
+    identity_jwks: str
     evaluator_build: str
     evaluator_configuration_hash: str
     chain_shards_per_tenant: int
@@ -92,10 +94,15 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> Settings:
-        required = ("MIZAN_DATABASE_URL", "MIZAN_JWT_ISSUER", "MIZAN_JWT_PUBLIC_KEY")
+        required = ("MIZAN_DATABASE_URL", "MIZAN_JWT_ISSUER", "MIZAN_IDENTITY_JWKS")
         missing = [name for name in required if not environ.get(name)]
         if missing:
             raise RuntimeError(f"missing required configuration: {', '.join(missing)}")
+        identity_jwks = environ["MIZAN_IDENTITY_JWKS"]
+        try:
+            IdentityKeySet(identity_jwks)
+        except ValueError as exc:
+            raise RuntimeError(f"invalid MIZAN_IDENTITY_JWKS: {exc}") from exc
         environment = environ.get("MIZAN_ENV", "development")
         # Production requirements are collected and reported together rather than raised one at a
         # time. An operator bringing up a first deployment otherwise learns about them serially --
@@ -244,7 +251,7 @@ class Settings:
             database_url=environ["MIZAN_DATABASE_URL"],
             jwt_issuer=environ["MIZAN_JWT_ISSUER"],
             jwt_audience=environ.get("MIZAN_JWT_AUDIENCE", "mizan-control-plane"),
-            jwt_public_key=environ["MIZAN_JWT_PUBLIC_KEY"],
+            identity_jwks=identity_jwks,
             evaluator_build=evaluator_build,
             evaluator_configuration_hash=configuration_hash,
             chain_shards_per_tenant=int(environ.get("MIZAN_CHAIN_SHARDS_PER_TENANT", "4")),

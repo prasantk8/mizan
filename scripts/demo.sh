@@ -45,7 +45,7 @@ mkdir -p "$STATE_DIR" "$KEY_DIR"
 "${compose[@]}" exec -T postgres-demo psql -q -v ON_ERROR_STOP=1 -U mizan_owner -d mizan \
   -c "ALTER ROLE mizan_app LOGIN PASSWORD 'demo-only-mizan'"
 
-uv run mizan-dev-token --key-dir "$KEY_DIR" --print-public-key > "$STATE_DIR/identity.pub"
+uv run mizan-dev-token --key-dir "$KEY_DIR" --print-jwks > "$STATE_DIR/identity.jwks.json"
 
 # ADR-001 Amendment B requires a verified peer SPIFFE identity on every execution endpoint, so
 # without mutual TLS `/v1/actions/{id}/execute` answers 401 and the demo cannot reach the half of
@@ -67,7 +67,7 @@ runtime_environment=(
   "MIZAN_DATABASE_URL=$APP_DSN"
   "MIZAN_JWT_ISSUER=urn:mizan:development:dev-token"
   "MIZAN_JWT_AUDIENCE=mizan-control-plane"
-  "MIZAN_JWT_PUBLIC_KEY=$(cat "$STATE_DIR/identity.pub")"
+  "MIZAN_IDENTITY_JWKS=$(cat "$STATE_DIR/identity.jwks.json")"
   "MIZAN_EVIDENCE_OBJECT_STORE_ROOT=$EVIDENCE_DIR"
 )
 

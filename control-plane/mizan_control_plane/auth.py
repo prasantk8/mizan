@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Annotated
 
 import jwt
@@ -13,6 +15,96 @@ from .problems import Problem
 # demonstrated, not theorised. One leaked credential was then a decade of access with no
 # revocation path, because there is no revocation path for identity tokens at all.
 DEFAULT_MAX_TOKEN_TTL_SECONDS = 3600
+IDENTITY_ALGORITHMS = frozenset({"RS256", "ES256", "EdDSA"})
+PRIVATE_JWK_PARAMETERS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth"})
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityVerificationKey:
+    kid: str
+    algorithm: str
+    key: object
+
+
+class IdentityKeySet:
+    """A startup-pinned, public-only JWKS used exclusively for identity verification.
+
+    Rotation is additive: deploy old+new to every verifier, switch the issuer, wait at least the
+    maximum token TTL, then deploy new-only. The source is deliberately local configuration rather
+    than a token-selected URL or a per-request network lookup; neither a caller nor an IdP outage
+    may select or remove a trust root while an authorization request is being evaluated.
+    """
+
+    def __init__(self, document: str) -> None:
+        try:
+            parsed = json.loads(document)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("MIZAN_IDENTITY_JWKS must be a JSON object") from exc
+        if not isinstance(parsed, dict) or set(parsed) != {"keys"}:
+            raise ValueError("MIZAN_IDENTITY_JWKS must contain exactly one top-level 'keys' member")
+        documents = parsed["keys"]
+        if not isinstance(documents, list) or not documents:
+            raise ValueError("MIZAN_IDENTITY_JWKS.keys must be a non-empty array")
+
+        keys: dict[str, IdentityVerificationKey] = {}
+        for position, raw in enumerate(documents):
+            if not isinstance(raw, dict):
+                raise ValueError(f"MIZAN_IDENTITY_JWKS.keys[{position}] must be an object")
+            kid = raw.get("kid")
+            algorithm = raw.get("alg")
+            if not isinstance(kid, str) or not kid.strip():
+                raise ValueError(f"MIZAN_IDENTITY_JWKS.keys[{position}].kid must be non-empty")
+            if kid in keys:
+                raise ValueError(f"MIZAN_IDENTITY_JWKS contains duplicate kid {kid!r}")
+            if algorithm not in IDENTITY_ALGORITHMS:
+                raise ValueError(
+                    f"MIZAN_IDENTITY_JWKS key {kid!r} must declare one of "
+                    f"{', '.join(sorted(IDENTITY_ALGORITHMS))}"
+                )
+            if raw.get("use") != "sig":
+                raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} must declare use='sig'")
+            if PRIVATE_JWK_PARAMETERS.intersection(raw):
+                raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} contains private key material")
+            try:
+                parsed_key = jwt.PyJWK.from_dict(raw)
+            except (jwt.PyJWTError, ValueError, KeyError) as exc:
+                raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} is not a valid JWK") from exc
+            if parsed_key.key_type == "oct":
+                raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} is symmetric")
+            if parsed_key.algorithm_name != algorithm:
+                raise ValueError(
+                    f"MIZAN_IDENTITY_JWKS key {kid!r} declares alg={algorithm!r} but its key "
+                    f"requires {parsed_key.algorithm_name!r}"
+                )
+            keys[kid] = IdentityVerificationKey(kid, algorithm, parsed_key.key)
+        self._keys = keys
+
+    def select(self, token: str) -> IdentityVerificationKey:
+        try:
+            header = jwt.get_unverified_header(token)
+        except jwt.PyJWTError as exc:
+            raise Problem(401, "invalid_identity_token", "Bearer token validation failed") from exc
+        kid = header.get("kid")
+        if not isinstance(kid, str) or not kid:
+            raise Problem(
+                401,
+                "identity_token_kid_missing",
+                "Identity tokens must name a verification key",
+            )
+        selected = self._keys.get(kid)
+        if selected is None:
+            raise Problem(
+                401,
+                "identity_token_kid_unknown",
+                "Identity token names an unknown or retired verification key",
+            )
+        if header.get("alg") != selected.algorithm:
+            raise Problem(
+                401,
+                "identity_token_algorithm_mismatch",
+                "Identity token algorithm does not match its verification key",
+            )
+        return selected
 
 
 class TokenVerifier:
@@ -20,20 +112,21 @@ class TokenVerifier:
         self,
         issuer: str,
         audience: str,
-        public_key: str,
+        identity_jwks: str,
         max_ttl_seconds: int = DEFAULT_MAX_TOKEN_TTL_SECONDS,
     ) -> None:
         self.issuer = issuer
         self.audience = audience
-        self.public_key = public_key
+        self.keyset = IdentityKeySet(identity_jwks)
         self.max_ttl_seconds = max_ttl_seconds
 
     def _claims(self, token: str) -> dict:
+        selected = self.keyset.select(token)
         try:
             claims = jwt.decode(
                 token,
-                self.public_key,
-                algorithms=["RS256", "ES256", "EdDSA"],
+                selected.key,
+                algorithms=[selected.algorithm],
                 audience=self.audience,
                 issuer=self.issuer,
                 options={"require": ["exp", "iat", "iss", "aud", "sub", "tenant_id"]},

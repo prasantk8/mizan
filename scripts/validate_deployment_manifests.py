@@ -52,6 +52,11 @@ from typing import Any
 
 import yaml
 
+UNUSED_IDENTITY_JWKS = (
+    '{"keys":[{"alg":"EdDSA","crv":"Ed25519","kid":"unused","kty":"OKP",'
+    '"use":"sig","x":"O-cX0g0xmFjyu_3CjAJd4swlM1Caf0u_X4JNwl6nEHs"}]}'
+)
+
 # Pinned by digest for the same reason the chart refuses an unpinned application image: a gate
 # whose own toolchain floats can change its verdict without anything in this repository changing.
 HELM_IMAGE = (
@@ -421,7 +426,7 @@ def validate_production_compose_boot() -> None:
                 "MIZAN_POSTGRES_OWNER_PASSWORD": "validation-owner-password",
                 "MIZAN_APP_PASSWORD": "validation-app-password",
                 "MIZAN_JWT_ISSUER": "https://issuer.validation.invalid",
-                "MIZAN_JWT_PUBLIC_KEY": "unused-by-readiness",
+                "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
                 "MIZAN_VAULT_ADDR": "https://vault-validation:8200",
                 "MIZAN_VAULT_CA_CERT": "/run/mizan/tls/vault-ca.pem",
                 "MIZAN_ANCHOR_TSA_ENDPOINTS": "https://tsa.validation.invalid",
