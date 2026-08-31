@@ -6,15 +6,15 @@
 
 ## Active Task
 
-**The two-product pilot programme has completed its WS-0 implementation.** T-121 is in REVIEW on PR #31: the supported production Compose path now boots against PostgreSQL, Vault Transit, and S3 Object Lock, and `deployment-manifests` reaches `/readyz` over mTLS. T-123 is next in the platform lane after review and merge; T-122 is ready for the security/control-plane lane.
+**The two-product pilot programme has completed its WS-0 implementation.** T-121 merged through PR #31. T-123 is in progress: make the nine PostgreSQL integration modules an explicit `postgres-contract` inventory and fail the job if any test is skipped or no tests run. T-122 remains ready for the security/control-plane lane.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
-| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | READY |
+| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | IN_PROGRESS |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | READY |
-| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | REVIEW |
+| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
@@ -123,6 +123,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-123 | CODEX | b50f2c1b-4e31-4071-862c-6892d2296468 | 1 | 2026-08-31T07:07:05+04:00 | 2026-08-31T07:07:05+04:00 | 2026-08-31T11:07:05+04:00 | 0ea6420dbb352f2c382c8859a41b5da63a335ad5 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -164,12 +165,11 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Review and merge T-121 through PR #31.** Require the protocol's independent `REVIEW:` comment,
-> all thirteen CI jobs green on the handoff head, and a clean merge state before squash-merge.
->
-> **Then claim T-123 in the platform lane:** wire all nine omitted PostgreSQL integration files into
-> `postgres-contract` and make skipped-is-not-passed explicit. T-122 may proceed in parallel only
-> under a separate valid security/control-plane claim.
+> **Execute T-123 on `t-123-postgres-contract`.** Replace the broad integration-directory invocation
+> with an explicit, mechanically checked inventory of the nine PostgreSQL modules; require every
+> collected test to execute without skips; and prove the gate rejects the pre-fix output from
+> `0ea6420dbb352f2c382c8859a41b5da63a335ad5`. T-122 may proceed in parallel only under a separate
+> valid security/control-plane claim.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
