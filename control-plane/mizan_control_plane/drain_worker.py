@@ -56,13 +56,21 @@ from .approval_repository import ApprovalRepository
 from .config import Settings, resolve_served_tenants
 from .evidence import (
     Ed25519EvidenceSigner,
+    EvidenceReconciler,
+    EvidenceReconciliationMismatch,
     EvidenceRepository,
+    ObjectEvidenceVerifier,
     OutboxPublisher,
 )
 from .execution import ExecutionService
 from .observability import configure_logging
 from .problems import Problem
-from .runtime import build_execution_service, build_key_provider, build_object_store
+from .runtime import (
+    build_execution_service,
+    build_key_provider,
+    build_object_store,
+    verification_public_keys,
+)
 
 LOGGER = logging.getLogger("mizan.drain")
 
@@ -86,6 +94,7 @@ class DrainReport:
     approvals_overdue: int = 0
     failed: int = 0
     lag_breaches: list[tuple[str, float]] = field(default_factory=list)
+    reconciliation_mismatches: list[EvidenceReconciliationMismatch] = field(default_factory=list)
 
     @property
     def did_work(self) -> bool:
@@ -125,7 +134,13 @@ class StopSignal:
 
 def build_publisher(
     settings: Settings,
-) -> tuple[OutboxPublisher, EvidenceRepository, ExecutionService, ApprovalRepository]:
+) -> tuple[
+    OutboxPublisher,
+    EvidenceRepository,
+    ExecutionService,
+    ApprovalRepository,
+    EvidenceReconciler,
+]:
     provider = build_key_provider(settings)
     repository = EvidenceRepository(settings.database_url)
     # The same store the API reads through. A drainer writing to its own pod's directory while the
@@ -147,7 +162,15 @@ def build_publisher(
     # epoch may close. A second implementation here is how the worker and the request path come
     # to disagree about what a terminal approval means.
     approvals = ApprovalRepository(settings.database_url, settings.approval_epoch_expiry)
-    return publisher, repository, execution, approvals
+    reconciler = EvidenceReconciler(
+        ObjectEvidenceVerifier(
+            repository,
+            store,
+            verification_public_keys(provider),
+            settings.hash_verify_checkpoint_interval,
+        )
+    )
+    return publisher, repository, execution, approvals, reconciler
 
 
 def drain_tenant(
@@ -391,6 +414,7 @@ def run_once(
     execution: ExecutionService | None = None,
     approvals: ApprovalRepository | None = None,
     approval_epoch_expiry: str = "enforced",
+    reconciler: EvidenceReconciler | None = None,
 ) -> DrainReport:
     stop = stop or StopSignal()
     report = DrainReport()
@@ -415,6 +439,20 @@ def run_once(
             publisher, repository, tenant_id, report, batch_size, quarantine_at_attempts
         )
         anchor_tenant(publisher, repository, tenant_id, report, stop)
+        if reconciler is not None:
+            reconciliation = reconciler.reconcile([tenant_id])
+            report.reconciliation_mismatches.extend(reconciliation.mismatches)
+            report.failed += len(reconciliation.mismatches)
+            for mismatch in reconciliation.mismatches:
+                LOGGER.error(
+                    "evidence reconciliation mismatch: tenant=%s stream=%s sequence=%s "
+                    "expected=%s actual=%s",
+                    mismatch.tenant_id,
+                    mismatch.stream_id,
+                    mismatch.first_broken_sequence,
+                    mismatch.expected,
+                    mismatch.actual,
+                )
         # Measured after draining: the number that matters is what is still waiting once the
         # worker has done everything it can, not what was waiting when the cycle began.
         lag = repository.oldest_unpublished_age_seconds(tenant_id)
@@ -472,7 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     stop = StopSignal()
     stop.install()
 
-    publisher, repository, execution, approvals = build_publisher(settings)
+    publisher, repository, execution, approvals, reconciler = build_publisher(settings)
     LOGGER.info(
         "draining %s tenant(s) every %.3fs, batch=%s, SLO=%ss, approval-epoch-expiry=%s",
         len(tenants),
@@ -496,8 +534,11 @@ def main(argv: list[str] | None = None) -> int:
                 execution,
                 approvals,
                 settings.approval_epoch_expiry,
+                reconciler,
             )
-            breached = breached or bool(report.lag_breaches)
+            breached = breached or bool(
+                report.lag_breaches or report.reconciliation_mismatches
+            )
             if report.did_work or report.failed:
                 LOGGER.info(
                     "published=%s relayed=%s anchored=%s quarantined=%s leases_expired=%s "

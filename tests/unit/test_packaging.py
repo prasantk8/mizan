@@ -33,6 +33,7 @@ def test_migration_set_is_ordered_and_every_file_is_atomic() -> None:
         "0002_anchor_chain.sql",
         "0003_anchor_attestations.sql",
         "0004_outbox_quarantine.sql",
+        "0005_evidence_immutability.sql",
     ]
     assert all("BEGIN;" not in migration.body.splitlines()[:1] for migration in migrations)
 

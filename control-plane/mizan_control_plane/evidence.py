@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1369,6 +1369,7 @@ class ObjectEvidenceVerifier:
         start: int | None = None,
         end: int | None = None,
         verify_anchors: bool = True,
+        exact_objects: bool = False,
     ) -> VerificationResult:
         receipts = self.repository.receipt_rows(tenant_id, stream_id, start, end)
         records_by_sequence: dict[int, dict[str, Any]] = {}
@@ -1447,10 +1448,36 @@ class ObjectEvidenceVerifier:
                 )
             candidates = stored if isinstance(stored, list) else [stored]
             indexed: dict[tuple[int, str], list[dict[str, Any]]] = {}
-            for record in candidates:
-                indexed.setdefault((record["sequence_number"], record["record_hash"]), []).append(
-                    record
+            try:
+                for record in candidates:
+                    indexed.setdefault(
+                        (record["sequence_number"], record["record_hash"]), []
+                    ).append(record)
+            except (KeyError, TypeError):
+                return VerificationResult(
+                    False,
+                    len(records_by_sequence),
+                    object_receipts[0]["sequence_number"],
+                    "evidence records with sequence_number and record_hash",
+                    "malformed object",
                 )
+            if exact_objects:
+                expected_identities = {
+                    (payload["sequence_number"], payload["record_hash"])
+                    for payload in object_receipts
+                }
+                if (
+                    len(candidates) != len(object_receipts)
+                    or set(indexed) != expected_identities
+                    or any(len(matches) != 1 for matches in indexed.values())
+                ):
+                    return VerificationResult(
+                        False,
+                        len(records_by_sequence),
+                        object_receipts[0]["sequence_number"],
+                        f"exactly {len(object_receipts)} receipt-bound records",
+                        f"{len(candidates)} bucket records",
+                    )
             for payload in object_receipts:
                 matches = indexed.get((payload["sequence_number"], payload["record_hash"]), [])
                 if len(matches) != 1 or payload["sequence_number"] in records_by_sequence:
@@ -1570,3 +1597,86 @@ class ObjectEvidenceVerifier:
             tenant_id, stream_id, sequence_number, sequence_number
         )
         return len(receipts) == 1 and receipts[0]["payload"]["record_hash"] == record_hash
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceReconciliationMismatch:
+    tenant_id: str
+    stream_id: str
+    first_broken_sequence: int | None
+    expected: str
+    actual: str
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceReconciliationReport:
+    checked_streams: int
+    mismatches: tuple[EvidenceReconciliationMismatch, ...]
+
+    @property
+    def valid(self) -> bool:
+        return not self.mismatches
+
+
+class EvidenceReconciler:
+    """Cross-check database receipts against the exact immutable objects they address.
+
+    Unpublished outbox rows are deliberately outside this check: asynchronous publication is a
+    documented state with its own lag SLO. Once a receipt exists, however, its whole segment must
+    exist under the receipt-bound content version, contain every and only the records represented
+    by database receipts for that object, and form the same dense hash chain. A partial receipt
+    write after an object-store write is therefore visible until the drainer's idempotent retry
+    repairs it; a missing or divergent bucket object remains a readiness failure.
+    """
+
+    def __init__(self, verifier: ObjectEvidenceVerifier) -> None:
+        self.verifier = verifier
+
+    def reconcile(self, tenants: Iterable[str]) -> EvidenceReconciliationReport:
+        checked = 0
+        mismatches: list[EvidenceReconciliationMismatch] = []
+        for tenant_id in dict.fromkeys(tenants):
+            try:
+                streams = self.verifier.repository.streams(tenant_id)
+            except Exception as error:
+                mismatches.append(
+                    EvidenceReconciliationMismatch(
+                        tenant_id,
+                        "*",
+                        None,
+                        "database evidence streams readable",
+                        type(error).__name__,
+                    )
+                )
+                continue
+            for stream_id in streams:
+                checked += 1
+                try:
+                    result = self.verifier.verify(
+                        tenant_id,
+                        stream_id,
+                        verify_anchors=False,
+                        exact_objects=True,
+                    )
+                except Exception as error:
+                    mismatches.append(
+                        EvidenceReconciliationMismatch(
+                            tenant_id,
+                            stream_id,
+                            None,
+                            "database receipts and bucket stream agree",
+                            type(error).__name__,
+                        )
+                    )
+                    continue
+                if not result.valid:
+                    mismatches.append(
+                        EvidenceReconciliationMismatch(
+                            tenant_id,
+                            stream_id,
+                            result.first_broken_sequence,
+                            str(result.expected),
+                            str(result.actual),
+                        )
+                    )
+        return EvidenceReconciliationReport(checked, tuple(mismatches))

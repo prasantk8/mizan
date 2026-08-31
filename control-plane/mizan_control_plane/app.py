@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .approval_repository import ApprovalRepository
 from .auth import TokenVerifier, bearer_token
 from .config import Settings
-from .evidence import EvidenceRepository, ObjectEvidenceVerifier
+from .evidence import EvidenceReconciler, EvidenceRepository, ObjectEvidenceVerifier
 from .execution import ExecutionService
 from .keys import KEY_ROLES, KeyProvider
 from .limits import RequestBodyLimitMiddleware
@@ -57,6 +57,7 @@ LOGGER = logging.getLogger(__name__)
 def create_app(
     settings: Settings | None = None,
     evidence_verifier: ObjectEvidenceVerifier | None = None,
+    evidence_reconciler: EvidenceReconciler | None = None,
     execution_service: ExecutionService | None = None,
     key_provider: KeyProvider | None = None,
     metrics: Metrics | None = None,
@@ -552,6 +553,13 @@ def create_app(
             except Exception as exc:
                 checks["signing_keys"] = f"unavailable: {type(exc).__name__}"
         checks["evidence_verifier"] = "ok" if evidence_verifier is not None else "absent"
+        if evidence_reconciler is None:
+            checks["evidence_reconciliation"] = "absent"
+        else:
+            reconciliation = evidence_reconciler.reconcile(settings.drain_tenants)
+            checks["evidence_reconciliation"] = (
+                "ok" if reconciliation.valid else "mismatch"
+            )
         checks["execution_service"] = "ok" if execution_service is not None else "absent"
         if settings.environment == "production":
             checks["anchor_provider"] = (
