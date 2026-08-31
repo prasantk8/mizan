@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
+from fastapi.testclient import TestClient
+from mizan_control_plane.config import Settings
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -18,8 +20,10 @@ from mizan_control_plane.evidence import (
 from mizan_control_plane.models import AuthenticatedIdentity, EvaluationContext
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
+from mizan_control_plane.runtime import build_runtime
 from mizan_control_plane.service import AuthorizationService
 
+from tests.support import UNUSED_IDENTITY_JWKS
 from tests.unit.test_authorization import context
 
 TENANT = "tnt_bank-b"
@@ -94,7 +98,9 @@ def _seed_export_tenant(repository: PostgresAuthorizationRepository) -> None:
 
 
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
-def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: Path) -> None:
+def test_operator_export_verifies_and_a_missing_bucket_segment_fails_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     database_url = os.environ["MIZAN_TEST_DATABASE_URL"]
     repository = PostgresAuthorizationRepository(database_url)
     _seed_export_tenant(repository)
@@ -197,3 +203,28 @@ def test_operator_export_runs_real_pipeline_then_standalone_verifier(tmp_path: P
     # The whole point of recording the override: the verifier reports it to whoever is holding
     # the bundle, without them having to know to look in the manifest.
     assert "CUSTODY OVERRIDE:" in verified.stdout
+
+    # The production probe and the drainer use the same reconciliation implementation. First show
+    # the healthy database receipts and object stream produce readiness 200, then remove the exact
+    # segment those receipts address and require `/readyz` itself to fail. A unit fake returning
+    # `False` here would prove only that readiness can display a false value, not that a real
+    # database-to-bucket mismatch reaches it.
+    monkeypatch.setenv("MIZAN_DATABASE_URL", database_url)
+    monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.reconciliation.test")
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", UNUSED_IDENTITY_JWKS)
+    monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE_ROOT", str(object_root))
+    monkeypatch.setenv("MIZAN_DRAIN_TENANTS", TENANT)
+    runtime = build_runtime(Settings.from_environment())
+    try:
+        with TestClient(runtime.app) as client:
+            healthy = client.get("/readyz")
+            assert healthy.status_code == 200
+
+            object_key = evidence.receipt_rows(TENANT, STREAM)[0]["payload"]["object_key"]
+            (object_root / object_key).unlink()
+            mismatched = client.get("/readyz")
+            assert mismatched.status_code == 503
+            assert mismatched.json()["checks"]["evidence_reconciliation"] == "mismatch"
+    finally:
+        for pool in runtime.app.state.connection_pools:
+            pool.close()

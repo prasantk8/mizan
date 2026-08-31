@@ -1836,6 +1836,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-22 | An agent PATCH requires a distinct strongly authenticated second approver when the **stored** document or the **submitted** document is a production `HIGH`/`CRITICAL` agent. Evaluating only the submitted side lets one operator remove the protection and change the agent in the same write. The delegation parent edge `create_agent` enforces is re-enforced whenever a PATCH moves `parent_agent_id`. The same authority governs registry creation: `POST /v1/agents`, `/v1/tools`, `/v1/tools/{id}/binding-profile` and `/v1/policies` require a human operator with MFA or hardware authentication — never an agent or service identity — and four eyes for a production `HIGH`/`CRITICAL` object. | `POST`/`PATCH /v1/agents`, `/v1/tools`, `/v1/policies` |
 | V-23 | `POST /v1/decisions/{id}/execution-token` is accepted only from the agent principal the ADR_Record names, and issues at most one unconsumed, unexpired token per decision — a repeat request returns the outstanding capability, never a second one. Serialized per decision so concurrent requests cannot both mint. | execution token issuer |
 | V-24 | Every identity token carries `kid`; it selects exactly one public key from deployment-pinned `MIZAN_IDENTITY_JWKS`, and the JOSE `alg` must equal that key's allowlisted algorithm. Missing, unknown/retired, duplicate, symmetric, private, or algorithm-confused keys fail closed. A token may never select a JWKS URL or trust root. | identity authentication |
+| V-25 | Every database evidence receipt reconciles to exactly one record in its receipt-bound immutable object: signatures and content versions verify, object membership is exact in both directions, and the reconstructed receipt stream is dense. A mismatch is checked by the managed drainer and makes `/health/ready` and `/readyz` return 503. Unpublished outbox rows remain governed by the publication-lag SLO and are not reconciliation mismatches. | outbox drainer + readiness |
 
 ---
 
@@ -1861,6 +1862,11 @@ Authorization transaction (single Postgres txn)
 - **Object storage** holds the authoritative evidence corpus and the anchors that make tampering detectable *outside the Postgres administrative boundary* — which is what makes I-11 meaningful against a privileged operator.
 - Atomic publication is mandatory: outbox + idempotent consumers. A direct dual write to Postgres and Kafka is a spec violation (G8).
 - **Publication receipts close the pre-anchor execution gap.** The object-store writer returns a signed receipt binding tenant, stream, sequence, and record hash. `financial_write` redemption requires receipts covering the ADR_Record and the deciding approval DecisionEvent (I-25/V-20). Other actions may proceed asynchronously only while unpublished age remains below `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS`; exceeding it opens the evidence breaker.
+- **Database receipts and immutable objects are reconciled.** After every managed drain cycle and on
+  readiness, one shared checker verifies every configured stream's receipt signatures, receipt-bound
+  object versions, exact receipt↔record membership, and dense hash chain. A missing, divergent, duplicate,
+  or extra object record makes `/health/ready` and `/readyz` return 503. Rows that have not yet acquired a
+  receipt are ordinary asynchronous publication and remain governed by the unpublished-age SLO.
 - **Anchor sets are dense chained evidence.** Every new signed anchor payload includes `anchor_number`
   (zero-based and monotonic per tenant/stream), `prev_anchor_hash` (SHA-256 over the prior complete signed
   payload, with `"0"*64` at genesis), and `covered_record_count`. Its range begins exactly one sequence
