@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-122 is DONE through merged PR #33. T-124 is ACTIVE: complete storage-layer immutability coverage and make readiness fail when database evidence streams disagree with bucket objects.
+**The two-product pilot programme is in WS-1a hardening.** T-124 is in REVIEW through replacement PR #35 after PR #34 merged its claim-only commit. T-125 is READY next: enforce the ratified ADR-003 rate-limit tiers on the three pilot-critical route classes.
 
 ## Agent Queue
 
@@ -14,7 +14,8 @@
 |---|---|---|---|---|
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
-| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | ACTIVE |
+| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | REVIEW |
+| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | READY |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -124,7 +125,6 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-124 | CODEX | f7159ab8-c850-4e38-8408-e5f7373bc7c4 | 2 | 2026-08-31T19:22:10Z | 2026-08-31T19:22:10Z | 2026-08-31T23:22:10Z | e64263e608844e27da4de20b68917271dccb7e41 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -166,10 +166,11 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Execute T-124 through draft PR and CI.** Protect `adr_record_policies` with the existing evidence-table
-> REVOKE + SQLSTATE 55000 trigger pattern, exercise UPDATE and DELETE against every protected table in
-> `postgres-contract`, and make `/readyz` fail when the drain worker detects a database-to-bucket stream
-> reconciliation mismatch.
+> **Independently review and squash-merge replacement PR #35 for T-124.** Require a `REVIEW:` comment that
+> checks the nine-table UPDATE/DELETE trigger proof, the missing/divergent/duplicate/extra object cases,
+> the deliberate exclusion of normal unpublished outbox rows, and the `/readyz` 503 fault path. PR #34
+> contains only the claim commit and its checks do not validate the implementation. After #35 merges,
+> claim T-125 and implement ADR-003 rate limits for `/v1/authorize`, approvals and token issuance.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -196,6 +197,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-31 · CODEX · T-124 · Implementation complete and handed off in replacement PR #35. PR #34 was squash-merged at claim-only SHA `fe7bea9` while implementation push `42648ef` was propagating; the implementation was rebased onto that merge as `a325b61`, and the protocol exception is explicit in the replacement PR. Migration 0005 and the schema contract enforce both verbs with exact SQLSTATE 55000 across all nine evidence tables. The shared reconciler catches missing, divergent, duplicate and extra receipt-bound bucket records in the drain worker and makes `/readyz` return 503 while leaving ordinary unpublished outbox rows to the existing lag SLO. Local results: Ruff, `make check`, contract coverage, 457 unit tests and 35/35 live PostgreSQL tests passed; the schema test fires 18 refusals. CI run `33430718095` passed all 13 jobs on `a325b61`. Rule 8 rejects pre-fix `e64263e` both for mutable `adr_record_policies` and old `/readyz` 200 with a missing receipt-bound object. Rule 10 includes the Ruff/import fix, three discarded pre-fix harness attempts, the routine removed benchmark artifact, and the claim-only #34 merge. No benchmark numbers claimed. H-7 does not fire. · next: independent `REVIEW:` and squash-merge PR #35, then claim T-125
 
 - 2026-08-31 · CODEX · T-124 · Reclaimed the expired version-1 lease by CAS to version 2 after the user resumed the paused session. Migration 0005 now gives policy citations and normalized contexts the same REVOKE + SQLSTATE 55000 trigger controls as the other evidence tables; the live schema gate fires UPDATE and DELETE on all nine. One receipt/object reconciler is called by the managed drainer and readiness; it distinguishes normal unpublished rows from missing, divergent, duplicate, or extra receipt-bound bucket records. Focused 60 tests, Ruff, `make check`, contract coverage, 457 unit tests, and all 35 PostgreSQL tests pass. Pre-fix `e64263e` is rejected both because `mizan_app` can mutate `adr_record_policies` and because a missing receipt-bound segment still yields `/readyz` 200. Rule 10 so far: Ruff caught one import-order error; the first disposable pre-fix command was rejected for destructive cleanup syntax; the first readiness reproduction omitted schema fixture seeding; a second mistakenly let pytest prefer the current checkout, so the final proof uses the old runtime directly. · next: commit/push implementation and let PR CI arbitrate
 
