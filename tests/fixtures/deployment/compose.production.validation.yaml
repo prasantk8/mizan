@@ -1,0 +1,34 @@
+services:
+  # Test-only dependencies for the production Compose contract. They deliberately live in an
+  # override: a development-mode Vault root token must never become part of the operator-facing
+  # production manifest. The validator provisions them before it launches the production profile.
+  vault-validation:
+    profiles: ["production-validation"]
+    image: hashicorp/vault:1.18@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166
+    hostname: vault-validation
+    cap_add: ["IPC_LOCK"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: validation-only-root
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        mkdir -p /vault-tls && exec vault server -dev -dev-tls
+        -dev-listen-address=0.0.0.0:8200 -dev-tls-cert-dir=/vault-tls
+    volumes:
+      - mizan-validation-vault-tls:/vault-tls
+
+  object-store-validation:
+    profiles: ["production-validation"]
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: validation-access
+      MINIO_ROOT_PASSWORD: validation-secret-key
+    ports:
+      - "127.0.0.1:${MIZAN_VALIDATION_S3_PORT}:9000"
+    volumes:
+      - mizan-validation-object-store:/data
+
+volumes:
+  mizan-validation-vault-tls:
+  mizan-validation-object-store:

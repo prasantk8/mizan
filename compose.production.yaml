@@ -9,7 +9,8 @@ x-control-environment: &control-environment
   # Vault Transit and T-102 built it; `scripts/provision_vault.sh` prints these four values.
   MIZAN_KEY_CUSTODY_MODE: ${MIZAN_KEY_CUSTODY_MODE:-vault-transit}
   MIZAN_VAULT_ADDR: ${MIZAN_VAULT_ADDR}
-  MIZAN_VAULT_TOKEN_FILE: ${MIZAN_VAULT_TOKEN_FILE:-/run/mizan/vault/token}
+  MIZAN_VAULT_TOKEN_FILE: ${MIZAN_VAULT_TOKEN_FILE:-/run/mizan/secrets/vault-token}
+  MIZAN_VAULT_CA_CERT: ${MIZAN_VAULT_CA_CERT:-}
   MIZAN_EVIDENCE_RECEIPT_KEY_REF: ${MIZAN_EVIDENCE_RECEIPT_KEY_REF:-vault://transit/mizan-evidence-receipt#v1}
   MIZAN_EVIDENCE_ANCHOR_KEY_REF: ${MIZAN_EVIDENCE_ANCHOR_KEY_REF:-vault://transit/mizan-evidence-anchor#v1}
   MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF: ${MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF:-vault://transit/mizan-execution-token#v1}
@@ -26,6 +27,14 @@ x-control-environment: &control-environment
   MIZAN_HEALTH_SERVER_CA_FILE: /run/mizan/tls/server-ca.pem
   MIZAN_HEALTH_CLIENT_CERTIFICATE_FILE: /run/mizan/tls/health-client.pem
   MIZAN_HEALTH_CLIENT_PRIVATE_KEY_FILE: /run/mizan/tls/health-client-key.pem
+  # Production records claim seven-year retention. The process therefore refuses a directory and
+  # verifies Object Lock on this bucket before reporting readiness (B-21/T-104).
+  MIZAN_EVIDENCE_OBJECT_STORE: s3
+  MIZAN_AUDIT_ANCHOR_BUCKET: ${MIZAN_AUDIT_ANCHOR_BUCKET}
+  MIZAN_S3_ENDPOINT_URL: ${MIZAN_S3_ENDPOINT_URL:-}
+  MIZAN_S3_REGION: ${MIZAN_S3_REGION:-us-east-1}
+  MIZAN_S3_ACCESS_KEY_ID: ${MIZAN_S3_ACCESS_KEY_ID:-}
+  MIZAN_S3_SECRET_ACCESS_KEY: ${MIZAN_S3_SECRET_ACCESS_KEY:-}
   MIZAN_HTTP_HOST: 0.0.0.0
   MIZAN_HTTP_PORT: "8443"
   # The two background workloads are told which tenants they serve. Neither can discover them:
@@ -35,6 +44,10 @@ x-control-environment: &control-environment
   # nothing -- so an operator who leaves these unset learns immediately, not at the first audit.
   MIZAN_DRAIN_TENANTS: ${MIZAN_DRAIN_TENANTS}
   MIZAN_ATTEST_TENANTS: ${MIZAN_ATTEST_TENANTS}
+
+x-control-volumes: &control-volumes
+  - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
+  - ${MIZAN_SECRET_DIRECTORY:-./secrets/runtime}:/run/mizan/secrets:ro
 
 services:
   postgres-production:
@@ -80,9 +93,7 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:${MIZAN_HTTPS_PORT:-8443}:8443"
-    volumes:
-      - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
-      - mizan-production-evidence:/app/var/evidence
+    volumes: *control-volumes
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
@@ -101,13 +112,17 @@ services:
     depends_on:
       migrations:
         condition: service_completed_successfully
-    volumes:
-      - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
-      - mizan-production-evidence:/app/var/evidence
+    volumes: *control-volumes
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 4
     restart: unless-stopped
 
   attestation-worker:
@@ -123,15 +138,18 @@ services:
     depends_on:
       migrations:
         condition: service_completed_successfully
-    volumes:
-      - ${MIZAN_TLS_DIRECTORY:-./secrets/tls}:/run/mizan/tls:ro
-      - mizan-production-evidence:/app/var/evidence
+    volumes: *control-volumes
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 4
     restart: unless-stopped
 
 volumes:
   mizan-production-data:
-  mizan-production-evidence:

@@ -200,6 +200,6 @@ def test_the_dockerfile_still_builds_the_runtime_rather_than_the_toolchain() -> 
     assert "uv sync --frozen --no-dev" in dockerfile
     assert "apt-get install --no-install-recommends --yes ca-certificates openssl" in dockerfile
     assert "USER 65532:65532" in dockerfile
-    assert "HEALTHCHECK" in dockerfile and "/health/ready" in dockerfile
+    assert "HEALTHCHECK" in dockerfile and "/readyz" in dockerfile
     assert "MIZAN_HEALTH_SERVER_CA_FILE" in dockerfile
     assert "COPY --chown=65532:65532 SPEC_v1.md ./SPEC_v1.md" in dockerfile
