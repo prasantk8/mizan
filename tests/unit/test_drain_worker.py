@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.drain_worker import (
     DrainReport,
     StopSignal,
@@ -19,7 +20,9 @@ from mizan_control_plane.drain_worker import (
 )
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
+    EvidenceReconciler,
     LocalImmutableObjectStore,
+    ObjectEvidenceVerifier,
     OutboxPublisher,
 )
 from mizan_control_plane.problems import Problem
@@ -147,6 +150,34 @@ def publisher_for(repository: FakeDrainRepository, tmp_path: Path) -> OutboxPubl
     )
 
 
+def reconciler_for(
+    repository: FakeDrainRepository, publisher: OutboxPublisher
+) -> EvidenceReconciler:
+    return EvidenceReconciler(
+        ObjectEvidenceVerifier(
+            repository,
+            publisher.store,
+            {publisher.receipt_signer.key_id: publisher.receipt_signer.public_key},
+        )
+    )
+
+
+def chained_outbox_rows(count: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    previous = "0" * 64
+    for sequence in range(count):
+        payload = {
+            "stream_id": STREAM,
+            "sequence_number": sequence,
+            "prev_hash": previous,
+            "value": f"record-{sequence}",
+        }
+        payload["record_hash"] = canonical_hash(payload)
+        rows.append(outbox_row(sequence + 1, sequence, payload=payload))
+        previous = payload["record_hash"]
+    return rows
+
+
 def test_a_cycle_publishes_every_row_and_anchors_what_it_published(tmp_path: Path) -> None:
     repository = FakeDrainRepository([outbox_row(index, index) for index in range(3)])
     report = run_once(publisher_for(repository, tmp_path), repository, [TENANT], 100, 5)
@@ -158,6 +189,46 @@ def test_a_cycle_publishes_every_row_and_anchors_what_it_published(tmp_path: Pat
     # rather than only the count.
     assert {item["payload"]["sequence_number"] for item in repository.receipts} == {0, 1, 2}
     assert repository.anchor_data[0]["payload"]["covered_record_count"] == 3
+
+
+def test_the_worker_reconciles_database_receipts_with_the_bucket_stream(tmp_path: Path) -> None:
+    repository = FakeDrainRepository(chained_outbox_rows(2))
+    publisher = publisher_for(repository, tmp_path)
+    reconciler = reconciler_for(repository, publisher)
+
+    healthy = run_once(
+        publisher, repository, [TENANT], 100, 5, reconciler=reconciler
+    )
+    assert healthy.reconciliation_mismatches == []
+
+    object_key = repository.receipts[0]["payload"]["object_key"]
+    (publisher.store.root / object_key).unlink()
+    broken = run_once(
+        publisher, repository, [TENANT], 100, 5, reconciler=reconciler
+    )
+
+    assert len(broken.reconciliation_mismatches) == 1
+    mismatch = broken.reconciliation_mismatches[0]
+    assert mismatch.tenant_id == TENANT
+    assert mismatch.stream_id == STREAM
+    assert mismatch.actual == "object missing"
+
+
+def test_reconciliation_rejects_a_bucket_record_with_no_database_receipt(tmp_path: Path) -> None:
+    repository = FakeDrainRepository(chained_outbox_rows(2))
+    publisher = publisher_for(repository, tmp_path)
+    reconciler = reconciler_for(repository, publisher)
+    assert publisher.drain(TENANT) == 2
+
+    # Models a crash after the two-record segment was committed but before the second receipt was
+    # committed. Ordinary range verification accepts a receipt that points into a larger segment;
+    # reconciliation is stricter and requires the database and whole bucket object to agree.
+    repository.receipts.pop()
+    report = reconciler.reconcile([TENANT])
+
+    assert not report.valid
+    assert report.mismatches[0].expected == "exactly 1 receipt-bound records"
+    assert report.mismatches[0].actual == "2 bucket records"
 
 
 def test_a_full_batch_is_followed_immediately_rather_than_after_the_poll_interval(

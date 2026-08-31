@@ -87,6 +87,7 @@ def test_readiness_reports_the_unreachable_database_rather_than_reporting_ok(
     assert body["checks"]["database"].startswith("unavailable")
     assert body["checks"]["signing_keys"] == "ok"
     assert body["checks"]["evidence_verifier"] == "ok"
+    assert body["checks"]["evidence_reconciliation"] == "ok"
     assert body["checks"]["execution_service"] == "ok"
 
 

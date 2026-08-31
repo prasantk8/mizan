@@ -624,3 +624,32 @@ incident instead of before it.
 Both directions of the correction are demonstrated against `793a54a`, where the same authorization
 produces `trace_id=09fef18dd7c0dc66009857d7d4d02a52` — exactly `sha256(request_id)[:32]` — and
 `span_id=null`, and where the T-073 contract rejects that record on both fields.
+
+### G.23 Implementation delta — database receipts and bucket segments reconcile (T-124)
+
+An immutable object store does not by itself prove that the searchable database and the evidence
+corpus describe the same stream. A receipt could point at a missing object, an object could contain a
+record for which the receipt transaction never committed, or the bytes at a receipt-bound key could
+diverge from the content version recorded in PostgreSQL. Before T-124 those conditions were detected
+only when an operator explicitly verified or exported that stream; the managed drainer and `/readyz`
+could both report healthy meanwhile.
+
+The receipt stream is now reconciled after every managed drain cycle and by readiness using one shared
+checker. For every configured tenant and stream it verifies receipt signatures, receipt-bound object
+versions, exact database-receipt ↔ bucket-record membership, and the dense record hash chain. The exact
+membership check is stricter than a bounded record lookup: a range lookup may legitimately select one
+receipt from a multi-record segment, while reconciliation of the whole stream requires every record in
+that segment to have exactly one database receipt and permits no extra record.
+
+Unpublished outbox rows are not mismatches. Publication is asynchronous by Amendment B and its age is
+already governed by `MIZAN_EVIDENCE_MAX_UNPUBLISHED_SECONDS`; conflating a pending row with divergence
+would make readiness flap during every ordinary authorization. Once a receipt exists, disagreement is
+not an SLO condition: the drainer reports it immediately, a one-shot drainer exits non-zero, and both
+`/health/ready` and `/readyz` return 503 until the same checker passes.
+
+At the database boundary, the immutable authorization snapshot includes its policy citations and its
+normalized policy-safe context. `adr_record_policies` and `authorization_contexts` therefore receive the
+same two controls as the other evidence relations: `mizan_app` has UPDATE/DELETE revoked, and a
+`BEFORE UPDATE OR DELETE` trigger raises SQLSTATE `55000` even when a privileged statement reaches the
+row. The PostgreSQL contract fires both verbs against real rows in all nine protected evidence tables;
+catalog inspection or accepting `42501 insufficient_privilege` does not demonstrate the trigger.

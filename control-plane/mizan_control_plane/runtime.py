@@ -20,7 +20,12 @@ from fastapi import FastAPI
 
 from .app import create_app
 from .config import Settings
-from .evidence import EvidenceRepository, LocalImmutableObjectStore, ObjectEvidenceVerifier
+from .evidence import (
+    EvidenceReconciler,
+    EvidenceRepository,
+    LocalImmutableObjectStore,
+    ObjectEvidenceVerifier,
+)
 from .execution import ExecutionService, ExecutionTokenCodec
 from .keys import KEY_ROLES, KeyProvider, KeyVersion, KmsHsmKeyProvider, LocalKeyProvider
 from .object_store import (
@@ -190,6 +195,7 @@ class Runtime:
     settings: Settings
     key_provider: KeyProvider
     evidence_verifier: ObjectEvidenceVerifier
+    evidence_reconciler: EvidenceReconciler
     execution_service: ExecutionService
     metrics: Metrics
     metrics_server: MetricsServer | None = None
@@ -203,14 +209,30 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         raise StartupRefused(str(refused)) from refused
     provider = build_key_provider(settings)
     verifier, evidence_repository = build_evidence_verifier(settings, provider)
+    reconciler = EvidenceReconciler(verifier)
     execution_service = build_execution_service(settings, provider, verifier, metrics)
-    app = create_app(settings, verifier, execution_service, provider, metrics, tracer)
+    app = create_app(
+        settings,
+        verifier,
+        reconciler,
+        execution_service,
+        provider,
+        metrics,
+        tracer,
+    )
     app.state.connection_pools.extend(
         [evidence_repository.pool, execution_service.pool, execution_service.security_event_pool]
     )
     app.state.metrics_server = metrics_server
     return Runtime(
-        app, settings, provider, verifier, execution_service, metrics, metrics_server
+        app,
+        settings,
+        provider,
+        verifier,
+        reconciler,
+        execution_service,
+        metrics,
+        metrics_server,
     )
 
 

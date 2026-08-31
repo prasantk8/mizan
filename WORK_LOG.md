@@ -124,7 +124,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-124 | CODEX | 0eb92e3b-6948-43c4-98e7-cbbb0d7b9259 | 1 | 2026-08-31T08:57:55Z | 2026-08-31T08:57:55Z | 2026-08-31T12:57:55Z | e64263e608844e27da4de20b68917271dccb7e41 |
+| T-124 | CODEX | f7159ab8-c850-4e38-8408-e5f7373bc7c4 | 2 | 2026-08-31T19:22:10Z | 2026-08-31T19:22:10Z | 2026-08-31T23:22:10Z | e64263e608844e27da4de20b68917271dccb7e41 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -196,6 +196,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-31 · CODEX · T-124 · Reclaimed the expired version-1 lease by CAS to version 2 after the user resumed the paused session. Migration 0005 now gives policy citations and normalized contexts the same REVOKE + SQLSTATE 55000 trigger controls as the other evidence tables; the live schema gate fires UPDATE and DELETE on all nine. One receipt/object reconciler is called by the managed drainer and readiness; it distinguishes normal unpublished rows from missing, divergent, duplicate, or extra receipt-bound bucket records. Focused 60 tests, Ruff, `make check`, contract coverage, 457 unit tests, and all 35 PostgreSQL tests pass. Pre-fix `e64263e` is rejected both because `mizan_app` can mutate `adr_record_policies` and because a missing receipt-bound segment still yields `/readyz` 200. Rule 10 so far: Ruff caught one import-order error; the first disposable pre-fix command was rejected for destructive cleanup syntax; the first readiness reproduction omitted schema fixture seeding; a second mistakenly let pytest prefer the current checkout, so the final proof uses the old runtime directly. · next: commit/push implementation and let PR CI arbitrate
 
 - 2026-08-31 · CODEX · T-124 · Claimed from merged T-122 base `e64263e`; scope is evidence-table mutation protection plus database-to-bucket reconciliation surfaced through readiness · next: open draft PR, reproduce the pre-fix gaps, then implement and run `postgres-contract`
 

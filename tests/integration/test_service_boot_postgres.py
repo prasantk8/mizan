@@ -55,6 +55,7 @@ def test_console_script_boots_and_reports_ready_against_a_real_database(tmp_path
             "database": "ok",
             "signing_keys": "ok",
             "evidence_verifier": "ok",
+            "evidence_reconciliation": "ok",
             "execution_service": "ok",
         }
         live = httpx.get(f"http://127.0.0.1:{port}/health/live", timeout=5)
