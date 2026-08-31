@@ -422,7 +422,10 @@ def test_an_mcp_client_reaches_tools_only_through_a_recorded_decision(tmp_path: 
         voter.join(timeout=30)
     finally:
         publisher.stop.set()
-        publisher.join(timeout=15)
+        # A startup refusal happens before `publisher.start()`. Joining an unstarted Thread raises
+        # RuntimeError and used to mask the refusal this test was meant to report.
+        if publisher.ident is not None:
+            publisher.join(timeout=15)
         approver_client.close()
         client.close()
         process.terminate()
