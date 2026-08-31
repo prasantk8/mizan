@@ -6,14 +6,15 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-123 merged through PR #32 at `8047820`; the thread records no independent `REVIEW:` comment. T-122 is in progress on draft PR #33: implementation and full local contracts pass; first CI was 12/13 green and exposed only that the auth coverage step omitted the new rotation test module.
+**The two-product pilot programme is in WS-1a hardening.** T-122 is in REVIEW on PR #33: identity verification uses a deployment-pinned JWKS, routes by `kid`, supports an additive overlap, refuses a retired key, and has an operator runbook plus CI drill. T-124 is next after review and merge.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
-| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | IN_PROGRESS |
+| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | REVIEW |
+| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | READY |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -123,7 +124,6 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-122 | CODEX | 7ad4d2a8-5ebb-4959-8339-346e23ee8656 | 1 | 2026-08-31T11:36:17+04:00 | 2026-08-31T12:10:13+04:00 | 2026-08-31T16:10:13+04:00 | 8047820a8b0c7a1475fddbb7ef2e29a22c71145b |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -165,10 +165,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Validate T-122 on draft PR #33.** Require the static-PEM pre-fix artifact to fail the new drill
-> validator, run every CI job on the implementation head, repair any manifest or integration caller
-> that still supplies a PEM, then complete the report and request independent review. Do not add
-> remote discovery or a new trust-root policy without an H-7 ruling.
+> **Review and merge T-122 through PR #33.** Require the protocol's independent `REVIEW:` comment,
+> all thirteen CI jobs green on the final handoff head, and a clean merge state before squash-merge.
+> Then claim T-124: complete storage-layer immutability coverage and add database-to-bucket stream
+> reconciliation in the drain worker.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -195,6 +195,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-31 · CODEX · T-122 · Replaced the single identity-verification PEM with a startup-validated public-only JWKS, mandatory unique `kid` routing, exact RS256/ES256/EdDSA binding, private/symmetric/duplicate/malformed-key refusal, and the additive old-only → old+new → new-only rotation contract. The existing maximum identity-token TTL is the planned overlap floor; emergency compromise retirement remains immediate. Updated Compose, Helm, every live integration caller and `mizan-dev-token`; added SPEC V-24, ADR-001 Amendment F, the operator runbook, and an explicit CI drill whose final stage refuses the retired `kid`. Rule 8: `uv run --frozen python scripts/identity_key_rotation_drill.py --validate tests/fixtures/identity-key-rotation/pre-fix-8047820.json` rejects pre-fix `8047820`'s static-replacement output because it has no overlap state. Rule 10: an initial reproduction used invalid typed IDs; host Perl lacked `C.UTF-8`; the first PostgreSQL run exposed one MCP caller still passing a PEM and cleanup that masked the primary startup refusal; first CI was 12/13 because the auth coverage selector omitted the new test module; malformed-JWK probing found raw `TypeError` diagnostics. Each was corrected and its substantive gate rerun. Full local contract: 452 unit + 35 live PostgreSQL passed before the final three malformed-type cases; final CI run `33371696500` passed all 13 jobs on `8daea48`. No benchmark numbers claimed. H-7 stays within the human-issued task and accepted ADR-001 boundaries: no remote discovery, refresh policy, multi-issuer tenancy or token-selected trust root. · next: independent review and squash-merge PR #33, then T-124
 
 - 2026-08-31 · CODEX · T-123 · Replaced the broad `tests/integration` sweep with a bidirectionally checked inventory of all nine `test_*_postgres.py` modules, split unit and live-database coverage so the PostgreSQL result stands alone, rejected skip/xfail/xpass/deselection/no-test outcomes, published every module plus `35 passed` in the GitHub step summary, and removed the unrelated overlay-as-skip from the unit healthcheck contract. Rule 8: pre-fix `0ea6420dbb352f2c382c8859a41b5da63a335ad5` produced `473 passed, 23 skipped`; `uv run --frozen python scripts/validate_pytest_execution.py < tests/fixtures/postgres-contract/pre-fix-0ea6420-summary.txt` now exits 1 with `FAIL: pytest reported non-passing outcomes, which is not a pass: 473 passed, 23 skipped`. Fixed tree: 445 unit passed with zero skips, 35/35 PostgreSQL passed, execution coverage 84.26%, Ruff and `make check` clean; no benchmark numbers claimed. What did not work: the first local proof used zsh's read-only `status` variable, and the first implementation push omitted the per-commit WORK_LOG heartbeat so H-8 correctly failed; both harness defects were corrected and the provenance gate rerun green. No H-7 contract fires. · next: independent review and squash-merge PR #32, then T-122
 
