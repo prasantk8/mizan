@@ -6,14 +6,14 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-123 is in REVIEW on PR #32: `postgres-contract` names all nine PostgreSQL integration modules, publishes them in the job summary, and rejects any non-passing outcome. T-122 is next after review and merge.
+**The two-product pilot programme is in WS-1a hardening.** T-123 merged through PR #32 at `8047820`; the thread records no independent `REVIEW:` comment. T-122 is in progress: replace the static identity-verification PEM with a locally loaded JWKS-style keyset, route by `kid`, enforce the overlap retirement boundary, and gate the documented rotation drill in CI.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
-| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | REVIEW |
-| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | READY |
+| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
+| T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | IN_PROGRESS |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -123,6 +123,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-122 | CODEX | 7ad4d2a8-5ebb-4959-8339-346e23ee8656 | 1 | 2026-08-31T11:36:17+04:00 | 2026-08-31T11:36:17+04:00 | 2026-08-31T15:36:17+04:00 | 8047820a8b0c7a1475fddbb7ef2e29a22c71145b |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -164,10 +165,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Review and merge T-123 through PR #32.** Require the protocol's independent `REVIEW:` comment,
-> all thirteen CI jobs green on the final handoff head, and a clean merge state before squash-merge.
-> Then claim T-122: identity-token JWKS key rotation, `kid` routing, overlap expiry, and the documented
-> CI rotation drill.
+> **Execute T-122 on `t-122-identity-key-rotation`.** Add the local JWKS-style identity keyset,
+> deterministic `kid` routing, an explicit overlap-expiry boundary, and a CI rotation drill whose
+> adversarial final step refuses a token signed by the retired key. Amend ADR-001 and SPEC §8 in the
+> same change-set; do not introduce remote discovery or a new trust-root policy without an H-7 ruling.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
