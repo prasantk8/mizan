@@ -113,6 +113,7 @@ jobs:
       - name: Gate identity and route coverage
         run: |
           uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_dev_token.py \
+            tests/unit/test_identity_key_rotation.py \
             --cov=mizan_control_plane.auth --cov-fail-under=75
           uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_runtime.py \
             --cov=mizan_control_plane.app --cov-fail-under=68

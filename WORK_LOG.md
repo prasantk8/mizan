@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-123 merged through PR #32 at `8047820`; the thread records no independent `REVIEW:` comment. T-122 is in progress on draft PR #33: the local JWKS, `kid` routing, additive overlap, retirement refusal, runbook and CI drill are implemented; full unit and live-PostgreSQL contracts pass locally.
+**The two-product pilot programme is in WS-1a hardening.** T-123 merged through PR #32 at `8047820`; the thread records no independent `REVIEW:` comment. T-122 is in progress on draft PR #33: implementation and full local contracts pass; first CI was 12/13 green and exposed only that the auth coverage step omitted the new rotation test module.
 
 ## Agent Queue
 
@@ -123,7 +123,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-122 | CODEX | 7ad4d2a8-5ebb-4959-8339-346e23ee8656 | 1 | 2026-08-31T11:36:17+04:00 | 2026-08-31T11:57:46+04:00 | 2026-08-31T15:57:46+04:00 | 8047820a8b0c7a1475fddbb7ef2e29a22c71145b |
+| T-122 | CODEX | 7ad4d2a8-5ebb-4959-8339-346e23ee8656 | 1 | 2026-08-31T11:36:17+04:00 | 2026-08-31T12:08:05+04:00 | 2026-08-31T16:08:05+04:00 | 8047820a8b0c7a1475fddbb7ef2e29a22c71145b |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
