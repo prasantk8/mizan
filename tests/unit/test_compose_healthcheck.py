@@ -26,8 +26,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 COMPOSE_FILES = ["compose.yaml", "compose.test.yaml"]
 # Only the declared command counts. An earlier version of this regex also
 # matched the word "pg_isready" inside the explanatory comment above the
@@ -62,19 +60,19 @@ def test_every_postgres_healthcheck_requires_a_tcp_connection() -> None:
     )
 
 
-@pytest.mark.parametrize("name", COMPOSE_FILES)
-def test_healthcheck_retries_survive_migration_initialisation(name: str) -> None:
-    path = Path(name)
-    if not path.exists() or "pg_isready" not in path.read_text():
-        pytest.skip(f"{name} declares no PostgreSQL healthcheck")
-    text = path.read_text()
+def test_healthcheck_retries_survive_migration_initialisation() -> None:
+    checks = _healthchecks()
+    assert checks, "expected at least one pg_isready healthcheck to guard"
 
     # The TCP check is the fix, but it also means the container stays unhealthy
     # for the whole init phase rather than briefly lying. The budget has to cover
-    # running every migration.
-    interval = int(re.search(r"interval:\s*(\d+)s", text).group(1))
-    retries = int(re.search(r"retries:\s*(\d+)", text).group(1))
-    assert interval * retries >= 30, (
-        f"{name} allows only {interval * retries}s for PostgreSQL to initialise "
-        "and run every migration before the container is declared unhealthy"
-    )
+    # running every migration. Overlay files that declare no healthcheck add
+    # nothing to this contract and are not represented as a passing skip.
+    for name, _command in checks:
+        text = Path(name).read_text()
+        interval = int(re.search(r"interval:\s*(\d+)s", text).group(1))
+        retries = int(re.search(r"retries:\s*(\d+)", text).group(1))
+        assert interval * retries >= 30, (
+            f"{name} allows only {interval * retries}s for PostgreSQL to initialise "
+            "and run every migration before the container is declared unhealthy"
+        )

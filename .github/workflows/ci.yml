@@ -138,7 +138,7 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --locked --dev
-      - name: Validate migrations, forced RLS, typed IDs, and immutability
+      - name: Validate migrations and run all nine PostgreSQL integration modules
         env:
           CI: "true"
         run: make test-postgres

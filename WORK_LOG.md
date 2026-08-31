@@ -6,15 +6,15 @@
 
 ## Active Task
 
-**The two-product pilot programme has completed its WS-0 implementation.** T-121 is in REVIEW on PR #31: the supported production Compose path now boots against PostgreSQL, Vault Transit, and S3 Object Lock, and `deployment-manifests` reaches `/readyz` over mTLS. T-123 is next in the platform lane after review and merge; T-122 is ready for the security/control-plane lane.
+**The two-product pilot programme is in WS-1a hardening.** T-123 is in REVIEW on PR #32: `postgres-contract` names all nine PostgreSQL integration modules, publishes them in the job summary, and rejects any non-passing outcome. T-122 is next after review and merge.
 
 ## Agent Queue
 
 | # | Task | Lane | Depends on | State |
 |---|---|---|---|---|
-| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | READY |
+| T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | REVIEW |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | READY |
-| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | REVIEW |
+| T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
 | T-002 | Repo scaffold per PRD §116 (control-plane/, security/, sdk/, examples/, ui/) + CI skeleton | CODEX | T-001 | DONE |
@@ -164,12 +164,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Review and merge T-121 through PR #31.** Require the protocol's independent `REVIEW:` comment,
-> all thirteen CI jobs green on the handoff head, and a clean merge state before squash-merge.
->
-> **Then claim T-123 in the platform lane:** wire all nine omitted PostgreSQL integration files into
-> `postgres-contract` and make skipped-is-not-passed explicit. T-122 may proceed in parallel only
-> under a separate valid security/control-plane claim.
+> **Review and merge T-123 through PR #32.** Require the protocol's independent `REVIEW:` comment,
+> all thirteen CI jobs green on the final handoff head, and a clean merge state before squash-merge.
+> Then claim T-122: identity-token JWKS key rotation, `kid` routing, overlap expiry, and the documented
+> CI rotation drill.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -196,6 +194,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-31 · CODEX · T-123 · Replaced the broad `tests/integration` sweep with a bidirectionally checked inventory of all nine `test_*_postgres.py` modules, split unit and live-database coverage so the PostgreSQL result stands alone, rejected skip/xfail/xpass/deselection/no-test outcomes, published every module plus `35 passed` in the GitHub step summary, and removed the unrelated overlay-as-skip from the unit healthcheck contract. Rule 8: pre-fix `0ea6420dbb352f2c382c8859a41b5da63a335ad5` produced `473 passed, 23 skipped`; `uv run --frozen python scripts/validate_pytest_execution.py < tests/fixtures/postgres-contract/pre-fix-0ea6420-summary.txt` now exits 1 with `FAIL: pytest reported non-passing outcomes, which is not a pass: 473 passed, 23 skipped`. Fixed tree: 445 unit passed with zero skips, 35/35 PostgreSQL passed, execution coverage 84.26%, Ruff and `make check` clean; no benchmark numbers claimed. What did not work: the first local proof used zsh's read-only `status` variable, and the first implementation push omitted the per-commit WORK_LOG heartbeat so H-8 correctly failed; both harness defects were corrected and the provenance gate rerun green. No H-7 contract fires. · next: independent review and squash-merge PR #32, then T-122
 
 - 2026-08-31 · CODEX · T-121 · Production Compose now sets S3/Object Lock and every production-required runtime value, mounts the Vault token path it names, removes the local evidence volume, installs the image's declared `s3` extra, and exposes the workplan's `/readyz` alias. `deployment-manifests` now launches the shipped profile against real PostgreSQL, TLS Vault Transit, and MinIO with an Object-Lock bucket, then requires readiness over mTLS; the implementation-head job passed in CI. Rule 8: applied to pre-fix `7a8e66d`, the new structural gate rejects all three runtime services for missing S3 settings/secret mounts and retaining local evidence. Rule 10: the first live launch found the production image omitted `boto3`; a diagnostic run also exposed that cleanup must activate both Compose profiles. 438 unit tests passed, 1 skipped; Ruff, `make check`, the live Compose boot, and all twelve technical PR jobs passed; the draft-body completion check was corrected before this handoff commit. · next: independent `REVIEW:`/merge PR #31, then T-123 in the platform lane
 - 2026-08-30 · CODEX · T-120 · Fresh Trivy 0.74.0 scan of the pinned Debian 13.6 image found the same 13 unique CVEs/16 package findings and no Trixie fix; each exception now has a dated package-specific reachability assessment and expires 2026-09-10, while the validator rejects undated statements. Rule 8: the new dated-justification test fails on pre-fix `837f934` because the old validator accepts an undated statement. Rule 10: Colima did not persist a `/tmp` bind, then moving the worktree invalidated the generated virtualenv's absolute paths; an explicit shared mount and `uv venv --clear` corrected the harness. 438 unit tests passed, 1 skipped; Ruff, `make check`, enforced expiry validation, a zero-unsuppressed HIGH/CRITICAL image scan, and all 13 PR jobs green. · next: independent review/merge PR #30, then T-121
