@@ -12,7 +12,7 @@ secrets:
   runtime: mizan-runtime
   appDatabaseUrlKey: app-database-url
   ownerDatabaseUrlKey: owner-database-url
-  jwtPublicKeyKey: jwt-public-key
+  identityJwksKey: identity-jwks
   tls: mizan-tls
 
 config:

@@ -27,6 +27,8 @@ import pytest
 from mizan_control_plane.config import Settings
 from mizan_control_plane.runtime import StartupRefused, build_runtime
 
+from tests.support import UNUSED_IDENTITY_JWKS
+
 DATABASE = os.getenv("MIZAN_TEST_DATABASE_URL", "")
 VAULT = os.getenv("MIZAN_TEST_VAULT_ADDR", "")
 TOKEN = os.getenv("MIZAN_TEST_VAULT_TOKEN", "")
@@ -71,7 +73,7 @@ def production_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "MIZAN_ENV": "production",
         "MIZAN_DATABASE_URL": DATABASE,
         "MIZAN_JWT_ISSUER": "https://issuer.production.test",
-        "MIZAN_JWT_PUBLIC_KEY": "unused-until-a-request-arrives",
+        "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
         "MIZAN_KEY_CUSTODY_MODE": "vault-transit",
         "MIZAN_VAULT_ADDR": VAULT,
         "MIZAN_VAULT_TOKEN": TOKEN,

@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from mizan_control_plane import app as app_module
 from mizan_control_plane.config import Settings
-from mizan_control_plane.dev_token import ensure_keypair, mint
+from mizan_control_plane.dev_token import ensure_keypair, mint, public_jwks
 from mizan_control_plane.registry import require_registry_authority
 
 TENANT = "tnt_bank-a"
@@ -122,10 +122,10 @@ def wired(monkeypatch, tmp_path) -> tuple[TestClient, dict[str, FakeRepository],
         ("ApprovalRepository", "approval"),
     ):
         monkeypatch.setattr(app_module, attribute, factory(name))
-    private_key, public_pem = ensure_keypair(tmp_path / "keys")
+    private_key, _public_pem = ensure_keypair(tmp_path / "keys")
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "urn:mizan:development:dev-token")
-    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", public_pem)
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", public_jwks(private_key))
     monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE_ROOT", str(tmp_path / "evidence"))
     application = app_module.create_app(Settings.from_environment())
     with TestClient(application) as client:

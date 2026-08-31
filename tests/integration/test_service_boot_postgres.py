@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 from mizan_control_plane.config import Settings
 from mizan_control_plane.runtime import build_runtime
 
+from tests.support import UNUSED_IDENTITY_JWKS
+
 BOOT_DEADLINE_SECONDS = 30
 
 
@@ -28,7 +30,7 @@ def _service_environment(tmp_path: Path, port: int) -> dict[str, str]:
     return os.environ | {
         "MIZAN_DATABASE_URL": os.environ["MIZAN_TEST_DATABASE_URL"],
         "MIZAN_JWT_ISSUER": "https://issuer.mizan.test",
-        "MIZAN_JWT_PUBLIC_KEY": "unused-by-readiness",
+        "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
         "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
         "MIZAN_HTTP_HOST": "127.0.0.1",
         "MIZAN_HTTP_PORT": str(port),

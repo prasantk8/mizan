@@ -8,6 +8,7 @@ laptop. Key material is written to a directory the operator names; nothing is em
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import UTC, datetime, timedelta
 from os import environ
@@ -21,6 +22,7 @@ DEVELOPMENT_ISSUER = "urn:mizan:development:dev-token"
 DEVELOPMENT_ISSUER_PREFIX = "urn:mizan:development:"
 PRIVATE_KEY_NAME = "dev-identity.key"
 PUBLIC_KEY_NAME = "dev-identity.pub"
+DEFAULT_KEY_ID = "dev-identity-1"
 
 
 class DevelopmentOnly(RuntimeError):
@@ -50,6 +52,15 @@ def ensure_keypair(directory: Path) -> tuple[Ed25519PrivateKey, str]:
     return private_key, public_path.read_text(encoding="utf-8")
 
 
+def public_jwks(private_key: Ed25519PrivateKey, kid: str = DEFAULT_KEY_ID) -> str:
+    """Return the development key as the same public-only JWKS production consumes."""
+    document = jwt.algorithms.get_default_algorithms()["EdDSA"].to_jwk(
+        private_key.public_key(), as_dict=True
+    )
+    document.update({"kid": kid, "alg": "EdDSA", "use": "sig"})
+    return json.dumps({"keys": [document]}, sort_keys=True, separators=(",", ":"))
+
+
 def mint(
     private_key: Ed25519PrivateKey,
     *,
@@ -62,6 +73,7 @@ def mint(
     audience: str,
     ttl_seconds: int,
     delegation_chain: list[str] | None = None,
+    kid: str = DEFAULT_KEY_ID,
 ) -> str:
     now = datetime.now(UTC)
     claims = {
@@ -77,7 +89,7 @@ def mint(
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
     }
-    return jwt.encode(claims, private_key, algorithm="EdDSA")
+    return jwt.encode(claims, private_key, algorithm="EdDSA", headers={"kid": kid})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -95,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--roles", default="registry.admin,manager")
     parser.add_argument("--audience", default="mizan-control-plane")
     parser.add_argument("--ttl-seconds", type=int, default=3600)
+    parser.add_argument("--kid", default=DEFAULT_KEY_ID)
     parser.add_argument("--print-public-key", action="store_true")
+    parser.add_argument("--print-jwks", action="store_true")
     arguments = parser.parse_args(argv)
     if environ.get("MIZAN_ENV") == "production":
         print(
@@ -108,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.print_public_key:
         print(public_pem.strip())
         return 0
+    if arguments.print_jwks:
+        print(public_jwks(private_key, arguments.kid))
+        return 0
     print(
         mint(
             private_key,
@@ -119,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             roles=[item for item in arguments.roles.split(",") if item],
             audience=arguments.audience,
             ttl_seconds=arguments.ttl_seconds,
+            kid=arguments.kid,
         )
     )
     return 0

@@ -36,7 +36,12 @@ import httpx
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint  # noqa: F401
+from mizan_control_plane.dev_token import (  # noqa: F401
+    DEVELOPMENT_ISSUER,
+    ensure_keypair,
+    mint,
+    public_jwks,
+)
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     EvidenceRepository,
@@ -333,10 +338,10 @@ def test_an_mcp_client_reaches_tools_only_through_a_recorded_decision(tmp_path: 
     database_url = os.environ["MIZAN_TEST_DATABASE_URL"]
     activate_gateway_policies(database_url)
     pki = workload_pki(tmp_path / "pki")
-    identity_key, public_pem = ensure_keypair(tmp_path / "identity")
+    identity_key, _public_pem = ensure_keypair(tmp_path / "identity")
     port = _free_port()
     base_url = f"https://127.0.0.1:{port}"
-    process = start_service(tmp_path, pki, port, public_pem)
+    process = start_service(tmp_path, pki, port, public_jwks(identity_key))
 
     def token(subject: str, kind: str, roles: list[str]) -> str:
         return mint(
@@ -417,7 +422,10 @@ def test_an_mcp_client_reaches_tools_only_through_a_recorded_decision(tmp_path: 
         voter.join(timeout=30)
     finally:
         publisher.stop.set()
-        publisher.join(timeout=15)
+        # A startup refusal happens before `publisher.start()`. Joining an unstarted Thread raises
+        # RuntimeError and used to mask the refusal this test was meant to report.
+        if publisher.ident is not None:
+            publisher.join(timeout=15)
         approver_client.close()
         client.close()
         process.terminate()

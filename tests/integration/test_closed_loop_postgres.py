@@ -20,7 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 from mizan_control_plane.canonical import binding_hash
-from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint
+from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint, public_jwks
 from mizan_control_plane.drain_worker import run_once
 
 # The demo's PKI generator, imported rather than duplicated -- see workload_pki below.
@@ -136,11 +136,11 @@ def publish_evidence(tmp_path: Path) -> None:
         evidence.pool.close()
 
 
-def start_service(tmp_path: Path, pki: dict[str, Path], port: int, public_pem: str):
+def start_service(tmp_path: Path, pki: dict[str, Path], port: int, identity_jwks: str):
     environment = os.environ | {
         "MIZAN_DATABASE_URL": os.environ["MIZAN_TEST_DATABASE_URL"],
         "MIZAN_JWT_ISSUER": DEVELOPMENT_ISSUER,
-        "MIZAN_JWT_PUBLIC_KEY": public_pem,
+        "MIZAN_IDENTITY_JWKS": identity_jwks,
         "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
         "MIZAN_HTTP_HOST": "127.0.0.1",
         "MIZAN_HTTP_PORT": str(port),
@@ -202,9 +202,9 @@ def evaluation_context(arguments: dict, profile: dict, bound: list[str]) -> dict
 def test_an_agent_pauses_for_two_approvers_and_then_executes(tmp_path: Path) -> None:
     activate_policy(os.environ["MIZAN_TEST_DATABASE_URL"])
     pki = workload_pki(tmp_path / "pki")
-    identity_key, public_pem = ensure_keypair(tmp_path / "identity")
+    identity_key, _public_pem = ensure_keypair(tmp_path / "identity")
     port = _free_port()
-    process = start_service(tmp_path, pki, port, public_pem)
+    process = start_service(tmp_path, pki, port, public_jwks(identity_key))
 
     def credential(subject: str, kind: str, roles: list[str]) -> dict[str, str]:
         return {

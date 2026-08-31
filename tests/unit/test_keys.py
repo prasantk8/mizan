@@ -10,6 +10,8 @@ from mizan_control_plane.keys import (
     local_private_key_for_testing,
 )
 
+from tests.support import UNUSED_IDENTITY_JWKS
+
 
 def versions(*, revoked_receipt: bool = False) -> list[KeyVersion]:
     now = "2026-08-25T00:00:00Z"
@@ -27,7 +29,7 @@ def versions(*, revoked_receipt: bool = False) -> list[KeyVersion]:
 def test_production_refuses_local_keys_at_startup(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
-    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", UNUSED_IDENTITY_JWKS)
     monkeypatch.setenv("MIZAN_ENV", "production")
     monkeypatch.setenv("MIZAN_KEY_CUSTODY_MODE", "development")
     with pytest.raises(RuntimeError, match="production refuses"):
@@ -46,7 +48,7 @@ def test_local_provider_refuses_production_even_when_key_ids_claim_kms() -> None
 def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
-    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", UNUSED_IDENTITY_JWKS)
     monkeypatch.setenv("MIZAN_ENV", "production")
     # `vault-transit` rather than the retired `kms_hsm` spelling: this test is about a
     # different production refusal, and a custody value the config layer now rejects would
@@ -91,7 +93,7 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
 def test_production_refuses_non_tls_tsa_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "https://issuer.test")
-    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", "unused")
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", UNUSED_IDENTITY_JWKS)
     monkeypatch.setenv("MIZAN_ENV", "production")
     # `vault-transit` rather than the retired `kms_hsm` spelling: this test is about a
     # different production refusal, and a custody value the config layer now rejects would

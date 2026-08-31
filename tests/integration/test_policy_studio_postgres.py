@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from mizan_control_plane.app import create_app
 from mizan_control_plane.canonical import binding_hash
 from mizan_control_plane.config import Settings
-from mizan_control_plane.dev_token import ensure_keypair, mint
+from mizan_control_plane.dev_token import ensure_keypair, mint, public_jwks
 from mizan_control_plane.models import (
     AuthenticatedIdentity,
     AuthenticatedPrincipal,
@@ -155,10 +155,10 @@ def test_policy_studio_replay_returns_exactly_the_seeded_flip_set(monkeypatch, t
             "DENY",
         ]
 
-        private_key, public_key = ensure_keypair(tmp_path / "keys")
+        private_key, _public_key = ensure_keypair(tmp_path / "keys")
         monkeypatch.setenv("MIZAN_DATABASE_URL", database_url)
         monkeypatch.setenv("MIZAN_JWT_ISSUER", "urn:mizan:development:dev-token")
-        monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", public_key)
+        monkeypatch.setenv("MIZAN_IDENTITY_JWKS", public_jwks(private_key))
         monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE_ROOT", str(tmp_path / "evidence"))
         application = create_app(Settings.from_environment())
         schemas = ContractSchemas(Path("SPEC_v1.md"))

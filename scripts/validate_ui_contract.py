@@ -19,6 +19,10 @@ from mizan_control_plane.config import Settings  # noqa: E402
 CALL = re.compile(
     r'request\(\s*"(?P<method>GET|POST|PUT|PATCH|DELETE)"\s*,\s*"(?P<path>/v1/[^"?]+)"'
 )
+UNUSED_IDENTITY_JWKS = (
+    '{"keys":[{"alg":"EdDSA","crv":"Ed25519","kid":"unused","kty":"OKP",'
+    '"use":"sig","x":"O-cX0g0xmFjyu_3CjAJd4swlM1Caf0u_X4JNwl6nEHs"}]}'
+)
 
 
 class _Pool:
@@ -48,7 +52,7 @@ def _openapi_operations() -> set[tuple[str, str]]:
         os.environ["MIZAN_ENV"] = "development"
         os.environ["MIZAN_DATABASE_URL"] = "postgresql://contract:contract@localhost/contract"
         os.environ["MIZAN_JWT_ISSUER"] = "https://issuer.invalid"
-        os.environ["MIZAN_JWT_PUBLIC_KEY"] = "unused-for-openapi"
+        os.environ["MIZAN_IDENTITY_JWKS"] = UNUSED_IDENTITY_JWKS
         settings = Settings.from_environment()
         document: dict[str, Any] = app_module.create_app(settings=settings).openapi()
     finally:

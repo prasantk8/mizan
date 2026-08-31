@@ -67,7 +67,7 @@ def create_app(
     verifier = TokenVerifier(
         settings.jwt_issuer,
         settings.jwt_audience,
-        settings.jwt_public_key,
+        settings.identity_jwks,
         settings.identity_token_max_ttl_seconds,
     )
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)

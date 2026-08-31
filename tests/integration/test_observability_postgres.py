@@ -26,7 +26,7 @@ from pathlib import Path
 import httpx
 import pytest
 from mizan_control_plane.canonical import binding_hash
-from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint
+from mizan_control_plane.dev_token import DEVELOPMENT_ISSUER, ensure_keypair, mint, public_jwks
 from mizan_control_plane.repository import PostgresAuthorizationRepository
 
 TENANT = "tnt_bank-a"
@@ -49,11 +49,11 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def _start(tmp_path: Path, port: int, metrics_port: int, public_pem: str):
+def _start(tmp_path: Path, port: int, metrics_port: int, identity_jwks: str):
     environment = os.environ | {
         "MIZAN_DATABASE_URL": os.environ["MIZAN_TEST_DATABASE_URL"],
         "MIZAN_JWT_ISSUER": DEVELOPMENT_ISSUER,
-        "MIZAN_JWT_PUBLIC_KEY": public_pem,
+        "MIZAN_IDENTITY_JWKS": identity_jwks,
         "MIZAN_EVIDENCE_OBJECT_STORE_ROOT": str(tmp_path / "evidence"),
         "MIZAN_HTTP_HOST": "127.0.0.1",
         "MIZAN_HTTP_PORT": str(port),
@@ -125,9 +125,9 @@ def test_the_trace_a_caller_sent_is_the_trace_the_signed_record_names(tmp_path: 
     backend has. Everything else here is a way of showing that one id reached all four places
     without being recomputed on the way.
     """
-    identity_key, public_pem = ensure_keypair(tmp_path / "identity")
+    identity_key, _public_pem = ensure_keypair(tmp_path / "identity")
     port, metrics_port = _free_port(), _free_port()
-    process = _start(tmp_path, port, metrics_port, public_pem)
+    process = _start(tmp_path, port, metrics_port, public_jwks(identity_key))
     client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=20)
     agent = {
         "Authorization": "Bearer "

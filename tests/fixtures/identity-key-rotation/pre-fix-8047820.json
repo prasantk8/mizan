@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "source_commit": "8047820a8b0c7a1475fddbb7ef2e29a22c71145b",
+  "stages": [
+    {
+      "name": "old-only",
+      "old_token": "accepted",
+      "new_token": "refused:invalid_identity_token"
+    },
+    {
+      "name": "replace-static-pem",
+      "old_token": "refused:invalid_identity_token",
+      "new_token": "accepted"
+    }
+  ]
+}

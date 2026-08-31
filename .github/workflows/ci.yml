@@ -104,6 +104,8 @@ jobs:
         run: uv run --frozen ruff check .
       - name: Run unit, invariant, and property tests
         run: uv run --frozen pytest -q tests/unit
+      - name: Run the identity verification key rotation drill
+        run: uv run --frozen python scripts/identity_key_rotation_drill.py
       - name: Verify contract coverage references are collected
         run: uv run --frozen python scripts/validate_contract_coverage.py
       - name: Gate control-plane unit coverage
@@ -111,6 +113,7 @@ jobs:
       - name: Gate identity and route coverage
         run: |
           uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_dev_token.py \
+            tests/unit/test_identity_key_rotation.py \
             --cov=mizan_control_plane.auth --cov-fail-under=75
           uv run --frozen pytest -q tests/unit/test_app_routes.py tests/unit/test_runtime.py \
             --cov=mizan_control_plane.app --cov-fail-under=68
@@ -452,7 +455,7 @@ jobs:
           docker run --detach --name mizan-package-gate --network host \
             --env MIZAN_DATABASE_URL=postgresql://mizan_app:integration-only-app@127.0.0.1:5432/mizan \
             --env MIZAN_JWT_ISSUER=urn:mizan:development:package-gate \
-            --env MIZAN_JWT_PUBLIC_KEY=unused-for-readiness \
+            --env 'MIZAN_IDENTITY_JWKS={"keys":[{"alg":"EdDSA","crv":"Ed25519","kid":"unused","kty":"OKP","use":"sig","x":"O-cX0g0xmFjyu_3CjAJd4swlM1Caf0u_X4JNwl6nEHs"}]}' \
             --env MIZAN_ENV=development \
             --env MIZAN_HTTP_HOST=0.0.0.0 \
             "mizan-control-plane:${GITHUB_SHA}"

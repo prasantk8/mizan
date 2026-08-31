@@ -150,3 +150,28 @@ Trusted proxy headers are explicitly absent. Adding proxy termination later requ
 analysis proving the authenticated proxy-to-application hop and header stripping rules. Certificate
 issuance and rotation remain outside T-020; the normative listener/trust-bundle requirements are in
 `docs/deployment/mtls.md`.
+
+## Implementation Amendment F — outage-free identity verification-key rotation
+
+**Date:** 2026-08-31 · **Trigger:** two-product pilot T-122 · **Spec anchors:** SPEC v1.3 §8 `MIZAN_IDENTITY_JWKS`, V-24
+
+The single `MIZAN_JWT_PUBLIC_KEY` made rotation a choice between rejecting tokens from the new
+issuer key or replacing the PEM and immediately rejecting every still-live token from the old key.
+Identity verification now consumes one deployment-pinned, public-only JWKS document. Every token
+must carry `kid`; that identifier selects exactly one configured key, and its JOSE `alg` must equal
+the key's explicit allowlisted algorithm. Symmetric keys, private parameters, duplicate identifiers,
+missing identifiers and unknown or retired identifiers are refused. Token metadata never supplies a
+URL, a key, or any other trust root, and validation performs no request-time network call.
+
+Rotation is additive and uses the existing bounded token lifetime as its clock:
+
+1. deploy the old and new public JWKs to every control-plane replica;
+2. only after all replicas accept both `kid` values, switch the IdP to the new signing key;
+3. wait at least `MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS` after the old key stopped issuing tokens;
+4. deploy the new-only JWKS. A token naming the removed `kid` is then refused even if freshly signed.
+
+This overlap does not delay emergency revocation after suspected compromise: the operator removes
+the key immediately and accepts that its outstanding bearer tokens stop working. Remote JWKS
+discovery, refresh cadence and multi-issuer tenancy remain separate trust-policy decisions and are
+not introduced by T-122. The executable procedure is
+`docs/deployment/identity-key-rotation.md` and CI runs the same three-stage drill.

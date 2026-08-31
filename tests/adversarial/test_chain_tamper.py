@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from mizan_control_plane import app as app_module
 from mizan_control_plane.canonical import canonical_hash
 from mizan_control_plane.config import Settings
-from mizan_control_plane.dev_token import ensure_keypair, mint
+from mizan_control_plane.dev_token import ensure_keypair, mint, public_jwks
 from mizan_control_plane.evidence import (
     Ed25519EvidenceSigner,
     LocalImmutableObjectStore,
@@ -160,10 +160,10 @@ def test_audit_verify_names_the_first_broken_link(
         "ApprovalRepository",
     ):
         monkeypatch.setattr(app_module, repository_name, _UnusedRepository)
-    private_key, public_key = ensure_keypair(tmp_path / "identity")
+    private_key, _public_key = ensure_keypair(tmp_path / "identity")
     monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
     monkeypatch.setenv("MIZAN_JWT_ISSUER", "urn:mizan:development:dev-token")
-    monkeypatch.setenv("MIZAN_JWT_PUBLIC_KEY", public_key)
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", public_jwks(private_key))
     monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE_ROOT", str(tmp_path / "unused"))
     application = app_module.create_app(
         Settings.from_environment(),

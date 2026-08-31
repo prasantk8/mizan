@@ -28,6 +28,8 @@ from mizan_control_plane.evidence import Ed25519EvidenceSigner, verify_signature
 from mizan_control_plane.runtime import StartupRefused, build_key_provider
 from mizan_control_plane.vault_transit import VaultRefused, VaultTransitBackend
 
+from tests.support import UNUSED_IDENTITY_JWKS
+
 ADDRESS = os.getenv("MIZAN_TEST_VAULT_ADDR", "")
 TOKEN = os.getenv("MIZAN_TEST_VAULT_TOKEN", "")
 # A private CA, for a Vault reached over TLS. The `vault-transit` job talks to a plain-HTTP dev
@@ -76,7 +78,7 @@ def settings(**overrides: str) -> Settings:
     environment = {
         "MIZAN_DATABASE_URL": "postgresql://unused",
         "MIZAN_JWT_ISSUER": "https://issuer.test",
-        "MIZAN_JWT_PUBLIC_KEY": "unused",
+        "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
         "MIZAN_KEY_CUSTODY_MODE": "vault-transit",
         "MIZAN_VAULT_ADDR": ADDRESS,
         "MIZAN_VAULT_TOKEN": TOKEN,
