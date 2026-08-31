@@ -14,8 +14,10 @@ from mizan_control_plane.models import (
     RegistryAgent,
     RegistryTool,
 )
+from mizan_control_plane.observability import Metrics
 from mizan_control_plane.policy_engine import CedarPolicyEvaluator
 from mizan_control_plane.problems import Problem
+from mizan_control_plane.rate_limits import RateLimiter
 from mizan_control_plane.repository import InMemoryAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
 from mizan_control_plane.schema_validation import ContractSchemas
@@ -119,6 +121,25 @@ def test_no_matching_policy_is_recorded_default_deny() -> None:
     assert repository.adr_documents[0]["decision_basis"] == "default_deny"
     assert repository.adr_documents[0]["resource"]["resource_owner"] == "core-banking"
     assert repository.adr_documents[0]["risk"]["level"] == "HIGH"
+
+
+def test_authorize_uses_the_registered_tool_tier_and_stops_before_evaluation() -> None:
+    subject, repository = service()
+    metrics = Metrics()
+    subject.rate_limiter = RateLimiter(
+        {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}, metrics
+    )
+    for suffix in ("51", "52", "53"):
+        request = context(f"018f47a6-7b42-7c00-8000-0000000000{suffix}")
+        assert subject.authorize(identity(), request).risk["level"] == "HIGH"
+
+    with pytest.raises(Problem) as refused:
+        subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000054"))
+
+    assert refused.value.status == 429
+    assert refused.value.code == "rate_limit_exceeded"
+    assert len(repository.adr_documents) == 3
+
 
 
 @pytest.mark.parametrize(

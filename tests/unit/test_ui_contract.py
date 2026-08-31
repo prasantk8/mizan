@@ -150,6 +150,10 @@ class FakeApprovalRepository(FakeRepository):
         self.calls.append(("get", arguments))
         return deepcopy(APPROVAL)
 
+    def risk_tier(self, *arguments: Any) -> str:
+        self.calls.append(("risk_tier", arguments))
+        return DECISION["risk"]["level"]
+
     def vote(self, *arguments: Any) -> dict[str, Any]:
         self.calls.append(("vote", arguments))
         return deepcopy(APPROVAL)
@@ -295,7 +299,12 @@ def test_approver_inbox_sequence_returns_every_field_the_console_renders(inbox) 
         f"/v1/approvals/{APPROVAL_ID}/votes", json=vote, headers=headers
     )
     assert vote_response.status_code == 200, vote_response.text
-    assert [call[0] for call in repositories["approval"].calls] == ["pending", "get", "vote"]
+    assert [call[0] for call in repositories["approval"].calls] == [
+        "pending",
+        "get",
+        "risk_tier",
+        "vote",
+    ]
     assert [call[0] for call in repositories["evidence"].calls] == ["decision"]
     assert repositories["approval"].calls[-1][1][3] == vote
 

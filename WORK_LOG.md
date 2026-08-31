@@ -125,7 +125,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-125 | CODEX | e8bb2b45-276b-4c3d-9c7a-a7b09c5808b9 | 1 | 2026-08-31T19:55:54Z | 2026-08-31T19:55:54Z | 2026-08-31T23:55:54Z | 81d2adf832f5fc6e6762d2f45b69ecb28620be66 |
+| T-125 | CODEX | e8bb2b45-276b-4c3d-9c7a-a7b09c5808b9 | 1 | 2026-08-31T19:55:54Z | 2026-08-31T20:23:36Z | 2026-09-01T00:23:36Z | 81d2adf832f5fc6e6762d2f45b69ecb28620be66 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -198,6 +198,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-125 · Implemented per-process token buckets keyed by authenticated tenant, protected route class and authoritative stored risk tier. ADR-003 Amendment E and SPEC V-26 now define the LOW→CRITICAL quotas, 429 problem, per-replica boundary and metrics. The real approval route stops call 61 before mutation; exact pre-fix `81d2adf` returned 200 and invoked all 61. Five adversarial faults are caught including disabling the limiter guard. Local gates: 469 unit tests, 35/35 live PostgreSQL tests, schema contract, refusal coverage at 84.48%, contract/gate inventories, Ruff and `make check` passed. Routine sequencer artifact removed; no benchmark numbers claimed. Rule 10 so far: Ruff fixed two import orders; strict adjacent `zip` made startup fail and was replaced with `pairwise`; two UI/app doubles needed the new risk lookup; three PostgreSQL-gate attempts respectively found the UI call-list expectation, a new refusal-debt site, then passed after the endpoint-owned 404 avoided manufacturing execution-module debt. · next: commit/push implementation, let PR CI arbitrate, then complete review handoff
 
 - 2026-08-31 · CODEX · T-125 · Claimed from merged T-124 base `81d2adf`; PR #35 carried 13/13 green checks but no independent `REVIEW:` comment, recorded as a process exception rather than silently credited. Scope is explicit ADR-003/SPEC quotas plus tenant-scoped limiting for authorize, approval mutations and execution-token issuance, with 429 problem details and Prometheus visibility. · next: open the draft PR, reproduce the unbounded pre-fix behavior, then implement and run the adversarial gate
 

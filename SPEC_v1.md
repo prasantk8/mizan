@@ -1230,6 +1230,22 @@ Before any policy is evaluated, `/v1/authorize` runs enrichment in this order. E
 
 Only after all six does evaluation begin — which is what makes rule 7 (input acceptance implies evidence representability) mechanically true rather than aspirational.
 
+### 3.2 Tiered admission control
+
+After identity and the authoritative risk source are resolved, but before evaluation or a protected
+mutation runs, Mizan applies a per-process token bucket keyed by authenticated `tenant_id`, route
+class (`authorize`, `approval`, `execution_token`) and risk tier. `/v1/authorize` uses the stored
+tool risk floor; approval mutations and execution-token issuance use the originating ADR_Record's
+immutable `risk.level`. Caller input never chooses the bucket.
+
+`MIZAN_RATE_LIMITS_PER_MINUTE` gives the LOW, MEDIUM, HIGH and CRITICAL capacities in that order.
+The default is `60,120,240,480`; values must be positive and strictly increasing so LOW exhausts
+before MEDIUM and CRITICAL remains last to shed. Buckets refill continuously and start full. Every
+route class has an independent bucket. Exhaustion returns 429 `rate_limit_exceeded` with the problem
+type `https://mizan.ai/problems/rate_limit_exceeded`; it writes no decision, vote, approval
+transition or capability. Limits and refusals are exported on the private metrics listener. Quotas
+are per replica, not cluster-global; an N-replica deployment has N independently enforced shares.
+
 ```yaml
 openapi: 3.1.0
 info: { title: Mizan Control Plane API, version: "1.1.0" }
@@ -1279,7 +1295,7 @@ paths:
         "403": { description: "Agent not ACTIVE/suspended/outside tenant, or body tenant_id disagrees with token" }
         "409": { description: Idempotency conflict (same request_id, different context_hash) }
         "422": { description: "Enrichment failure: unknown agent/tool/policy/binding-profile reference, or unresolvable resource ownership/classification (§3.1)" }
-        "429": { description: Rate limited }
+        "429": { description: "Tenant/risk/route bucket exhausted; problem type is https://mizan.ai/problems/rate_limit_exceeded" }
         "503": { description: "FAIL-CLOSED. Engine degraded; HIGH/CRITICAL paths must treat as DENY (ADR-003)" }
 
   /v1/agents:
@@ -1341,14 +1357,15 @@ paths:
         "200": { description: "Vote recorded; response carries new ApprovalState and epoch tallies" }
         "403": { description: "Self-approval, not in eligibility snapshot, insufficient auth_strength, duplicate vote, or non-human identity" }
         "409": { description: "Stale epoch_number (escalation/override raced this vote), or approval already terminal" }
+        "429": { description: "Tenant/risk/approval bucket exhausted; no vote recorded" }
   /v1/approvals/{approval_id}/escalate:
     post: { summary: "Close the current epoch and open an escalation epoch atomically (§5.2). Idempotent per epoch_number.",
-            responses: { "200": {description: OK}, "409": {description: "Epoch already closed, or max_epochs reached"} } }
+            responses: { "200": {description: OK}, "409": {description: "Epoch already closed, or max_epochs reached"}, "429": {description: "Rate limited; no epoch transition"} } }
   /v1/approvals/{approval_id}/override:
     post: { summary: "Break-glass: open an override epoch. Requires Policy.approval_requirements.override, fresh quorum, justification; emits high-severity events. Never unilateral unless the tenant explicitly configured quorum=1.",
-            responses: { "200": {description: Override epoch opened}, "403": {description: "No override configured for this policy, or caller not in eligible_roles"} } }
+            responses: { "200": {description: Override epoch opened}, "403": {description: "No override configured for this policy, or caller not in eligible_roles"}, "429": {description: "Rate limited; no override epoch"} } }
   /v1/approvals/{approval_id}/withdraw:
-    post: { summary: Requester withdraws pending request, responses: { "200": {description: OK} } }
+    post: { summary: Requester withdraws pending request, responses: { "200": {description: OK}, "429": {description: "Rate limited; request remains pending"} } }
 
   /v1/actions/{decision_id}/execute:
     post:
@@ -1397,6 +1414,7 @@ paths:
       responses: { "200": {description: "Issued or reissued; body carries execution_token, expires_at, reused"},
                    "403": {description: "approval_incomplete, decision_not_executable, execution_token_requester_mismatch, or executor_not_authorized"},
                    "404": {description: Decision not found in tenant},
+                   "429": {description: "Tenant/risk/execution-token bucket exhausted; no capability minted"},
                    "422": {description: "Tool has several registered executors and none was named"} }
   /v1/decisions:
     get: { summary: "Search ADRs (filters: agent, tool, decision, risk, principal, customer, time range; cursor pagination)",
@@ -1657,6 +1675,7 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_IDENTITY_JWKS` | *(required)* | deployment | Local public-only JWKS for identity-token verification. Every key requires a unique non-empty `kid`, explicit `use: sig`, and `alg` in `RS256`/`ES256`/`EdDSA`; symmetric and private keys are refused at startup. Rotation is old-only → old+new → new-only after at least `MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS`; the token header selects only a configured `kid` and never a URL or trust root. |
 | `MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS` | `3600` | deployment | Maximum accepted `exp - iat` for an identity token. `exp` in the future is not a bounded lifetime, and there is no revocation path for identity tokens, so a token's lifetime is the whole of its blast radius. Refused as 401 `identity_token_ttl_excessive`. |
 | `MIZAN_MAX_REQUEST_BODY_BYTES` | `1048576` | deployment | Largest accepted request body. Applied at the ASGI layer, before the body is parsed and before any caller is authenticated. Refused as 413 `request_body_too_large`. |
+| `MIZAN_RATE_LIMITS_PER_MINUTE` | `60,120,240,480` | deployment | Per-replica token-bucket capacities for LOW, MEDIUM, HIGH and CRITICAL, shared as policy across but independently enforced for each protected route class. Exactly four positive, strictly increasing integers are required. Exhaustion is 429 `rate_limit_exceeded`; configured values and refusals are visible on `/metrics`. |
 | `MIZAN_EVALUATOR_BUILD` | `development` | deployment | Recorded in every ADR_Record's `evaluator.build`. Production refuses the `development` placeholder: an unpinned evaluator makes the record unreplayable. |
 | `MIZAN_EVALUATOR_CONFIGURATION_HASH` | 64 zeros | deployment | Recorded in every ADR_Record's `evaluator.configuration_hash`. Production refuses the all-zero placeholder for the same reason. |
 | `MIZAN_EVIDENCE_OBJECT_STORE_ROOT` | `var/evidence` | deployment | Root of the immutable object store the verifier reads. In v1 this is the create-only local WORM analogue; a real WORM target is `MIZAN_AUDIT_ANCHOR_BUCKET`. |
@@ -1837,6 +1856,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-23 | `POST /v1/decisions/{id}/execution-token` is accepted only from the agent principal the ADR_Record names, and issues at most one unconsumed, unexpired token per decision — a repeat request returns the outstanding capability, never a second one. Serialized per decision so concurrent requests cannot both mint. | execution token issuer |
 | V-24 | Every identity token carries `kid`; it selects exactly one public key from deployment-pinned `MIZAN_IDENTITY_JWKS`, and the JOSE `alg` must equal that key's allowlisted algorithm. Missing, unknown/retired, duplicate, symmetric, private, or algorithm-confused keys fail closed. A token may never select a JWKS URL or trust root. | identity authentication |
 | V-25 | Every database evidence receipt reconciles to exactly one record in its receipt-bound immutable object: signatures and content versions verify, object membership is exact in both directions, and the reconstructed receipt stream is dense. A mismatch is checked by the managed drainer and makes `/health/ready` and `/readyz` return 503. Unpublished outbox rows remain governed by the publication-lag SLO and are not reconciliation mismatches. | outbox drainer + readiness |
+| V-26 | Every authorize, approval-mutation and execution-token request consumes capacity from a bucket keyed by the authenticated tenant, protected route class and authoritative risk tier. Exhaustion is 429 `rate_limit_exceeded` before evaluation/mutation/minting; limits and refusals are visible on the private metrics listener. | control-plane admission guard |
 
 ---
 

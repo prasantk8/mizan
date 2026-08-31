@@ -286,6 +286,21 @@ class ApprovalRepository:
                 raise Problem(404, "approval_not_found", "Approval was not found")
             return row[0]
 
+    def risk_tier(self, tenant_id: str, approval_id: str) -> str:
+        """The immutable decision tier behind an approval; never caller-selected."""
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT d.document->'risk'->>'level' FROM mizan.approvals a "
+                "JOIN mizan.adr_records d ON d.tenant_id=a.tenant_id "
+                "AND d.decision_id=a.decision_id "
+                "WHERE a.tenant_id=%s AND a.approval_id=%s",
+                (tenant_id, approval_id),
+            ).fetchone()
+            if not row:
+                raise Problem(404, "approval_not_found", "Approval was not found")
+            return str(row[0])
+
     def vote(
         self,
         tenant_id: str,

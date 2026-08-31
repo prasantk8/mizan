@@ -152,3 +152,42 @@ a lost audit record is the failure; the loss itself is survivable and the silenc
 reads as closed to anything that connected afterwards — every scraper restart, every rollout, every
 new alert rule. `mizan_breaker_open{tenant_id,reason}` is therefore re-asserted while the breaker is
 open, while the human-facing log line still fires once on the way open and once on the way closed.
+
+## Amendment E — tiered admission control has explicit quotas (T-125)
+
+**Date:** 2026-09-01 · **Trigger:** two-product pilot WS-1a · **Spec anchors:** SPEC §3.2, §8, V-26
+
+The original load-shedding decision gave an ordering (LOW sheds first, CRITICAL last) but no
+executable quota. A system can agree with that sentence while admitting every request. The pilot
+therefore uses one token bucket per `(process, tenant, route class, risk tier)` for the three
+control paths whose saturation either creates decisions or resumes consequential work:
+`authorize`, approval mutations, and execution-token issuance.
+
+The default per-minute capacities are:
+
+| Risk tier | LOW | MEDIUM | HIGH | CRITICAL |
+|---|---:|---:|---:|---:|
+| Requests per protected route class | 60 | 120 | 240 | 480 |
+
+All four values are configured together by `MIZAN_RATE_LIMITS_PER_MINUTE` in that closed order.
+They must be positive and strictly increasing; startup refuses missing, extra, equal or inverted
+values. A token bucket starts full and refills continuously, so the value is both its maximum burst
+and its sustained requests-per-minute rate. Each route class has a separate bucket: an authorize
+burst cannot consume the capacity reserved for an approval or token request.
+
+The tenant always comes from the verified identity. `/v1/authorize` uses the stored tool's static
+risk floor, which is available before evaluation and is conservative when live risk later rises.
+Approval mutations and execution-token issuance use the immutable risk level in the originating
+ADR_Record. A header, request body or URL parameter never selects either label.
+
+Exhaustion returns 429 `rate_limit_exceeded` as `application/problem+json` before the protected
+mutation/evaluation runs. It does not turn an authorization into DENY, change approval state, mint a
+capability, or write false decision evidence. Operators see both
+`mizan_rate_limit_configured_requests_per_minute{route_class,risk_tier}` and
+`mizan_rate_limit_rejections_total{tenant_id,route_class,risk_tier}` on the private metrics listener.
+
+These are explicitly **per-replica** quotas. The v1 control plane has no shared low-latency quota
+store, and putting PostgreSQL on this admission path would contradict the breaker's microsecond
+budget. A deployment with multiple replicas therefore has the sum of their capacities and must
+divide a desired cluster budget among replicas. This amendment does not claim a global billing or
+abuse-prevention quota.

@@ -164,6 +164,17 @@ class ExecutionService:
             self._scope(connection, tenant_id)
             return self._issue_tx(connection, tenant_id, decision_id, executor_spiffe, now)
 
+    def risk_tier_for_decision(self, tenant_id: str, decision_id: str) -> str | None:
+        """Read the immutable recorded tier used to admit execution-token issuance."""
+        with self.pool.connection() as connection, connection.transaction():
+            self._scope(connection, tenant_id)
+            row = connection.execute(
+                "SELECT document->'risk'->>'level' FROM mizan.adr_records "
+                "WHERE tenant_id=%s AND decision_id=%s",
+                (tenant_id, decision_id),
+            ).fetchone()
+            return str(row[0]) if row else None
+
     def issue_for_decision(
         self,
         tenant_id: str,
