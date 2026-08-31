@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-124 merged through replacement PR #35 with all CI checks green but without the required independent `REVIEW:` comment. T-125 is IN_PROGRESS: enforce explicit ADR-003 rate-limit tiers on the three pilot-critical route classes.
+**The two-product pilot programme is in WS-1a hardening.** T-125 is in REVIEW on PR #36 after all 13 CI checks passed on implementation head `f13fe17`; T-126 is READY next. T-124 merged through replacement PR #35 with all CI checks green but without the required independent `REVIEW:` comment.
 
 ## Agent Queue
 
@@ -15,7 +15,8 @@
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
 | T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
-| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | IN_PROGRESS |
+| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | REVIEW |
+| T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | READY |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -125,7 +126,6 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-125 | CODEX | e8bb2b45-276b-4c3d-9c7a-a7b09c5808b9 | 1 | 2026-08-31T19:55:54Z | 2026-08-31T20:31:19Z | 2026-09-01T00:31:19Z | 81d2adf832f5fc6e6762d2f45b69ecb28620be66 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -167,11 +167,12 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Implement T-125 on branch `t-125-rate-limits` and draft PR.** Make the missing numeric tier contract
-> explicit in ADR-003/SPEC, then enforce tenant-scoped limits on `/v1/authorize`, approval mutations and
-> execution-token issuance. Prove a burst crosses the tier limit, returns 429 with the registered problem
-> URI, leaves the protected handler uncalled, and exposes configured limits plus refusals in `/metrics`.
-> Record that PR #35 merged green but without the protocol-required independent `REVIEW:` comment.
+> **Independently review and squash-merge T-125 PR #36.** Require a comment beginning `REVIEW:` on the
+> final head after verifying authoritative stored risk selects the tenant/route bucket, all protected new
+> work is refused with 429 before mutation or minting, idempotent retries do not consume fresh capacity,
+> and the fifth adversarial fault disables the real limiter guard. After merge, claim T-126 from the merged
+> base and resolve the literal `is_degraded: False` contract honestly by wiring the existing degraded-mode
+> module or deleting it and its ledger row.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -198,6 +199,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-125 · Handed off PR #36 for independent review after CI run `33436554920` passed all 13 jobs on implementation head `f13fe17`. The final contract is tenant/route/stored-risk token buckets for authorize, approval mutations and new execution-token minting; recorded authorize retries and outstanding-token reissues remain idempotent without fresh capacity. Local proof: 469 unit tests, 35/35 PostgreSQL tests, 83.86% execution coverage, five adversarial faults caught, Ruff and `make check` green. Pre-fix `81d2adf` accepted and mutated on request 61; Rule 10 corrections and the T-124 review-protocol exception remain disclosed above and in the PR. No benchmark numbers claimed; H-7 does not fire because admission control precedes and does not change approval, outcome, money, crypto, key or tenant authority semantics. · next: independent `REVIEW:` on the final head and squash-merge PR #36, then claim T-126
 
 - 2026-09-01 · CODEX · T-125 · Self-review corrected admission ordering before handoff: an authorize retry now returns its already-recorded decision and execution-token reissue returns the already-outstanding token without consuming fresh capacity, so overload does not break idempotency. New evaluation/minting remains limited using the stored tool/ADR tier. SPEC/ADR V-26 and the regression test say so. The corrected full gate passes 469 unit tests and 35/35 PostgreSQL tests; execution coverage is 83.86% against the 80% tripwire with no new debt. Routine benchmark artifact removed again. · next: push the correction and await final-head CI
 
