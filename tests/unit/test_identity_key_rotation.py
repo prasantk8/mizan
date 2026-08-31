@@ -82,3 +82,12 @@ def test_identity_keyset_rejects_symmetric_algorithms() -> None:
                 }
             )
         )
+
+
+@pytest.mark.parametrize(("field", "value"), [("alg", []), ("x", []), ("x", None)])
+def test_malformed_jwk_types_are_controlled_startup_refusals(field: str, value: object) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    key = json.loads(public_jwks(private_key, "identity-1"))["keys"][0]
+    key[field] = value
+    with pytest.raises(ValueError, match="MIZAN_IDENTITY_JWKS key"):
+        IdentityKeySet(json.dumps({"keys": [key]}))

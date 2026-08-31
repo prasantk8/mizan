@@ -56,7 +56,7 @@ class IdentityKeySet:
                 raise ValueError(f"MIZAN_IDENTITY_JWKS.keys[{position}].kid must be non-empty")
             if kid in keys:
                 raise ValueError(f"MIZAN_IDENTITY_JWKS contains duplicate kid {kid!r}")
-            if algorithm not in IDENTITY_ALGORITHMS:
+            if not isinstance(algorithm, str) or algorithm not in IDENTITY_ALGORITHMS:
                 raise ValueError(
                     f"MIZAN_IDENTITY_JWKS key {kid!r} must declare one of "
                     f"{', '.join(sorted(IDENTITY_ALGORITHMS))}"
@@ -67,7 +67,7 @@ class IdentityKeySet:
                 raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} contains private key material")
             try:
                 parsed_key = jwt.PyJWK.from_dict(raw)
-            except (jwt.PyJWTError, ValueError, KeyError) as exc:
+            except (jwt.PyJWTError, TypeError, ValueError, KeyError) as exc:
                 raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} is not a valid JWK") from exc
             if parsed_key.key_type == "oct":
                 raise ValueError(f"MIZAN_IDENTITY_JWKS key {kid!r} is symmetric")
