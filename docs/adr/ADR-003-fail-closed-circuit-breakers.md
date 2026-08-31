@@ -185,6 +185,9 @@ mutation/evaluation runs. It does not turn an authorization into DENY, change ap
 capability, or write false decision evidence. Operators see both
 `mizan_rate_limit_configured_requests_per_minute{route_class,risk_tier}` and
 `mizan_rate_limit_rejections_total{tenant_id,route_class,risk_tier}` on the private metrics listener.
+An idempotent authorize replay that can return its already-recorded decision, and a token request
+that can return the already-outstanding capability, do not consume new capacity: neither re-enters
+the protected evaluation or minting work, and overload may not revoke the API's retry contract.
 
 These are explicitly **per-replica** quotas. The v1 control plane has no shared low-latency quota
 store, and putting PostgreSQL on this admission path would contradict the breaker's microsecond

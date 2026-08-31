@@ -68,6 +68,8 @@ def create_app(
     settings = settings or Settings.from_environment()
     metrics = metrics or Metrics()
     rate_limiter = rate_limiter or RateLimiter(settings.rate_limit_map, metrics)
+    if execution_service is not None:
+        execution_service.rate_limiter = rate_limiter
     verifier = TokenVerifier(
         settings.jwt_issuer,
         settings.jwt_audience,
@@ -425,10 +427,6 @@ def create_app(
             raise Problem(
                 503, "execution_service_unavailable", "Execution keyset is not configured"
             )
-        risk_tier = execution_service.risk_tier_for_decision(identity.tenant_id, decision_id)
-        if risk_tier is None:
-            raise Problem(404, "decision_not_found", "Decision was not found")
-        rate_limiter.require(identity.tenant_id, "execution_token", risk_tier)
         return execution_service.issue_for_decision(
             identity.tenant_id,
             decision_id,

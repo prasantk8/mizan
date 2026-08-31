@@ -227,35 +227,6 @@ class QueryResult:
         return self.row
 
 
-class MissingDecisionConnection:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_arguments: object) -> None:
-        return None
-
-    def transaction(self):
-        return self
-
-    def execute(self, query: str, parameters=None) -> QueryResult:
-        if "set_config" in query:
-            return QueryResult(("tnt_bank-a",))
-        assert "document->'risk'->>'level'" in query
-        assert parameters == ("tnt_bank-a", "adr_missing-0001")
-        return QueryResult(None)
-
-
-class MissingDecisionPool:
-    def connection(self) -> MissingDecisionConnection:
-        return MissingDecisionConnection()
-
-
-def test_rate_limit_risk_lookup_returns_no_caller_selected_fallback_for_a_missing_decision() -> None:
-    service = object.__new__(ExecutionService)
-    service.pool = MissingDecisionPool()
-    assert service.risk_tier_for_decision("tnt_bank-a", "adr_missing-0001") is None
-
-
 class RevalidationConnection:
     def __init__(self) -> None:
         self.profile = (["/amount"], ["/request_time"])

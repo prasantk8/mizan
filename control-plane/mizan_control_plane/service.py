@@ -90,8 +90,6 @@ class AuthorizationService:
             raise Problem(
                 422, "tool_not_permitted", "Tool is unknown or not permitted for this agent"
             )
-        if self.rate_limiter is not None:
-            self.rate_limiter.require(identity.tenant_id, "authorize", tool.risk_tier)
         if (
             context.tool.binding_profile.profile_id != tool.profile_id
             or context.tool.binding_profile.profile_version != tool.profile_version
@@ -144,6 +142,9 @@ class AuthorizationService:
                     409, "idempotency_conflict", "request_id was used for another context"
                 )
             return prior.response
+
+        if self.rate_limiter is not None:
+            self.rate_limiter.require(identity.tenant_id, "authorize", tool.risk_tier)
 
         try:
             risk = self.risk_provider.evaluate(enriched, tool.risk_tier)

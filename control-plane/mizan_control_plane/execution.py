@@ -23,6 +23,7 @@ from .models import EvaluationContext
 from .observability import Metrics
 from .ports import RiskProvider
 from .problems import Problem
+from .rate_limits import RateLimiter
 from .risk import RegistryFloorRiskProvider
 from .schema_validation import ContractSchemas
 
@@ -138,6 +139,7 @@ class ExecutionService:
         security_event_pool_timeout_seconds: float = 0.25,
         default_token_ttl_seconds: int = 300,
         metrics: Metrics | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.pool = ConnectionPool(database_url, min_size=1, max_size=10, open=True)
         self.security_event_pool = security_event_pool or ConnectionPool(
@@ -153,6 +155,7 @@ class ExecutionService:
         self.security_event_counters: Counter[str] = Counter()
         self.metrics = metrics or Metrics()
         self.default_token_ttl_seconds = default_token_ttl_seconds
+        self.rate_limiter = rate_limiter
 
     @staticmethod
     def _scope(connection: Any, tenant_id: str) -> None:
@@ -163,17 +166,6 @@ class ExecutionService:
         with self.pool.connection() as connection, connection.transaction():
             self._scope(connection, tenant_id)
             return self._issue_tx(connection, tenant_id, decision_id, executor_spiffe, now)
-
-    def risk_tier_for_decision(self, tenant_id: str, decision_id: str) -> str | None:
-        """Read the immutable recorded tier used to admit execution-token issuance."""
-        with self.pool.connection() as connection, connection.transaction():
-            self._scope(connection, tenant_id)
-            row = connection.execute(
-                "SELECT document->'risk'->>'level' FROM mizan.adr_records "
-                "WHERE tenant_id=%s AND decision_id=%s",
-                (tenant_id, decision_id),
-            ).fetchone()
-            return str(row[0]) if row else None
 
     def issue_for_decision(
         self,
@@ -223,6 +215,8 @@ class ExecutionService:
                     .replace("+00:00", "Z"),
                     "reused": True,
                 }
+            if self.rate_limiter is not None:
+                self.rate_limiter.require(tenant_id, "execution_token", adr["risk"]["level"])
             tool = connection.execute(
                 "SELECT document FROM mizan.tools WHERE tenant_id=%s AND tool_id=%s",
                 (tenant_id, adr["tool"]["id"]),

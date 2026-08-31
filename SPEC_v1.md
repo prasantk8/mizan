@@ -1245,6 +1245,9 @@ route class has an independent bucket. Exhaustion returns 429 `rate_limit_exceed
 type `https://mizan.ai/problems/rate_limit_exceeded`; it writes no decision, vote, approval
 transition or capability. Limits and refusals are exported on the private metrics listener. Quotas
 are per replica, not cluster-global; an N-replica deployment has N independently enforced shares.
+An authorize retry that returns the already-recorded decision, and execution-token reissue that
+returns the already-outstanding token, consume no new capacity because they do not repeat the
+protected evaluation or minting work. Rate limiting does not weaken idempotency.
 
 ```yaml
 openapi: 3.1.0
@@ -1856,7 +1859,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-23 | `POST /v1/decisions/{id}/execution-token` is accepted only from the agent principal the ADR_Record names, and issues at most one unconsumed, unexpired token per decision — a repeat request returns the outstanding capability, never a second one. Serialized per decision so concurrent requests cannot both mint. | execution token issuer |
 | V-24 | Every identity token carries `kid`; it selects exactly one public key from deployment-pinned `MIZAN_IDENTITY_JWKS`, and the JOSE `alg` must equal that key's allowlisted algorithm. Missing, unknown/retired, duplicate, symmetric, private, or algorithm-confused keys fail closed. A token may never select a JWKS URL or trust root. | identity authentication |
 | V-25 | Every database evidence receipt reconciles to exactly one record in its receipt-bound immutable object: signatures and content versions verify, object membership is exact in both directions, and the reconstructed receipt stream is dense. A mismatch is checked by the managed drainer and makes `/health/ready` and `/readyz` return 503. Unpublished outbox rows remain governed by the publication-lag SLO and are not reconciliation mismatches. | outbox drainer + readiness |
-| V-26 | Every authorize, approval-mutation and execution-token request consumes capacity from a bucket keyed by the authenticated tenant, protected route class and authoritative risk tier. Exhaustion is 429 `rate_limit_exceeded` before evaluation/mutation/minting; limits and refusals are visible on the private metrics listener. | control-plane admission guard |
+| V-26 | Every authorize, approval-mutation and execution-token request that would enter protected evaluation/mutation/minting consumes capacity from a bucket keyed by the authenticated tenant, protected route class and authoritative risk tier. Idempotent replay/reissue returns already-recorded state without consuming capacity. Exhaustion is 429 `rate_limit_exceeded`; limits and refusals are visible on the private metrics listener. | control-plane admission guard |
 
 ---
 

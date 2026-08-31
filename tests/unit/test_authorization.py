@@ -243,6 +243,23 @@ def test_idempotent_retry_returns_same_decision() -> None:
     assert len(repository.adr_documents) == 1
 
 
+def test_idempotent_retry_returns_the_recorded_decision_after_capacity_is_exhausted() -> None:
+    subject, repository = service()
+    subject.rate_limiter = RateLimiter(
+        {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}, Metrics()
+    )
+    first_request = context("018f47a6-7b42-7c00-8000-000000000071")
+    first = subject.authorize(identity(), first_request)
+    subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000072"))
+    subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000073"))
+
+    assert subject.authorize(identity(), first_request) == first
+    with pytest.raises(Problem) as refused:
+        subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000074"))
+    assert refused.value.status == 429
+    assert len(repository.adr_documents) == 3
+
+
 def test_allow_response_and_persisted_replay_are_byte_identical_with_stray_policy_constraints() -> None:
     class ReconstructingRepository(InMemoryAuthorizationRepository):
         def find_decision_by_request(self, tenant_id: str, request_id: str):

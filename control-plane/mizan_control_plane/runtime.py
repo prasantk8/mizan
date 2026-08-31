@@ -42,6 +42,7 @@ from .observability import (
     build_tracer,
     configure_logging,
 )
+from .rate_limits import RateLimiter
 from .vault_transit import VaultRefused, VaultTransitBackend
 
 LOGGER = logging.getLogger(__name__)
@@ -146,7 +147,11 @@ def build_evidence_verifier(
 
 
 def build_execution_service(
-    settings: Settings, provider: KeyProvider, receipt_gate: Any, metrics: Metrics | None = None
+    settings: Settings,
+    provider: KeyProvider,
+    receipt_gate: Any,
+    metrics: Metrics | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> ExecutionService:
     codec = ExecutionTokenCodec(
         settings.execution_token_issuer,
@@ -161,6 +166,7 @@ def build_execution_service(
         security_event_pool_timeout_seconds=settings.security_event_pool_timeout_seconds,
         default_token_ttl_seconds=settings.execution_token_default_ttl_seconds,
         metrics=metrics,
+        rate_limiter=rate_limiter,
     )
 
 
@@ -210,7 +216,10 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     provider = build_key_provider(settings)
     verifier, evidence_repository = build_evidence_verifier(settings, provider)
     reconciler = EvidenceReconciler(verifier)
-    execution_service = build_execution_service(settings, provider, verifier, metrics)
+    rate_limiter = RateLimiter(settings.rate_limit_map, metrics)
+    execution_service = build_execution_service(
+        settings, provider, verifier, metrics, rate_limiter
+    )
     app = create_app(
         settings,
         verifier,
@@ -219,6 +228,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         provider,
         metrics,
         tracer,
+        rate_limiter,
     )
     app.state.connection_pools.extend(
         [evidence_repository.pool, execution_service.pool, execution_service.security_event_pool]
