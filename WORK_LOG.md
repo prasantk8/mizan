@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-124 is in REVIEW through replacement PR #35 after PR #34 merged its claim-only commit. T-125 is READY next: enforce the ratified ADR-003 rate-limit tiers on the three pilot-critical route classes.
+**The two-product pilot programme is in WS-1a hardening.** T-124 merged through replacement PR #35 with all CI checks green but without the required independent `REVIEW:` comment. T-125 is IN_PROGRESS: enforce explicit ADR-003 rate-limit tiers on the three pilot-critical route classes.
 
 ## Agent Queue
 
@@ -14,8 +14,8 @@
 |---|---|---|---|---|
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
-| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | REVIEW |
-| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | READY |
+| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
+| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | IN_PROGRESS |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -125,6 +125,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-125 | CODEX | e8bb2b45-276b-4c3d-9c7a-a7b09c5808b9 | 1 | 2026-08-31T19:55:54Z | 2026-08-31T19:55:54Z | 2026-08-31T23:55:54Z | 81d2adf832f5fc6e6762d2f45b69ecb28620be66 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -166,11 +167,11 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge replacement PR #35 for T-124.** Require a `REVIEW:` comment that
-> checks the nine-table UPDATE/DELETE trigger proof, the missing/divergent/duplicate/extra object cases,
-> the deliberate exclusion of normal unpublished outbox rows, and the `/readyz` 503 fault path. PR #34
-> contains only the claim commit and its checks do not validate the implementation. After #35 merges,
-> claim T-125 and implement ADR-003 rate limits for `/v1/authorize`, approvals and token issuance.
+> **Implement T-125 on branch `t-125-rate-limits` and draft PR.** Make the missing numeric tier contract
+> explicit in ADR-003/SPEC, then enforce tenant-scoped limits on `/v1/authorize`, approval mutations and
+> execution-token issuance. Prove a burst crosses the tier limit, returns 429 with the registered problem
+> URI, leaves the protected handler uncalled, and exposes configured limits plus refusals in `/metrics`.
+> Record that PR #35 merged green but without the protocol-required independent `REVIEW:` comment.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -197,6 +198,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-08-31 · CODEX · T-125 · Claimed from merged T-124 base `81d2adf`; PR #35 carried 13/13 green checks but no independent `REVIEW:` comment, recorded as a process exception rather than silently credited. Scope is explicit ADR-003/SPEC quotas plus tenant-scoped limiting for authorize, approval mutations and execution-token issuance, with 429 problem details and Prometheus visibility. · next: open the draft PR, reproduce the unbounded pre-fix behavior, then implement and run the adversarial gate
 
 - 2026-08-31 · CODEX · T-124 · Implementation complete and handed off in replacement PR #35. PR #34 was squash-merged at claim-only SHA `fe7bea9` while implementation push `42648ef` was propagating; the implementation was rebased onto that merge as `a325b61`, and the protocol exception is explicit in the replacement PR. Migration 0005 and the schema contract enforce both verbs with exact SQLSTATE 55000 across all nine evidence tables. The shared reconciler catches missing, divergent, duplicate and extra receipt-bound bucket records in the drain worker and makes `/readyz` return 503 while leaving ordinary unpublished outbox rows to the existing lag SLO. Local results: Ruff, `make check`, contract coverage, 457 unit tests and 35/35 live PostgreSQL tests passed; the schema test fires 18 refusals. CI run `33430718095` passed all 13 jobs on `a325b61`. Rule 8 rejects pre-fix `e64263e` both for mutable `adr_record_policies` and old `/readyz` 200 with a missing receipt-bound object. Rule 10 includes the Ruff/import fix, three discarded pre-fix harness attempts, the routine removed benchmark artifact, and the claim-only #34 merge. No benchmark numbers claimed. H-7 does not fire. · next: independent `REVIEW:` and squash-merge PR #35, then claim T-125
 
