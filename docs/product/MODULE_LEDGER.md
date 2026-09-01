@@ -37,7 +37,7 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | Evidence publication and anchoring | `evidence.py::OutboxPublisher`, run by `drain_worker.py` | shipped |
 | RFC 3161 attestation | `attestation.py`, run by `attestation_runner.py` | shipped |
 | Lease expiry at rest | `execution.py::sweep_expired_leases`, run by `drain_worker.py` | shipped |
-| Key custody and published keyset | `keys.py`, `/v1/audit/keys` | shipped for `development` custody only; **no KMS/HSM backend exists** (B-18, T-102) |
+| Key custody and published keyset | `keys.py`, `vault_transit.py`, `runtime.py`, `/v1/audit/keys` | shipped for development and production Vault Transit (`custody=kms`); the real-Vault CI gate verifies sign/rotate/history behaviour |
 | Structured logs and `/metrics` | `observability.py`, `app.py` | shipped |
 | Mutual TLS and peer SPIFFE identity | `mtls.py`, `runtime.py` protocol class | shipped |
 | Degraded state / signed LOW-risk allow gate | `security/mizan_security/degraded.py`, called by `service.py` | **shipped for truthful healthy/fail-closed state**; the signed LOW-risk degraded-ALLOW gate remains default-off and has no production caller |
@@ -50,7 +50,7 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | PII classification boundary | none | **none** — the former `security/pii/` contained one sentence |
 | Prompt-injection defence | `tests/adversarial/test_prompt_namespace.py` proves the *policy namespace* cannot be crossed by tool arguments | **none as a module** — the property is tested, there is no engine |
 | Behavioural analytics | none | **none** |
-| Threat engine | none | **none**. The threat *model* is real: `threat-models/TM-001-control-plane-v1.md` |
+| Threat engine | none | **none**. Threat *models* are real documents: TM-001 for the control/evidence plane and a pre-implementation TM-002 skeleton for the Memtara seam |
 
 ## Integrations
 
@@ -58,6 +58,7 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 |---|---|---|
 | MCP governance gateway | `integrations/mcp/mizan_mcp_gateway/` (`server.py`, `governance.py`, `upstream.py`, …) | shipped |
 | External payload envelopes | `integrations/mizan_integrations/external_payload.py` | wired, unproven |
+| Memtara proof verification / evidence seam | none | **none** — TM-002 fixes the boundary, but T-133..T-138 have not shipped |
 | Kafka, Redis, IAM, SIEM, workflow | none | **none**. Evidence leaves through `mizan.outbox` and the drain worker; there is no broker or SIEM delivery |
 
 ## SDK and surfaces

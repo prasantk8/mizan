@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-126 is in REVIEW on PR #37 after all 13 CI checks passed on implementation head `cd1646e`; T-127 is READY next. T-125 merged through PR #36 with all CI checks green but without the required independent `REVIEW:` comment.
+**The two-product pilot programme is in WS-1a hardening.** T-127 is in REVIEW on PR #38: the refreshed TM-001 was explicitly founder-ratified on 2026-09-01 and the preimplementation TM-002 fixes the Memtara seam boundary. T-128 is READY after independent review and merge of that final head.
 
 ## Agent Queue
 
@@ -17,7 +17,8 @@
 | T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
 | T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | DONE |
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
-| T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | READY |
+| T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | REVIEW |
+| T-128 | UI truth corrections: runtime-derived environment badge, exact product claims, counted event label, integrity-check label, and simulation terminology | CODEX | T-127 | READY |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -168,10 +169,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge T-126 PR #37.** Require a comment beginning `REVIEW:` on the
-> final head after verifying policy/risk dependency failures remain `system_fail_closed` DENYs, their
-> evidence is marked degraded with no grant, healthy decisions alone record false, and the sixth
-> adversarial fault disables the real state reporter. After merge, claim T-127 from the merged base.
+> **Independently review and squash-merge PR #38 for T-127.** Confirm TM-001 records the dated founder
+> ruling without closing its open residuals, TM-002 describes only the unshipped Mizan↔Memtara seam, and
+> final-head CI is green. The reviewer must leave a `REVIEW:` comment. After merge, claim T-128 and make the
+> UI truth corrections with DOM tests over the exact product strings and runtime-derived environment badge.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -198,6 +199,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-127 · Founder explicitly ratified items 1/2/3 as recommended: A-8 remains in v1; R-1 stays open for the examiner/business question to a design partner and T-038/T-039 are not credited as proof against pre-chain omission; the shipped object-store boundary and remaining infrastructure residual stay in TM-001 while TM-002 is reserved for the unshipped Mizan↔Memtara seam. TM-001 is now RATIFIED with the ruling date; TM-002 remains a preimplementation skeleton. Documentation-only change: no runtime behaviour, benchmark, schema, API, crypto, key, approval, money, or tenant-authority change. Claim released and T-128 queued. · next: final-head gates, independent `REVIEW:` and squash-merge PR #38, then claim T-128
 
 - 2026-09-01 · CODEX · T-126 · Handed off PR #37 for independent review after CI run `33464386848` passed all 13 jobs on implementation head `cd1646e`. Authorization now uses the security module for healthy/fail-closed dependency state; policy/risk failures remain evidence-bearing DENYs and the ledger explicitly does not credit the still-unwired signed degraded-ALLOW path. Exact pre-fix `c744742` recorded the outage as healthy; the new sixth adversarial mutation flips the real reporter and is caught. Local proof: 484 focused unit/adversarial tests, 470 PostgreSQL-gate unit tests, 35/35 live PostgreSQL tests, 83.86% execution coverage, 6/6 adversarial faults, Ruff and `make check` green. No benchmark numbers claimed; H-7 does not fire because the change reports dependency health without changing authority semantics. Claim released and T-127 queued. · next: independent `REVIEW:` on final head and squash-merge PR #37, then claim T-127
 
