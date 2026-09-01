@@ -93,6 +93,21 @@ FAULTS = [
         "test": "tests/adversarial/test_rate_limits.py",
         "needs_db": False,
     },
+    {
+        "name": "degraded_state",
+        "proves": (
+            "a policy-backend outage is truthfully marked degraded on the shipped fail-closed "
+            "authorization record"
+        ),
+        "file": "security/mizan_security/degraded.py",
+        "find": '            "is_degraded": True,\n            "reason": reason,',
+        "replace": '            "is_degraded": False,\n            "reason": reason,',
+        "test": (
+            "tests/unit/test_authorization.py::"
+            "test_policy_backend_failure_is_truthfully_marked_degraded_and_fail_closed"
+        ),
+        "needs_db": False,
+    },
 ]
 
 

@@ -18,6 +18,45 @@ class DegradedModeError(RuntimeError):
     pass
 
 
+class DegradedState:
+    """Build the one truthful dependency-state vocabulary used by authorization evidence."""
+
+    _REASONS = {
+        "risk_engine": "risk_engine_down",
+        "policy_cache": "policy_cache_down",
+        "record_store": "store_down",
+        # The policy engine is deliberately reportable but never eligible for degraded ALLOW.
+        "policy_engine": "policy_engine_down",
+    }
+
+    @staticmethod
+    def healthy() -> dict[str, Any]:
+        return {"is_degraded": False, "reason": "none", "grant_ref": None}
+
+    @classmethod
+    def dependency_failure(
+        cls,
+        failed_component: str,
+        *,
+        grant_ref: str | None = None,
+        buffered_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        try:
+            reason = cls._REASONS[failed_component]
+        except KeyError as exc:
+            raise DegradedModeError(
+                f"unknown degraded dependency {failed_component!r}"
+            ) from exc
+        state: dict[str, Any] = {
+            "is_degraded": True,
+            "reason": reason,
+            "grant_ref": grant_ref,
+        }
+        if buffered_at is not None:
+            state["buffered_at"] = buffered_at.isoformat().replace("+00:00", "Z")
+        return state
+
+
 class NonceRegistry(Protocol):
     def consume(self, tenant_id: str, nonce: str) -> bool: ...
 
@@ -175,9 +214,9 @@ class DegradedAllowGate:
         self.verifier.verify(grant, tenant_id, failed_component)
         record = dict(adr_record)
         record["decision_basis"] = "degraded_grant"
-        record["degraded"] = {
-            "is_degraded": True,
-            "reason": failed_component,
-            "grant_ref": grant["grant_id"],
-        }
+        record["degraded"] = DegradedState.dependency_failure(
+            failed_component,
+            grant_ref=grant["grant_id"],
+            buffered_at=datetime.now(UTC),
+        )
         return {"record": record, "local_receipt": self.wal.append(tenant_id, record)}

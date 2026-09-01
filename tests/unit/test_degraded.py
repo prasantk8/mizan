@@ -76,6 +76,8 @@ def test_i21_i26_degraded_allow_requires_all_gates_and_fsynced_receipt(tmp_path)
         adr_record={"decision": "ALLOW", "payload": "safe"},
     )
     assert result["record"]["degraded"]["is_degraded"] is True
+    assert result["record"]["degraded"]["reason"] == "risk_engine_down"
+    assert result["record"]["degraded"]["buffered_at"].endswith("Z")
     assert len(result["local_receipt"]["signature"]) >= 64
     assert (tmp_path / "degraded.wal").read_bytes() != rfc8785.dumps(result["record"])
 

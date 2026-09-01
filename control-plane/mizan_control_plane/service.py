@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 import rfc8785
+from mizan_security.degraded import DegradedState
 from psycopg import Error as PostgresError
 from psycopg.errors import UniqueViolation
 
@@ -156,7 +157,7 @@ class AuthorizationService:
                 context_document,
                 classification_source,
                 {"level": tool.risk_tier, "floor_source": "degraded_floor"},
-                "risk_engine_failure",
+                "risk_engine",
                 exc,
             )
         if RISK_ORDER[risk["level"]] < RISK_ORDER[tool.risk_tier]:
@@ -174,7 +175,7 @@ class AuthorizationService:
                 context_document,
                 classification_source,
                 risk,
-                "policy_engine_failure",
+                "policy_engine",
                 exc,
             )
         terminal_problem: Problem | None = None
@@ -202,7 +203,7 @@ class AuthorizationService:
             policies=policies,
             reasons=reasons,
             constraints=constraints,
-            degraded={"is_degraded": False, "reason": "none", "grant_ref": None},
+            degraded=DegradedState.healthy(),
         )
         adr = self._adr_document(
             identity, enriched, response, context_hash, now, classification_source
@@ -267,11 +268,12 @@ class AuthorizationService:
         context_document: dict[str, Any],
         classification_source: str,
         risk: dict[str, Any],
-        reason: str,
+        failed_component: str,
         cause: Exception,
     ) -> AuthorizationResponse:
         now = datetime.now(UTC)
         decision_id = self._decision_id(identity.tenant_id, context.request_id)
+        reason = f"{failed_component}_failure"
         response = AuthorizationResponse(
             decision_id=decision_id,
             decision="DENY",
@@ -279,7 +281,7 @@ class AuthorizationService:
             policies=[],
             reasons=[f"System failed closed: {reason}"],
             constraints=None,
-            degraded={"is_degraded": False, "reason": "none", "grant_ref": None},
+            degraded=DegradedState.dependency_failure(failed_component),
         )
         adr = self._adr_document(
             identity,
