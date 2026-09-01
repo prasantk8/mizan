@@ -14,8 +14,10 @@ from mizan_control_plane.models import (
     RegistryAgent,
     RegistryTool,
 )
+from mizan_control_plane.observability import Metrics
 from mizan_control_plane.policy_engine import CedarPolicyEvaluator
 from mizan_control_plane.problems import Problem
+from mizan_control_plane.rate_limits import RateLimiter
 from mizan_control_plane.repository import InMemoryAuthorizationRepository
 from mizan_control_plane.risk import RegistryFloorRiskProvider
 from mizan_control_plane.schema_validation import ContractSchemas
@@ -121,6 +123,25 @@ def test_no_matching_policy_is_recorded_default_deny() -> None:
     assert repository.adr_documents[0]["risk"]["level"] == "HIGH"
 
 
+def test_authorize_uses_the_registered_tool_tier_and_stops_before_evaluation() -> None:
+    subject, repository = service()
+    metrics = Metrics()
+    subject.rate_limiter = RateLimiter(
+        {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}, metrics
+    )
+    for suffix in ("51", "52", "53"):
+        request = context(f"018f47a6-7b42-7c00-8000-0000000000{suffix}")
+        assert subject.authorize(identity(), request).risk["level"] == "HIGH"
+
+    with pytest.raises(Problem) as refused:
+        subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000054"))
+
+    assert refused.value.status == 429
+    assert refused.value.code == "rate_limit_exceeded"
+    assert len(repository.adr_documents) == 3
+
+
+
 @pytest.mark.parametrize(
     ("policy_decision", "expected_status", "expected_record_decision"),
     [
@@ -220,6 +241,23 @@ def test_idempotent_retry_returns_same_decision() -> None:
     second = subject.authorize(identity(), context())
     assert second == first
     assert len(repository.adr_documents) == 1
+
+
+def test_idempotent_retry_returns_the_recorded_decision_after_capacity_is_exhausted() -> None:
+    subject, repository = service()
+    subject.rate_limiter = RateLimiter(
+        {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}, Metrics()
+    )
+    first_request = context("018f47a6-7b42-7c00-8000-000000000071")
+    first = subject.authorize(identity(), first_request)
+    subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000072"))
+    subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000073"))
+
+    assert subject.authorize(identity(), first_request) == first
+    with pytest.raises(Problem) as refused:
+        subject.authorize(identity(), context("018f47a6-7b42-7c00-8000-000000000074"))
+    assert refused.value.status == 429
+    assert len(repository.adr_documents) == 3
 
 
 def test_allow_response_and_persisted_replay_are_byte_identical_with_stray_policy_constraints() -> None:

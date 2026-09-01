@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-124 is in REVIEW through replacement PR #35 after PR #34 merged its claim-only commit. T-125 is READY next: enforce the ratified ADR-003 rate-limit tiers on the three pilot-critical route classes.
+**The two-product pilot programme is in WS-1a hardening.** T-125 is in REVIEW on PR #36 after all 13 CI checks passed on implementation head `f13fe17`; T-126 is READY next. T-124 merged through replacement PR #35 with all CI checks green but without the required independent `REVIEW:` comment.
 
 ## Agent Queue
 
@@ -14,8 +14,9 @@
 |---|---|---|---|---|
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
-| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | REVIEW |
-| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | READY |
+| T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
+| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | REVIEW |
+| T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | READY |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -166,11 +167,12 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge replacement PR #35 for T-124.** Require a `REVIEW:` comment that
-> checks the nine-table UPDATE/DELETE trigger proof, the missing/divergent/duplicate/extra object cases,
-> the deliberate exclusion of normal unpublished outbox rows, and the `/readyz` 503 fault path. PR #34
-> contains only the claim commit and its checks do not validate the implementation. After #35 merges,
-> claim T-125 and implement ADR-003 rate limits for `/v1/authorize`, approvals and token issuance.
+> **Independently review and squash-merge T-125 PR #36.** Require a comment beginning `REVIEW:` on the
+> final head after verifying authoritative stored risk selects the tenant/route bucket, all protected new
+> work is refused with 429 before mutation or minting, idempotent retries do not consume fresh capacity,
+> and the fifth adversarial fault disables the real limiter guard. After merge, claim T-126 from the merged
+> base and resolve the literal `is_degraded: False` contract honestly by wiring the existing degraded-mode
+> module or deleting it and its ledger row.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -197,6 +199,14 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-125 · Handed off PR #36 for independent review after CI run `33436554920` passed all 13 jobs on implementation head `f13fe17`. The final contract is tenant/route/stored-risk token buckets for authorize, approval mutations and new execution-token minting; recorded authorize retries and outstanding-token reissues remain idempotent without fresh capacity. Local proof: 469 unit tests, 35/35 PostgreSQL tests, 83.86% execution coverage, five adversarial faults caught, Ruff and `make check` green. Pre-fix `81d2adf` accepted and mutated on request 61; Rule 10 corrections and the T-124 review-protocol exception remain disclosed above and in the PR. No benchmark numbers claimed; H-7 does not fire because admission control precedes and does not change approval, outcome, money, crypto, key or tenant authority semantics. · next: independent `REVIEW:` on the final head and squash-merge PR #36, then claim T-126
+
+- 2026-09-01 · CODEX · T-125 · Self-review corrected admission ordering before handoff: an authorize retry now returns its already-recorded decision and execution-token reissue returns the already-outstanding token without consuming fresh capacity, so overload does not break idempotency. New evaluation/minting remains limited using the stored tool/ADR tier. SPEC/ADR V-26 and the regression test say so. The corrected full gate passes 469 unit tests and 35/35 PostgreSQL tests; execution coverage is 83.86% against the 80% tripwire with no new debt. Routine benchmark artifact removed again. · next: push the correction and await final-head CI
+
+- 2026-09-01 · CODEX · T-125 · Implemented per-process token buckets keyed by authenticated tenant, protected route class and authoritative stored risk tier. ADR-003 Amendment E and SPEC V-26 now define the LOW→CRITICAL quotas, 429 problem, per-replica boundary and metrics. The real approval route stops call 61 before mutation; exact pre-fix `81d2adf` returned 200 and invoked all 61. Five adversarial faults are caught including disabling the limiter guard. Local gates: 469 unit tests, 35/35 live PostgreSQL tests, schema contract, refusal coverage at 84.48%, contract/gate inventories, Ruff and `make check` passed. Routine sequencer artifact removed; no benchmark numbers claimed. Rule 10 so far: Ruff fixed two import orders; strict adjacent `zip` made startup fail and was replaced with `pairwise`; two UI/app doubles needed the new risk lookup; three PostgreSQL-gate attempts respectively found the UI call-list expectation, a new refusal-debt site, then passed after the endpoint-owned 404 avoided manufacturing execution-module debt. · next: commit/push implementation, let PR CI arbitrate, then complete review handoff
+
+- 2026-08-31 · CODEX · T-125 · Claimed from merged T-124 base `81d2adf`; PR #35 carried 13/13 green checks but no independent `REVIEW:` comment, recorded as a process exception rather than silently credited. Scope is explicit ADR-003/SPEC quotas plus tenant-scoped limiting for authorize, approval mutations and execution-token issuance, with 429 problem details and Prometheus visibility. · next: open the draft PR, reproduce the unbounded pre-fix behavior, then implement and run the adversarial gate
 
 - 2026-08-31 · CODEX · T-124 · Implementation complete and handed off in replacement PR #35. PR #34 was squash-merged at claim-only SHA `fe7bea9` while implementation push `42648ef` was propagating; the implementation was rebased onto that merge as `a325b61`, and the protocol exception is explicit in the replacement PR. Migration 0005 and the schema contract enforce both verbs with exact SQLSTATE 55000 across all nine evidence tables. The shared reconciler catches missing, divergent, duplicate and extra receipt-bound bucket records in the drain worker and makes `/readyz` return 503 while leaving ordinary unpublished outbox rows to the existing lag SLO. Local results: Ruff, `make check`, contract coverage, 457 unit tests and 35/35 live PostgreSQL tests passed; the schema test fires 18 refusals. CI run `33430718095` passed all 13 jobs on `a325b61`. Rule 8 rejects pre-fix `e64263e` both for mutable `adr_record_policies` and old `/readyz` 200 with a missing receipt-bound object. Rule 10 includes the Ruff/import fix, three discarded pre-fix harness attempts, the routine removed benchmark artifact, and the claim-only #34 merge. No benchmark numbers claimed. H-7 does not fire. · next: independent `REVIEW:` and squash-merge PR #35, then claim T-125
 

@@ -29,6 +29,7 @@ from .ports import (
     RiskProvider,
 )
 from .problems import Problem
+from .rate_limits import RateLimiter
 
 RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 CLASSIFICATION_ORDER = {
@@ -62,6 +63,7 @@ class AuthorizationService:
         evaluator_build: str,
         configuration_hash: str,
         metrics: Metrics | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.repository = repository
         self.risk_provider = risk_provider
@@ -69,6 +71,7 @@ class AuthorizationService:
         self.configuration_hash = configuration_hash
         self.failure_counters: Counter[str] = Counter()
         self.metrics = metrics or Metrics()
+        self.rate_limiter = rate_limiter
 
     def authorize(
         self, identity: AuthenticatedIdentity, context: EvaluationContext
@@ -139,6 +142,9 @@ class AuthorizationService:
                     409, "idempotency_conflict", "request_id was used for another context"
                 )
             return prior.response
+
+        if self.rate_limiter is not None:
+            self.rate_limiter.require(identity.tenant_id, "authorize", tool.risk_tier)
 
         try:
             risk = self.risk_provider.evaluate(enriched, tool.risk_tier)

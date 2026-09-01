@@ -45,6 +45,7 @@ from .observability import (
     annotate,
 )
 from .problems import Problem, problem_response
+from .rate_limits import RateLimiter
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
 from .risk import RegistryFloorRiskProvider
@@ -62,9 +63,13 @@ def create_app(
     key_provider: KeyProvider | None = None,
     metrics: Metrics | None = None,
     tracer: Tracer | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     metrics = metrics or Metrics()
+    rate_limiter = rate_limiter or RateLimiter(settings.rate_limit_map, metrics)
+    if execution_service is not None:
+        execution_service.rate_limiter = rate_limiter
     verifier = TokenVerifier(
         settings.jwt_issuer,
         settings.jwt_audience,
@@ -84,6 +89,7 @@ def create_app(
         settings.evaluator_build,
         settings.evaluator_configuration_hash,
         metrics=metrics,
+        rate_limiter=rate_limiter,
     )
 
     @asynccontextmanager
@@ -440,6 +446,11 @@ def create_app(
         request: ApprovalVoteRequest,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
+        rate_limiter.require(
+            principal.tenant_id,
+            "approval",
+            approval_repository.risk_tier(principal.tenant_id, approval_id),
+        )
         return approval_repository.vote(
             principal.tenant_id,
             approval_id,
@@ -452,6 +463,11 @@ def create_app(
         approval_id: str,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
+        rate_limiter.require(
+            principal.tenant_id,
+            "approval",
+            approval_repository.risk_tier(principal.tenant_id, approval_id),
+        )
         return approval_repository.escalate(principal.tenant_id, approval_id)
 
     @app.post("/v1/approvals/{approval_id}/override")
@@ -459,6 +475,11 @@ def create_app(
         approval_id: str,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
+        rate_limiter.require(
+            principal.tenant_id,
+            "approval",
+            approval_repository.risk_tier(principal.tenant_id, approval_id),
+        )
         return approval_repository.override(principal.tenant_id, approval_id, principal)
 
     @app.post("/v1/approvals/{approval_id}/withdraw")
@@ -466,6 +487,11 @@ def create_app(
         approval_id: str,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
+        rate_limiter.require(
+            principal.tenant_id,
+            "approval",
+            approval_repository.risk_tier(principal.tenant_id, approval_id),
+        )
         return approval_repository.withdraw(
             principal.tenant_id, approval_id, principal.principal_id
         )

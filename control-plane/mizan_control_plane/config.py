@@ -1,10 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from os import environ
 from pathlib import Path
 
 from .auth import IdentityKeySet
+
+RATE_LIMIT_RISK_TIERS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+
+
+def parse_rate_limits(raw: str) -> tuple[int, int, int, int]:
+    """Parse the closed LOW→CRITICAL quota list and reject an inverted shedding order."""
+    try:
+        values = tuple(int(item.strip()) for item in raw.split(","))
+    except ValueError as exc:
+        raise RuntimeError(
+            "MIZAN_RATE_LIMITS_PER_MINUTE must contain four comma-separated integers"
+        ) from exc
+    if len(values) != 4 or any(value < 1 for value in values):
+        raise RuntimeError(
+            "MIZAN_RATE_LIMITS_PER_MINUTE must contain four positive integers for "
+            "LOW,MEDIUM,HIGH,CRITICAL"
+        )
+    if any(left >= right for left, right in pairwise(values)):
+        raise RuntimeError(
+            "MIZAN_RATE_LIMITS_PER_MINUTE must rise strictly from LOW through CRITICAL"
+        )
+    return values  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +100,11 @@ class Settings:
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
     object_lock_retention_years: int = 7
+    rate_limits_per_minute: tuple[int, int, int, int] = (60, 120, 240, 480)
+
+    @property
+    def rate_limit_map(self) -> dict[str, int]:
+        return dict(zip(RATE_LIMIT_RISK_TIERS, self.rate_limits_per_minute, strict=True))
 
     @property
     def metrics_enabled(self) -> bool:
@@ -329,6 +357,9 @@ class Settings:
             metrics_port=int(environ.get("MIZAN_METRICS_PORT", "0")),
             otel_exporter_endpoint=environ.get("MIZAN_OTEL_EXPORTER_OTLP_ENDPOINT", ""),
             otel_service_name=environ.get("MIZAN_OTEL_SERVICE_NAME", "mizan-control-plane"),
+            rate_limits_per_minute=parse_rate_limits(
+                environ.get("MIZAN_RATE_LIMITS_PER_MINUTE", "60,120,240,480")
+            ),
         )
 
 

@@ -82,6 +82,10 @@ class FakeRepository:
     def withdraw(self, *arguments: Any) -> dict[str, Any]:
         return self._record("withdraw", *arguments)
 
+    def risk_tier(self, *arguments: Any) -> str:
+        self.calls.append(("risk_tier", arguments))
+        return "LOW"
+
     def update_agent(self, *arguments: Any) -> dict[str, Any]:
         return self._record("update_agent", *arguments)
 
@@ -185,9 +189,35 @@ def test_simulation_refuses_a_weakly_authenticated_principal(wired) -> None:
     ],
 )
 def test_every_approval_route_accepts_a_bearer_principal(wired, method, path, body) -> None:
-    client, _repositories, private_key = wired
+    client, repositories, private_key = wired
     response = getattr(client, method)(path, json=body, headers=authorization(private_key))
     assert response.status_code == 200, response.text
+    assert repositories["approval"].calls[0][0] == "risk_tier"
+
+
+def test_approval_burst_is_refused_before_the_mutation_and_visible_in_metrics(wired) -> None:
+    client, repositories, private_key = wired
+    headers = authorization(private_key)
+    path = "/v1/approvals/apr_demo-0001/escalate"
+
+    for _ in range(60):
+        assert client.post(path, headers=headers).status_code == 200
+    refused = client.post(path, headers=headers)
+
+    assert refused.status_code == 429
+    assert refused.headers["content-type"].startswith("application/problem+json")
+    assert refused.json()["type"] == "https://mizan.ai/problems/rate_limit_exceeded"
+    assert refused.json()["instance"] == path
+    assert [name for name, _arguments in repositories["approval"].calls].count("escalate") == 60
+    exposition = client.app.state.metrics.exposition().decode()
+    assert (
+        'mizan_rate_limit_configured_requests_per_minute{risk_tier="LOW",route_class="approval"} '
+        "60.0" in exposition
+    )
+    assert (
+        'mizan_rate_limit_rejections_total{risk_tier="LOW",route_class="approval",'
+        'tenant_id="tnt_bank-a"} 1.0' in exposition
+    )
 
 
 def test_execution_routes_answer_401_without_a_verified_workload(wired) -> None:

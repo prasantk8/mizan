@@ -84,6 +84,15 @@ FAULTS = [
         "test": "tests/adversarial/test_token_replay.py::test_redeemed_execution_token_is_refused_as_consumed",
         "needs_db": True,
     },
+    {
+        "name": "rate_limit",
+        "proves": "a burst is stopped by the shipped admission guard before the handler runs",
+        "file": "control-plane/mizan_control_plane/rate_limits.py",
+        "find": "            if bucket.tokens < 1.0:",
+        "replace": "            if False:",
+        "test": "tests/adversarial/test_rate_limits.py",
+        "needs_db": False,
+    },
 ]
 
 

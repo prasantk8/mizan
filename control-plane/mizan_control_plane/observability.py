@@ -397,6 +397,18 @@ class Metrics:
             ("tenant_id", "reason"),
             **kwargs,
         )
+        self.rate_limit_configured = Gauge(
+            "mizan_rate_limit_configured_requests_per_minute",
+            "Configured per-replica request capacity, by protected route class and risk tier.",
+            ("route_class", "risk_tier"),
+            **kwargs,
+        )
+        self.rate_limit_rejections = Counter(
+            "mizan_rate_limit_rejections_total",
+            "Requests refused by tenant-scoped admission control.",
+            ("tenant_id", "route_class", "risk_tier"),
+            **kwargs,
+        )
         self.worker_ticks = Counter(
             "mizan_drain_worker_ticks_total",
             "Completed drain-worker ticks, by tenant.",
