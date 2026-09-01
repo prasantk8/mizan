@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-126 is in REVIEW on PR #37 after all 13 CI checks passed on implementation head `cd1646e`; T-127 is READY next. T-125 merged through PR #36 with all CI checks green but without the required independent `REVIEW:` comment.
+**The two-product pilot programme is in WS-1a hardening.** T-126 merged through PR #37 at `bc16436` with all 13 CI checks green but without the required independent `REVIEW:` comment. T-127 is IN_PROGRESS from that merged base: refresh TM-001 against the shipped tree, define the Memtara seam in TM-002, and put the three founder-owned ratification judgements in front of the owner explicitly.
 
 ## Agent Queue
 
@@ -17,7 +17,7 @@
 | T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
 | T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | DONE |
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
-| T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | READY |
+| T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | IN_PROGRESS |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -127,6 +127,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-127 | CODEX | 029cc751-1d19-457d-9a28-ea8cd495d0ff | 1 | 2026-09-01T03:38:30Z | 2026-09-01T03:38:30Z | 2026-09-01T07:38:30Z | bc164362becbcb54d801ae5fbf507e1d776d0c7a |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -168,10 +169,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge T-126 PR #37.** Require a comment beginning `REVIEW:` on the
-> final head after verifying policy/risk dependency failures remain `system_fail_closed` DENYs, their
-> evidence is marked degraded with no grant, healthy decisions alone record false, and the sixth
-> adversarial fault disables the real state reporter. After merge, claim T-127 from the merged base.
+> **Complete T-127 from claim `029cc751-1d19-457d-9a28-ea8cd495d0ff`.** Reconcile every TM-001
+> residual with the shipped tree, add the Memtara proof-token trust boundary as TM-002, and obtain an
+> explicit founder ruling on TM-001 §6 before changing its status from DRAFT to RATIFIED. Then run the
+> documentation/contract gates, release the claim, and hand the PR to the independent reviewer.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
