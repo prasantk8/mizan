@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-127 was squash-merged as `5a9d9a0`; no independent `REVIEW:` comment is present on PR #38, so that remains a recorded protocol exception. T-128 is IN_PROGRESS on branch `t-128-ui-truth-corrections`, scoped to `ui/`, its DOM tests, and this ledger.
+**The two-product pilot programme is in WS-1a hardening.** T-127 was squash-merged as `5a9d9a0`; no independent `REVIEW:` comment is present on PR #38, so that remains a recorded protocol exception. T-128 is IN_PROGRESS on draft PR #39: the UI truth corrections and their DOM gate are locally green.
 
 ## Agent Queue
 
@@ -128,7 +128,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-128 | CODEX | ac8640f2-7695-429d-be5a-a7f796148280 | 1 | 2026-09-01T07:44:37Z | 2026-09-01T07:44:37Z | 2026-09-01T11:44:37Z | 5a9d9a068417a06cbf5e549306968161b3996bd2 |
+| T-128 | CODEX | ac8640f2-7695-429d-be5a-a7f796148280 | 1 | 2026-09-01T07:44:37Z | 2026-09-01T07:52:47Z | 2026-09-01T11:44:37Z | 5a9d9a068417a06cbf5e549306968161b3996bd2 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -170,9 +170,9 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Complete T-128 on branch `t-128-ui-truth-corrections`.** Replace every misleading UI claim named by
-> strategy §7, derive the environment badge from runtime configuration/readiness without rendering
-> `Production` before verification, and add DOM tests that reject the pre-fix output at `5a9d9a0`.
+> **Let PR #39 CI arbitrate T-128.** Confirm the five DOM truth tests reject pre-fix `5a9d9a0`, the
+> existing UI API-contract validator stays green, and the runtime badge cannot render `Production`
+> without ready production-only anchor-provider and mutual-TLS checks.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >

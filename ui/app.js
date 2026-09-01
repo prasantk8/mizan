@@ -8,7 +8,7 @@ const state = {
   decision: null,
   requesterId: null,
   draftPolicies: [],
-  lastReplay: null,
+  lastSimulation: null,
   activeView: "dashboard",
 };
 
@@ -72,6 +72,37 @@ function setStatus(message, kind = "ok") {
   $("status").className = `status ${kind}`;
 }
 
+function renderRuntimeStatus(readiness) {
+  const target = $("environmentStatus");
+  const checks = readiness?.checks || {};
+  const ready = readiness?.status === "ready" && Object.values(checks).every((value) => value === "ok");
+  const productionVerified = ready && checks.anchor_provider === "ok" && checks.mutual_tls === "ok";
+  const environment = productionVerified ? "Production" : ready ? "Non-production" : "Environment unverified";
+  const readinessLabel = ready ? "Ready" : "Not ready";
+  target.className = `environment ${ready ? "ready" : "not-ready"}`;
+  target.replaceChildren(element("i"), document.createTextNode(` ${environment} · Connected · ${readinessLabel}`));
+}
+
+async function loadRuntimeStatus() {
+  if (!state.token) {
+    const target = $("environmentStatus");
+    target.className = "environment unverified";
+    target.replaceChildren(element("i"), document.createTextNode(" Environment unverified"));
+    return;
+  }
+  try {
+    renderRuntimeStatus(await request("GET", "/health/ready"));
+  } catch (error) {
+    if (error.problem?.status) {
+      renderRuntimeStatus(error.problem);
+      return;
+    }
+    const target = $("environmentStatus");
+    target.className = "environment offline";
+    target.replaceChildren(element("i"), document.createTextNode(" Offline · Readiness unknown"));
+  }
+}
+
 function query(form) {
   const params = new URLSearchParams();
   for (const [key, value] of new FormData(form)) {
@@ -110,7 +141,7 @@ async function loadDashboard() {
       actions_today: "Actions today",
       denied_actions: "Denied actions",
       approval_requests: "Approval requests",
-      security_alerts: "Security alerts",
+      security_alerts: "mizan.security.* audit events today",
       high_risk_actions: "High-risk actions",
     };
     $("metrics").replaceChildren();
@@ -211,11 +242,11 @@ async function loadAudit(append = false) {
   }
 }
 
-function resetReplay(message = "Run a replay to compare a draft with immutable decisions.") {
-  state.lastReplay = null;
+function resetSimulation(message = "Run a policy impact preview against recorded contexts.") {
+  state.lastSimulation = null;
   $("policyFlips").replaceChildren();
-  $("replaySummary").textContent = message;
-  $("testedEvidence").textContent = "No replay evidence in this session.";
+  $("simulationSummary").textContent = message;
+  $("testedEvidence").textContent = "No simulation evidence in this session.";
   $("markTested").disabled = true;
 }
 
@@ -223,7 +254,7 @@ async function loadPolicyStudio() {
   try {
     const page = await request("GET", "/v1/policies", "/v1/policies?limit=200");
     state.draftPolicies = page.items.filter((policy) => policy.status === "DRAFT");
-    const select = $("policyReplay").elements.policy;
+    const select = $("policySimulation").elements.policy;
     const selected = select.value;
     select.replaceChildren(element("option", "Select a DRAFT policy"));
     select.firstElementChild.value = "";
@@ -233,7 +264,7 @@ async function loadPolicyStudio() {
       select.append(option);
     }
     if ([...select.options].some((option) => option.value === selected)) select.value = selected;
-    setStatus(`${state.draftPolicies.length} draft policies available for replay.`);
+    setStatus(`${state.draftPolicies.length} draft policies available for simulation.`);
   } catch (error) {
     setStatus(error.message, "error");
   }
@@ -265,14 +296,14 @@ function renderFlip(flip) {
   $("policyFlips").append(wrapper);
 }
 
-async function replayPolicy() {
-  const values = Object.fromEntries(new FormData($("policyReplay")));
+async function simulatePolicy() {
+  const values = Object.fromEntries(new FormData($("policySimulation")));
   const policy = state.draftPolicies.find((candidate) => `${candidate.policy_id}:${candidate.version}` === values.policy);
   if (!policy) {
-    resetReplay("Select a DRAFT policy before replaying decisions.");
+    resetSimulation("Select a DRAFT policy before running a simulation.");
     return;
   }
-  resetReplay("Replay running…");
+  resetSimulation("Simulation running…");
   try {
     const page = await request("GET", "/v1/decisions", `/v1/decisions?limit=${encodeURIComponent(values.limit)}`);
     const comparisons = await mapLimit(page.items, 6, async (decision) => {
@@ -310,38 +341,38 @@ async function replayPolicy() {
       renderFlip(flip);
     }
     const breakdown = Object.entries(directions).map(([direction, count]) => `${direction}: ${count}`).join(" · ");
-    $("replaySummary").textContent = `${page.items.length} replayed · ${flips.length} flipped${breakdown ? ` · ${breakdown}` : ""}`;
-    $("testedEvidence").textContent = `${page.items.length} contexts replayed, ${flips.length} outcome changes.`;
-    state.lastReplay = {
+    $("simulationSummary").textContent = `${page.items.length} simulated · ${flips.length} changed${breakdown ? ` · ${breakdown}` : ""}`;
+    $("testedEvidence").textContent = `${page.items.length} contexts simulated, ${flips.length} outcome changes.`;
+    state.lastSimulation = {
       policyId: policy.policy_id,
       version: policy.version,
-      replayed: page.items.length,
-      flipped: flips.length,
+      simulated: page.items.length,
+      changed: flips.length,
     };
     $("markTested").disabled = false;
     if (!flips.length) $("policyFlips").append(element("p", "No recorded decision changes under this draft.", "hint"));
-    setStatus(`Draft replay completed across ${page.items.length} immutable decisions.`);
+    setStatus(`Draft simulation completed across ${page.items.length} recorded contexts.`);
   } catch (error) {
-    resetReplay(`Replay failed: ${error.message}`);
+    resetSimulation(`Simulation failed: ${error.message}`);
     setStatus(error.message, "error");
   }
 }
 
 async function markPolicyTested() {
-  const replay = state.lastReplay;
-  if (!replay) return;
+  const simulation = state.lastSimulation;
+  if (!simulation) return;
   try {
     await request(
       "POST",
       "/v1/policies/{policy_id}/transition",
-      `/v1/policies/${encodeURIComponent(replay.policyId)}/transition`,
-      { version: replay.version, target_status: "TESTED" },
+      `/v1/policies/${encodeURIComponent(simulation.policyId)}/transition`,
+      { version: simulation.version, target_status: "TESTED" },
     );
     $("markTested").disabled = true;
-    $("testedEvidence").textContent = `TESTED after ${replay.replayed} replays and ${replay.flipped} flips.`;
-    state.lastReplay = null;
+    $("testedEvidence").textContent = `TESTED after ${simulation.simulated} simulations and ${simulation.changed} outcome changes.`;
+    state.lastSimulation = null;
     await loadPolicyStudio();
-    setStatus(`Policy ${replay.policyId} v${replay.version} transitioned to TESTED.`);
+    setStatus(`Policy ${simulation.policyId} v${simulation.version} transitioned to TESTED.`);
   } catch (error) {
     setStatus(error.message, "error");
   }
@@ -622,8 +653,8 @@ document.querySelectorAll(".nav").forEach((button) => {
 $("filters").onsubmit = (event) => { event.preventDefault(); state.decisionCursor = null; loadDecisions(); };
 $("approvalFilters").onsubmit = (event) => { event.preventDefault(); state.approvalCursor = null; loadApprovals(); };
 $("approvalActions").onsubmit = (event) => { event.preventDefault(); castVote(); };
-$("policyReplay").onsubmit = (event) => { event.preventDefault(); replayPolicy(); };
-$("policyReplay").onchange = () => resetReplay();
+$("policySimulation").onsubmit = (event) => { event.preventDefault(); simulatePolicy(); };
+$("policySimulation").onchange = () => resetSimulation();
 $("markTested").onclick = markPolicyTested;
 $("moreApprovals").onclick = () => loadApprovals(true);
 $("moreDecisions").onclick = () => loadDecisions(true);
@@ -634,6 +665,7 @@ $("withdrawApproval").onclick = withdrawApproval;
 $("refreshButton").onclick = () => {
   state.decisionCursor = null;
   state.approvalCursor = null;
+  loadRuntimeStatus();
   (loaders[state.activeView] || loadDashboard)();
 };
 $("connectionButton").onclick = () => {
@@ -646,7 +678,10 @@ $("saveConnection").onclick = () => {
   state.token = $("apiToken").value.trim();
   sessionStorage.setItem("mizan_origin", state.origin);
   sessionStorage.setItem("mizan_token", state.token);
-  setTimeout(() => (loaders[state.activeView] || loadDashboard)(), 0);
+  setTimeout(() => {
+    loadRuntimeStatus();
+    (loaders[state.activeView] || loadDashboard)();
+  }, 0);
 };
 $("verifyForm").onsubmit = async (event) => {
   event.preventDefault();
@@ -659,7 +694,7 @@ $("verifyForm").onsubmit = async (event) => {
   };
   try {
     const result = await request("POST", "/v1/audit/verify", "/v1/audit/verify", body);
-    $("verifyResult").textContent = `✓ Chain intact\n${result.checked_records} records independently verified.`;
+    $("verifyResult").textContent = `✓ Chain intact\n${result.checked_records} records verified by this control plane.`;
   } catch (error) {
     $("verifyResult").textContent = `Verification failed\n${error.message}`;
   }
@@ -671,4 +706,7 @@ setInterval(() => {
   if (state.approval?.current_epoch_id && $("approvalDialog").open) renderApproval();
   else if (state.activeView === "approvals") loadApprovals();
 }, 60000);
-if (state.token) loadDashboard();
+if (state.token) {
+  loadRuntimeStatus();
+  loadDashboard();
+}
