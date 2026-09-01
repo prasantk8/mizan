@@ -42,13 +42,14 @@ function tokenClaims() {
 }
 
 async function api(path, options = {}) {
-  if (!state.token) throw new Error("Connect with an operator token first.");
+  const { authentication = "required", ...transportOptions } = options;
+  if (authentication === "required" && !state.token) throw new Error("Connect with an operator token first.");
   const response = await fetch(state.origin + path, {
-    ...options,
+    ...transportOptions,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${state.token}`,
-      ...options.headers,
+      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      ...transportOptions.headers,
     },
   });
   const body = await response.json().catch(() => ({ detail: "Invalid API response" }));
@@ -61,8 +62,8 @@ async function api(path, options = {}) {
   return body;
 }
 
-function request(method, contractPath, path = contractPath, body = null) {
-  const options = { method };
+function request(method, contractPath, path = contractPath, body = null, authentication = "required") {
+  const options = { method, authentication };
   if (body !== null) options.body = JSON.stringify(body);
   return api(path, options);
 }
@@ -84,14 +85,8 @@ function renderRuntimeStatus(readiness) {
 }
 
 async function loadRuntimeStatus() {
-  if (!state.token) {
-    const target = $("environmentStatus");
-    target.className = "environment unverified";
-    target.replaceChildren(element("i"), document.createTextNode(" Environment unverified"));
-    return;
-  }
   try {
-    renderRuntimeStatus(await request("GET", "/health/ready"));
+    renderRuntimeStatus(await request("GET", "/health/ready", "/health/ready", null, "optional"));
   } catch (error) {
     if (error.problem?.status) {
       renderRuntimeStatus(error.problem);
@@ -706,7 +701,5 @@ setInterval(() => {
   if (state.approval?.current_epoch_id && $("approvalDialog").open) renderApproval();
   else if (state.activeView === "approvals") loadApprovals();
 }, 60000);
-if (state.token) {
-  loadRuntimeStatus();
-  loadDashboard();
-}
+loadRuntimeStatus();
+if (state.token) loadDashboard();

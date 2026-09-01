@@ -154,29 +154,37 @@ test("the static DOM states only claims the shipped interface can support", () =
   assert.doesNotMatch(html, /Production control plane|without blind spots|Independent integrity check/);
 });
 
-test("the runtime DOM says Production only when production-only checks and readiness are verified", () => {
-  const { context, document } = browser();
-  const target = document.getElementById("environmentStatus");
-
-  context.renderRuntimeStatus({
-    status: "ready",
-    checks: {
-      database: "ok",
-      signing_keys: "ok",
-      evidence_verifier: "ok",
-      evidence_reconciliation: "ok",
-      execution_service: "ok",
-      anchor_provider: "ok",
-      mutual_tls: "ok",
+test("the runtime DOM says Production without a token only after production readiness is verified", async () => {
+  const { document } = browser({
+    responses: {
+      "/health/ready": {
+        status: 200,
+        body: {
+          status: "ready",
+          checks: {
+            database: "ok",
+            signing_keys: "ok",
+            evidence_verifier: "ok",
+            evidence_reconciliation: "ok",
+            execution_service: "ok",
+            anchor_provider: "ok",
+            mutual_tls: "ok",
+          },
+        },
+      },
     },
   });
+  const target = document.getElementById("environmentStatus");
+  await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(target.textContent, " Production · Connected · Ready");
   assert.equal(target.className, "environment ready");
 });
 
 test("the runtime DOM never calls an unready or non-production runtime Production", () => {
-  const { context, document } = browser();
+  const { context, document } = browser({
+    responses: { "/health/ready": { status: 503, body: { status: "not_ready", checks: {} } } },
+  });
   const target = document.getElementById("environmentStatus");
 
   context.renderRuntimeStatus({ status: "ready", checks: { database: "ok" } });
@@ -218,7 +226,9 @@ test("the dashboard DOM names the counted mizan.security event class", async () 
 });
 
 test("the policy studio DOM uses simulation language and discloses its limit", () => {
-  const { context, document } = browser();
+  const { context, document } = browser({
+    responses: { "/health/ready": { status: 503, body: { status: "not_ready", checks: {} } } },
+  });
   context.resetSimulation();
 
   assert.equal(

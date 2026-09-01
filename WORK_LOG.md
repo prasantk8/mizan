@@ -128,7 +128,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-128 | CODEX | ac8640f2-7695-429d-be5a-a7f796148280 | 1 | 2026-09-01T07:44:37Z | 2026-09-01T07:52:47Z | 2026-09-01T11:44:37Z | 5a9d9a068417a06cbf5e549306968161b3996bd2 |
+| T-128 | CODEX | ac8640f2-7695-429d-be5a-a7f796148280 | 1 | 2026-09-01T07:44:37Z | 2026-09-01T07:54:36Z | 2026-09-01T11:44:37Z | 5a9d9a068417a06cbf5e549306968161b3996bd2 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
