@@ -6,36 +6,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Any
-
-
-def provision(client: Any, bucket: str, region: str, retention_days: int) -> dict[str, Any]:
-    request: dict[str, Any] = {"Bucket": bucket, "ObjectLockEnabledForBucket": True}
-    if region != "us-east-1":
-        request["CreateBucketConfiguration"] = {"LocationConstraint": region}
-    try:
-        client.create_bucket(**request)
-    except Exception as error:
-        code = getattr(error, "response", {}).get("Error", {}).get("Code")
-        if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
-            raise
-    configuration = {
-        "ObjectLockEnabled": "Enabled",
-        "Rule": {"DefaultRetention": {"Mode": "COMPLIANCE", "Days": retention_days}},
-    }
-    client.put_object_lock_configuration(
-        Bucket=bucket, ObjectLockConfiguration=configuration
-    )
-    observed = client.get_object_lock_configuration(Bucket=bucket)["ObjectLockConfiguration"]
-    if observed.get("ObjectLockEnabled") != "Enabled":
-        raise RuntimeError(f"bucket {bucket!r} does not have Object Lock enabled")
-    retention = observed.get("Rule", {}).get("DefaultRetention", {})
-    if retention.get("Mode") != "COMPLIANCE" or int(retention.get("Days", 0)) < retention_days:
-        raise RuntimeError(
-            f"bucket {bucket!r} default retention is {retention!r}, expected COMPLIANCE "
-            f"for at least {retention_days} days"
-        )
-    return observed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,7 +18,10 @@ def main(argv: list[str] | None = None) -> int:
     if not arguments.bucket or arguments.retention_years < 1:
         parser.error("--bucket is required and --retention-years must be positive")
     try:
-        from mizan_control_plane.object_store import build_s3_client
+        from mizan_control_plane.object_store import (
+            build_s3_client,
+            provision_object_lock_bucket,
+        )
 
         client = build_s3_client(
             arguments.endpoint_url or "",
@@ -56,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
             os.getenv("MIZAN_S3_ACCESS_KEY_ID", ""),
             os.getenv("MIZAN_S3_SECRET_ACCESS_KEY", ""),
         )
-        observed = provision(
+        observed = provision_object_lock_bucket(
             client, arguments.bucket, arguments.region, arguments.retention_years * 365
         )
     except Exception as error:
@@ -72,4 +45,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

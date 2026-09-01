@@ -129,7 +129,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-129 | CODEX | d581d382-5e1f-4f25-a6e3-1424d9038cc0 | 1 | 2026-09-01T09:14:08Z | 2026-09-01T09:26:21Z | 2026-09-01T13:14:08Z | c1ebb2109989ff2d304a79b1a9f0696c82557a67 |
+| T-129 | CODEX | d581d382-5e1f-4f25-a6e3-1424d9038cc0 | 1 | 2026-09-01T09:14:08Z | 2026-09-01T09:33:11Z | 2026-09-01T13:14:08Z | c1ebb2109989ff2d304a79b1a9f0696c82557a67 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -203,6 +203,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-130 · Added the paired PostgreSQL/Object Lock recovery runbook, destructive-target guard, executable drill and nightly/PR continuity workflow. The real local drill created two source ADR records and one anchor, backed up PostgreSQL plus two Object Lock objects, restored into database `mizan_restore_drill_restored` and a fresh locked bucket, exported solely from the restored pair, and both the Python and independently implemented JavaScript verifiers returned machine-readable `VALID`; report lives under ignored `var/continuity/` locally and is a CI artifact. Rule 10: first direct run exposed a sibling-module import hidden by pytest; the helper moved into the installed object-store module. Second reached populated source stores but found no host `pg_dump`; added a version-matched container-tools mode. Third reached two successful verifier exits but the wrapper incorrectly required the Python human output to contain `VALID` although it says `PASS`; switched to each verifier's JSON verdict. No performance numbers claimed; recovery does not change signed retention meaning or custody semantics, so H-7 does not fire. · next: build T-131's single production-mode full-journey gate from the shipped closed loop and production dependencies
 
 - 2026-09-01 · CODEX · T-129 · Engineering portion implemented in PR #40: `INSTALL.md` now walks a clean host through customer-issued credential assembly, non-exportable Vault Transit keys, S3 Object Lock COMPLIANCE retention, production Compose and mTLS readiness; `.env.example`, `bootstrap_credentials.sh`, `provision_object_store.py`, an executable install-surface gate and the honest walkthrough record are present. Maintainer preflight created a credential layout without leaking the Vault token and the focused tests/gate pass. Rule 10: the first password-generation command used `openssl rand -hex`, which this host rejected, and the first script draft used Bash associative arrays absent from macOS Bash 3.2; both were replaced with portable Python RNG and ordinary variables. T-129 acceptance remains pending the named outside-build-team run, timings, non-empty corrections and clean rerun. · next: implement T-130 restore drill while the independent walkthrough remains a real handoff boundary
 

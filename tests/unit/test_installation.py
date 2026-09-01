@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.provision_object_store import provision
+from mizan_control_plane.object_store import provision_object_lock_bucket
+
 from scripts.validate_installation import validate
 
 
@@ -27,7 +28,7 @@ def test_repository_installation_surface_names_every_production_bootstrap_step()
 
 def test_object_store_provisioning_enables_compliance_retention() -> None:
     client = ObjectLockClient()
-    observed = provision(client, "mizan-evidence", "eu-west-1", 2555)
+    observed = provision_object_lock_bucket(client, "mizan-evidence", "eu-west-1", 2555)
 
     assert client.created == {
         "Bucket": "mizan-evidence",
@@ -36,4 +37,3 @@ def test_object_store_provisioning_enables_compliance_retention() -> None:
     }
     assert observed["ObjectLockEnabled"] == "Enabled"
     assert observed["Rule"]["DefaultRetention"] == {"Mode": "COMPLIANCE", "Days": 2555}
-
