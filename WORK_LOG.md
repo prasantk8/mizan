@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-128 is in REVIEW on PR #39; implementation head `df2f1d5` passed all 13 CI jobs in run `33484421423`, and the remaining handoff commit changes only this ledger. T-129 is READY after independent review and squash-merge.
+**The two-product pilot programme is entering its Tier-B installation gate.** T-128 was squash-merged as `c1ebb21`; PR #39 has no independent `REVIEW:` comment or submitted review, so the merge remains a recorded protocol exception. T-129 is IN_PROGRESS on branch `t-129-install-walkthrough`, scoped to the installation/bootstrap documentation, executable validation, the walkthrough record, and this ledger.
 
 ## Agent Queue
 
@@ -19,7 +19,7 @@
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
 | T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | REVIEW |
 | T-128 | UI truth corrections: runtime-derived environment badge, exact product claims, counted event label, integrity-check label, and simulation terminology | CODEX | T-127 | REVIEW |
-| T-129 | Clean-machine `INSTALL.md`, production credential/Vault Transit/S3 Object Lock bootstrap, and an outside-build-team walkthrough with recorded corrections | CODEX | T-128 | READY |
+| T-129 | Clean-machine `INSTALL.md`, production credential/Vault Transit/S3 Object Lock bootstrap, and an outside-build-team walkthrough with recorded corrections | CODEX | T-128 | IN_PROGRESS |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -129,6 +129,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-129 | CODEX | d581d382-5e1f-4f25-a6e3-1424d9038cc0 | 1 | 2026-09-01T09:14:08Z | 2026-09-01T09:14:08Z | 2026-09-01T13:14:08Z | c1ebb2109989ff2d304a79b1a9f0696c82557a67 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -170,11 +171,11 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge PR #39 for T-128.** Confirm the five DOM truth tests reject
-> pre-fix `5a9d9a0`, the runtime badge cannot render `Production` without ready production-only
-> anchor-provider and mutual-TLS checks, and final-head CI is green. The reviewer must
-> leave a substantive `REVIEW:` comment. After merge, claim T-129 and identify the outside-build-team
-> walkthrough participant before treating its acceptance as complete.
+> **Complete T-129 on branch `t-129-install-walkthrough`.** Make a clean operator path from checkout to
+> production readiness explicit and executable: bootstrap production credentials, provision the already
+> ratified Vault Transit backend and an S3 Object Lock bucket, validate the instructions mechanically, and
+> prepare `docs/reviews/CP-F-WALKTHROUGH.md`. A named person outside the build team must then perform the
+> procedure on a clean machine; do not fabricate their identity, timings, corrections, or rerun result.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -201,6 +202,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-129 · Claimed from merged T-128 base `c1ebb21`. PR #39 was squash-merged with all final-head CI checks green but no independent `REVIEW:` comment or submitted review; recorded as a protocol exception rather than credited. Scope is the clean-machine production installation path, credential bootstrap, existing Vault Transit and S3 Object Lock configuration, an executable documentation gate, and the outside-build-team walkthrough record. The required participant identity, observed timings, corrections, and post-correction rerun remain a real human acceptance boundary and will not be invented. · next: open the draft PR, audit the supported production path, then implement and exercise the operator instructions before external handoff
 
 - 2026-09-01 · CODEX · T-128 · Corrected the operator UI's strategy §7 presentation defects on PR #39: neutral initial environment state now derives connectivity/readiness from the public runtime probe and renders `Production` only when every check plus the production-only RFC 3161 and mutual-TLS checks are `ok`; exact governed-action claims, `mizan.security.*` audit-event count, control-plane integrity wording, and policy simulation/impact-preview terminology replace the overclaims. The dependency-free DOM gate is wired into `make check`; it fails all five cases against pre-fix `5a9d9a0` and passes them on final implementation head `df2f1d5`. Local proof: `make check`, 470 unit tests, focused UI/build tests, and diff/claim validation green; CI run `33484421423` passed all 13 jobs. Rule 10: the first implementation delayed readiness until token entry; corrected so the public probe derives status before login. No backend/API/schema/config, benchmark, approval, money, crypto, key, or tenant-authority change. T-127's merge without an independent `REVIEW:` remains recorded as a protocol exception; claim released and T-129 queued. · next: independent `REVIEW:` and squash-merge PR #39, then claim T-129 and name the outside-build-team walkthrough participant
 
