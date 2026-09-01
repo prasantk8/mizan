@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is entering its Tier-B installation gate.** T-128 was squash-merged as `c1ebb21`; PR #39 has no independent `REVIEW:` comment or submitted review, so the merge remains a recorded protocol exception. T-129 is IN_PROGRESS on branch `t-129-install-walkthrough`, scoped to the installation/bootstrap documentation, executable validation, the walkthrough record, and this ledger.
+**The two-product pilot programme is executing its Tier-B gate cohort.** T-128 was squash-merged as `c1ebb21`; PR #39 has no independent `REVIEW:` comment or submitted review, so the merge remains a recorded protocol exception. By founder direction on 2026-09-01, T-129 through T-132 are one delivery cohort on branch `t-129-install-walkthrough` and draft PR #40, explicitly overriding PR-PROTOCOL §2's one-task/one-PR rule. The single live T-129 claim is the cohort lease; scope covers installation/walkthrough, restore, production E2E, OIDC/step-up, their tests and contracts, and this ledger.
 
 ## Agent Queue
 
@@ -19,7 +19,7 @@
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
 | T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | REVIEW |
 | T-128 | UI truth corrections: runtime-derived environment badge, exact product claims, counted event label, integrity-check label, and simulation terminology | CODEX | T-127 | REVIEW |
-| T-129 | Clean-machine `INSTALL.md`, production credential/Vault Transit/S3 Object Lock bootstrap, and an outside-build-team walkthrough with recorded corrections | CODEX | T-128 | IN_PROGRESS |
+| T-129 | **Founder-directed T-129–T-132 cohort:** clean-machine install/walkthrough; database/object-store restore drill; production full-journey CI; workforce OIDC login and high-risk step-up | CODEX | T-128 | IN_PROGRESS |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -171,11 +171,12 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Complete T-129 on branch `t-129-install-walkthrough`.** Make a clean operator path from checkout to
-> production readiness explicit and executable: bootstrap production credentials, provision the already
-> ratified Vault Transit backend and an S3 Object Lock bucket, validate the instructions mechanically, and
-> prepare `docs/reviews/CP-F-WALKTHROUGH.md`. A named person outside the build team must then perform the
-> procedure on a clean machine; do not fabricate their identity, timings, corrections, or rerun result.
+> **Complete the founder-directed T-129–T-132 cohort in draft PR #40.** In dependency order: make the
+> clean-machine install path executable and prepare its outside-team walkthrough; prove database and object
+> store restore by passing both verifiers on a restored bundle; add the production full-journey CI gate; then
+> deliver workforce OIDC login, role/control-domain mapping, short sessions, high-risk step-up, logout and
+> revocation evidence. Record any H-7 choice not already ratified instead of silently choosing it. Do not
+> fabricate the T-129 participant identity, timings, corrections, or rerun result.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -202,6 +203,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · HUMAN/CODEX · T-129–T-132 · Founder directed one uninterrupted delivery through T-132 and exactly one PR for the cohort. Draft PR #40 and the existing T-129 lease now cover all four Tier-B tasks, explicitly overriding PR-PROTOCOL §2's one-task/one-PR rule; every other safety, contract, CI, review and honest-reporting rule remains active. T-129's named outside-build-team run and any genuinely unratified T-132 authentication-authority choice remain human acceptance boundaries, not facts an implementation agent may invent. · next: audit all four contracts, implement in dependency order, and keep PR #40 as the only PR
 
 - 2026-09-01 · CODEX · T-129 · Claimed from merged T-128 base `c1ebb21`. PR #39 was squash-merged with all final-head CI checks green but no independent `REVIEW:` comment or submitted review; recorded as a protocol exception rather than credited. Scope is the clean-machine production installation path, credential bootstrap, existing Vault Transit and S3 Object Lock configuration, an executable documentation gate, and the outside-build-team walkthrough record. The required participant identity, observed timings, corrections, and post-correction rerun remain a real human acceptance boundary and will not be invented. · next: open the draft PR, audit the supported production path, then implement and exercise the operator instructions before external handoff
 
