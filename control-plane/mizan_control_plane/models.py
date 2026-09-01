@@ -123,6 +123,7 @@ class AuthenticatedPrincipal(StrictModel):
     identity_kind: Literal["human", "agent", "service"]
     auth_strength: Literal["password", "mfa", "hardware", "federated"]
     roles: list[str] = Field(default_factory=list)
+    control_domains: dict[str, str] = Field(default_factory=dict)
 
 
 class AuthorizationResponse(StrictModel):

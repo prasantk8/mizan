@@ -121,6 +121,7 @@ def cast_vote(
     role_claim: str | None = None,
     justification: str | None = None,
     comment: str | None = None,
+    control_domains: dict[str, str] | None = None,
     now: datetime | None = None,
     enforce_expiry: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -160,6 +161,15 @@ def cast_vote(
         raise Problem(
             403, "approver_role_ineligible", "Requested role is absent from the epoch snapshot"
         )
+    selected_role = role_claim or sorted(member["roles"])[0]
+    if control_domains:
+        mapped_domain = control_domains.get(selected_role)
+        if mapped_domain != member["control_domain"]:
+            raise Problem(
+                403,
+                "approver_control_domain_mismatch",
+                "IdP role mapping does not match the approved authority snapshot",
+            )
     if epoch["kind"] == "override" and not justification:
         raise Problem(
             403, "override_justification_required", "Override votes require justification"
@@ -169,7 +179,7 @@ def cast_vote(
         "epoch_id": epoch["epoch_id"],
         "epoch_number": epoch_number,
         "approver_id": approver_id,
-        "approver_role": role_claim or sorted(member["roles"])[0],
+        "approver_role": selected_role,
         "control_domain": member["control_domain"],
         "auth_strength": auth_strength,
         "vote": vote,

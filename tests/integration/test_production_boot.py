@@ -20,6 +20,7 @@ production is that the CA signing Vault's certificate is one the test made.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -97,6 +98,15 @@ def production_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "MIZAN_S3_ENDPOINT_URL": S3_ENDPOINT,
         "MIZAN_S3_ACCESS_KEY_ID": S3_ACCESS_KEY,
         "MIZAN_S3_SECRET_ACCESS_KEY": S3_SECRET_KEY,
+        "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT": "https://idp.production.test/authorize",
+        "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT": "https://idp.production.test/token",
+        "MIZAN_WORKFORCE_OIDC_CLIENT_ID": "mizan-console",
+        "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET": "integration-only-secret",
+        "MIZAN_WORKFORCE_OIDC_REDIRECT_URI": "https://mizan.production.test/auth/callback",
+        "MIZAN_WORKFORCE_TENANT_ID": "tnt_bank-a",
+        "MIZAN_WORKFORCE_ROLE_MAPPING": json.dumps(
+            {"mizan-managers": {"roles": ["manager"], "control_domain": "operations"}}
+        ),
     }
     environment.update(overrides)
     return environment

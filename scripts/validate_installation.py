@@ -20,6 +20,8 @@ INSTALL_MARKERS = (
     "provision_vault.sh",
     "provision_object_store.py",
     "Object Lock",
+    "workforce-oidc-client-secret-file",
+    "group-to-role/control-domain mapping",
     "COMPLIANCE",
     "--profile production",
     "/readyz",

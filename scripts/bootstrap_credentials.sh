@@ -7,10 +7,11 @@ usage() {
 Usage: scripts/bootstrap_credentials.sh --output DIR \
   --server-cert FILE --server-key FILE --client-ca FILE --server-ca FILE \
   --health-client-cert FILE --health-client-key FILE --tsa-root FILE \
-  --vault-ca FILE --vault-token-file FILE
+  --vault-ca FILE --vault-token-file FILE --workforce-oidc-client-secret-file FILE
 
-The script generates only PostgreSQL passwords. Certificates, trust roots and the Vault token
-must come from customer-controlled issuers. Existing output is refused unless --force is supplied.
+The script generates only PostgreSQL passwords. Certificates, trust roots, the Vault token and
+OIDC client secret must come from customer-controlled issuers. Existing output is refused unless
+--force is supplied.
 EOF
 }
 
@@ -25,6 +26,7 @@ health_client_key=""
 tsa_root=""
 vault_ca=""
 vault_token_file=""
+workforce_oidc_client_secret_file=""
 while (($#)); do
   case "$1" in
     --output) output="${2:?missing value}"; shift 2 ;;
@@ -37,6 +39,7 @@ while (($#)); do
     --tsa-root) tsa_root="${2:?missing value}"; shift 2 ;;
     --vault-ca) vault_ca="${2:?missing value}"; shift 2 ;;
     --vault-token-file) vault_token_file="${2:?missing value}"; shift 2 ;;
+    --workforce-oidc-client-secret-file) workforce_oidc_client_secret_file="${2:?missing value}"; shift 2 ;;
     --force) force=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 64 ;;
@@ -48,7 +51,8 @@ for specification in \
   "server-cert:$server_cert" "server-key:$server_key" "client-ca:$client_ca" \
   "server-ca:$server_ca" "health-client-cert:$health_client_cert" \
   "health-client-key:$health_client_key" "tsa-root:$tsa_root" "vault-ca:$vault_ca" \
-  "vault-token-file:$vault_token_file"
+  "vault-token-file:$vault_token_file" \
+  "workforce-oidc-client-secret-file:$workforce_oidc_client_secret_file"
 do
   name="${specification%%:*}"
   path="${specification#*:}"
@@ -86,6 +90,7 @@ install -m 0600 "$health_client_key" "$output/tls/health-client-key.pem"
 install -m 0644 "$tsa_root" "$output/tls/tsa-root.pem"
 install -m 0644 "$vault_ca" "$output/tls/vault-ca.pem"
 install -m 0600 "$vault_token_file" "$output/runtime/vault-token"
+install -m 0600 "$workforce_oidc_client_secret_file" "$output/runtime/workforce-oidc-client-secret"
 
 owner_password=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
 app_password=$(python3 -c 'import secrets; print(secrets.token_hex(24))')

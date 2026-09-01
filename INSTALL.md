@@ -42,11 +42,13 @@ scripts/bootstrap_credentials.sh --output secrets \
   --health-client-key /customer-pki/health-client-key.pem \
   --tsa-root /customer-pki/tsa-root.pem \
   --vault-ca /customer-pki/vault-ca.pem \
-  --vault-token-file /customer-secrets/mizan-vault-runtime-token
+  --vault-token-file /customer-secrets/mizan-vault-runtime-token \
+  --workforce-oidc-client-secret-file /customer-secrets/mizan-workforce-oidc-client-secret
 ```
 
 Edit `secrets/.env.production`. Replace every `replace-…` value, set the public-only identity
-JWKS on one line, name the tenant set served by both workers, and use scoped S3 runtime credentials.
+JWKS and group-to-role/control-domain mapping on one line, set the customer IdP endpoints/client/
+redirect, name the tenant set served by both workers, and use scoped S3 runtime credentials.
 The file and `secrets/` are ignored by Git; confirm with `git status --short`.
 
 ## 3. Provision the four non-exportable Vault Transit keys
@@ -110,4 +112,3 @@ A maintainer run is preflight, not acceptance. Give this file to a named person 
 team on a machine the build team did not prepare. They record commands, timings, failures and every
 correction in `docs/reviews/CP-F-WALKTHROUGH.md`, apply the corrections in this repository, then
 repeat the full run from a fresh machine state. T-129 is not complete until that rerun is green.
-

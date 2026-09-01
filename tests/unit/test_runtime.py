@@ -40,6 +40,19 @@ def development_settings(monkeypatch, tmp_path, **overrides: str) -> Settings:
     monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE_ROOT", str(tmp_path / "evidence"))
     for name, value in overrides.items():
         monkeypatch.setenv(name, value)
+    if overrides.get("MIZAN_ENV") == "production":
+        for name, value in {
+            "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT": "https://idp.test/authorize",
+            "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT": "https://idp.test/token",
+            "MIZAN_WORKFORCE_OIDC_CLIENT_ID": "mizan-console",
+            "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET": "test-only-secret",
+            "MIZAN_WORKFORCE_OIDC_REDIRECT_URI": "https://mizan.test/auth/callback",
+            "MIZAN_WORKFORCE_TENANT_ID": "tnt_bank-a",
+            "MIZAN_WORKFORCE_ROLE_MAPPING": json.dumps(
+                {"mizan-managers": {"roles": ["manager"], "control_domain": "operations"}}
+            ),
+        }.items():
+            monkeypatch.setenv(name, value)
     return Settings.from_environment()
 
 
@@ -56,7 +69,7 @@ def test_development_boot_wires_every_component_create_app_can_refuse_without(
         assert {"/v1/authorize", "/health/live", "/health/ready", "/readyz"} <= routes
         # The pools this process owns are the ones it must close: four from create_app plus the
         # evidence repository and the execution service's two.
-        assert len(runtime.app.state.connection_pools) == 7
+        assert len(runtime.app.state.connection_pools) == 8
     finally:
         for pool in runtime.app.state.connection_pools:
             pool.close()
@@ -101,6 +114,7 @@ def test_production_refuses_to_start_without_a_real_key_backend(monkeypatch, tmp
     process understands. Both halves are asserted here: the unknown mode, and a known mode whose
     backend cannot actually be reached.
     """
+
     def production(**overrides: str):
         return development_settings(
             monkeypatch,
@@ -197,7 +211,14 @@ def test_attest_anchors_entrypoint_builds_its_provider_and_returns(monkeypatch, 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["mizan-attest-anchors", "--tenant-id", "tnt_bank-a", "--stream-id", "tnt_bank-a:adr:0", "--once"],
+        [
+            "mizan-attest-anchors",
+            "--tenant-id",
+            "tnt_bank-a",
+            "--stream-id",
+            "tnt_bank-a:adr:0",
+            "--once",
+        ],
     )
     assert attestation_runner.main() == 0
     assert closed == [True]
@@ -365,11 +386,11 @@ def test_every_production_requirement_is_reported_at_once(monkeypatch, tmp_path)
         monkeypatch.setenv(name, value)
 
     with pytest.raises(RuntimeError) as refused:
-        Settings.from_environment()
+        Settings.from_environment(require_workforce_oidc=True)
 
     reported = str(refused.value)
     assert reported.startswith("production configuration is not usable:")
-    # Six independent things are wrong with this configuration and the operator is told all six.
+    # Independent things are wrong with this configuration and the operator is told all of them.
     for requirement in (
         "MIZAN_EVIDENCE_OBJECT_STORE=s3",
         "development custody",
@@ -377,5 +398,6 @@ def test_every_production_requirement_is_reported_at_once(monkeypatch, tmp_path)
         "mizan-dev-token issuer",
         "MIZAN_EXECUTION_TOKEN_ISSUER",
         "MIZAN_TLS_CERTIFICATE_FILE",
+        "production workforce OIDC is incomplete",
     ):
         assert requirement in reported, requirement

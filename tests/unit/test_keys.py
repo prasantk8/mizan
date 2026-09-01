@@ -13,6 +13,21 @@ from mizan_control_plane.keys import (
 from tests.support import UNUSED_IDENTITY_JWKS
 
 
+def configure_workforce_oidc(monkeypatch) -> None:
+    for name, value in {
+        "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT": "https://idp.test/authorize",
+        "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT": "https://idp.test/token",
+        "MIZAN_WORKFORCE_OIDC_CLIENT_ID": "mizan-console",
+        "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET": "test-only-secret",
+        "MIZAN_WORKFORCE_OIDC_REDIRECT_URI": "https://mizan.test/auth/callback",
+        "MIZAN_WORKFORCE_TENANT_ID": "tnt_bank-a",
+        "MIZAN_WORKFORCE_ROLE_MAPPING": (
+            '{"mizan-managers":{"roles":["manager"],"control_domain":"operations"}}'
+        ),
+    }.items():
+        monkeypatch.setenv(name, value)
+
+
 def versions(*, revoked_receipt: bool = False) -> list[KeyVersion]:
     now = "2026-08-25T00:00:00Z"
     return [
@@ -20,7 +35,9 @@ def versions(*, revoked_receipt: bool = False) -> list[KeyVersion]:
             f"local://{role}/v1",
             role,
             now,
-            revoked_at="2026-08-25T01:00:00Z" if revoked_receipt and role == "evidence-receipt" else None,
+            revoked_at="2026-08-25T01:00:00Z"
+            if revoked_receipt and role == "evidence-receipt"
+            else None,
         )
         for role in KEY_ROLES
     ]
@@ -38,8 +55,7 @@ def test_production_refuses_local_keys_at_startup(monkeypatch) -> None:
 
 def test_local_provider_refuses_production_even_when_key_ids_claim_kms() -> None:
     disguised = [
-        KeyVersion(f"kms://disguised/{role}", role, "2026-08-25T00:00:00Z")
-        for role in KEY_ROLES
+        KeyVersion(f"kms://disguised/{role}", role, "2026-08-25T00:00:00Z") for role in KEY_ROLES
     ]
     with pytest.raises(RuntimeError, match="development-derived"):
         LocalKeyProvider(disguised, environment="production")
@@ -87,6 +103,7 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("MIZAN_TLS_CERTIFICATE_FILE", "/etc/mizan/server.pem")
     monkeypatch.setenv("MIZAN_TLS_PRIVATE_KEY_FILE", "/etc/mizan/server.key")
     monkeypatch.setenv("MIZAN_TLS_CLIENT_CA_FILE", "/etc/mizan/client-ca.pem")
+    configure_workforce_oidc(monkeypatch)
     assert Settings.from_environment().anchor_provider == "rfc3161"
 
 
@@ -105,10 +122,16 @@ def test_production_refuses_non_tls_tsa_endpoint(monkeypatch) -> None:
     # refusal this test is about is the one being asserted rather than the newest guard.
     monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE", "s3")
     monkeypatch.setenv("MIZAN_AUDIT_ANCHOR_BUCKET", "mizan-evidence")
-    for role, name in zip(KEY_ROLES, (
-        "MIZAN_EVIDENCE_RECEIPT_KEY_REF", "MIZAN_EVIDENCE_ANCHOR_KEY_REF",
-        "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF", "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF",
-    ), strict=True):
+    for role, name in zip(
+        KEY_ROLES,
+        (
+            "MIZAN_EVIDENCE_RECEIPT_KEY_REF",
+            "MIZAN_EVIDENCE_ANCHOR_KEY_REF",
+            "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF",
+            "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF",
+        ),
+        strict=True,
+    ):
         monkeypatch.setenv(name, f"kms://vault/{role}")
     monkeypatch.setenv("MIZAN_ANCHOR_PROVIDER", "rfc3161")
     monkeypatch.setenv("MIZAN_ANCHOR_TSA_ENDPOINTS", "http://tsa.example.test")
@@ -152,8 +175,7 @@ def test_kms_hsm_provider_publishes_explicit_custody() -> None:
             return key.public_key()
 
     remote_versions = [
-        KeyVersion(f"remote-ref:{role}", role, "2026-08-25T00:00:00Z")
-        for role in KEY_ROLES
+        KeyVersion(f"remote-ref:{role}", role, "2026-08-25T00:00:00Z") for role in KEY_ROLES
     ]
     provider = KmsHsmKeyProvider(remote_versions, Backend(), custody="hsm")
 

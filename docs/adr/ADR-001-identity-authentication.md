@@ -60,6 +60,37 @@ Adopt **Option 1 — layered identity**:
 
 **Resolved for execution capabilities:** Mizan mints a distinct internal capability after authorization. The open question applies only to ordinary control-plane access-token normalization; an external IdP token is never itself an execution capability.
 
+## Implementation Amendment F — customer workforce OIDC sessions
+
+**Date:** 2026-09-01 · **Trigger:** two-product pilot T-132 · **Spec anchors:** SPEC v1.3 §3 workforce authentication, §5.2 G2, §8
+
+The production operator console uses one customer-controlled OIDC provider per deployment. It runs
+Authorization Code with PKCE, one-use state and nonce; validates the ID token only against the
+deployment-pinned public JWKS and exact issuer/audience; and maps customer groups through an
+operator-supplied role/control-domain map. An IdP group name is never itself a Mizan role. A role
+whose groups map it to two control domains is refused, and a vote is refused when the mapped domain
+disagrees with the approval epoch's immutable authority snapshot.
+
+The browser receives only an opaque `Secure`, `HttpOnly`, `SameSite=Lax` cookie. Mizan stores its
+SHA-256 digest, tenant, principal, roles/domains, authentication strength, expiry, revocation time
+and most recent step-up time server-side; no IdP token is returned to JavaScript or retained in
+`sessionStorage`. Sessions default to 15 minutes and may never exceed one hour. Logout and
+administrative revocation take effect on the next request. Login, step-up, logout, revocation and
+refusal of an expired/revoked session are chained `mizan.identity.*` audit events with no payload.
+
+A production HIGH or CRITICAL vote requires a new OIDC authentication request with `prompt=login`,
+`max_age=0` and the configured MFA/hardware ACR values. The returned session records `step_up_at`;
+the vote is refused as `workforce_step_up_required` when that instant is absent or older than the
+configured maximum (120 seconds by default). LOW/MEDIUM votes still satisfy G2: the underlying
+workforce session must be a human MFA/hardware session. Agent authorization and execution-capability
+issuance continue to use short-lived machine JWTs; workforce cookies cannot impersonate an agent.
+Lease heartbeat/completion likewise require the agent token plus the verified executor mTLS peer;
+an operator session is never accepted as a workload credential.
+
+The confidential OIDC client credential is mounted only into the interactive control-plane
+workload. Drain and attestation workers share production evidence settings but do not serve browser
+routes, do not receive this secret, and do not require workforce configuration to start.
+
 ## Implementation Amendment — Registry dual control
 
 Production HIGH/CRITICAL agent changes authenticate two distinct human principals with the same

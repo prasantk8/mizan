@@ -13,11 +13,22 @@ secrets:
   appDatabaseUrlKey: app-database-url
   ownerDatabaseUrlKey: owner-database-url
   identityJwksKey: identity-jwks
+  workforceOidcClientSecretKey: workforce-oidc-client-secret
   tls: mizan-tls
 
 config:
   jwtIssuer: https://identity.example.invalid
   jwtAudience: mizan-control-plane
+  workforceOidcAuthorizationEndpoint: https://identity.example.invalid/authorize
+  workforceOidcTokenEndpoint: https://identity.example.invalid/token
+  workforceOidcClientId: mizan-console
+  workforceOidcRedirectUri: https://mizan.example.invalid/auth/callback
+  workforceTenantId: tnt_replace-me
+  workforceGroupClaim: groups
+  workforceRoleMapping: '{"customer-ops":{"roles":["manager"],"control_domain":"operations"}}'
+  workforceSessionTtlSeconds: 900
+  workforceStepUpMaxAgeSeconds: 120
+  workforceStepUpAcrValues: urn:mizan:hardware,urn:mizan:mfa
   executionTokenIssuer: https://mizan.example.invalid
   evaluatorBuild: "replace-with-release-id"
   evaluatorConfigurationHash: "replace-with-64-hex-characters"

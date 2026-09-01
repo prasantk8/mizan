@@ -11,8 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Header, Query, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approval_repository import ApprovalRepository
@@ -51,6 +51,7 @@ from .repository import PostgresAuthorizationRepository
 from .risk import RegistryFloorRiskProvider
 from .schema_validation import ContractSchemas
 from .service import AuthorizationService
+from .workforce import COOKIE_NAME, WorkforceOidc, WorkforceSession, WorkforceSessionRepository
 
 LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ def create_app(
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
     evidence_repository = EvidenceRepository(settings.database_url)
+    workforce_repository = WorkforceSessionRepository(settings.database_url, evidence_repository)
+    workforce_oidc = WorkforceOidc(settings, workforce_repository)
     approval_repository = ApprovalRepository(
         settings.database_url, settings.approval_epoch_expiry
     )
@@ -112,6 +115,7 @@ def create_app(
         registry_repository.pool,
         evidence_repository.pool,
         approval_repository.pool,
+        workforce_repository.pool,
     ]
     app.state.settings = settings
     app.state.metrics = metrics
@@ -129,13 +133,26 @@ def create_app(
     ) -> AuthorizationResponse:
         return service.authorize(verifier.verify(token), context)
 
-    def tenant_from_token(token: str = Depends(bearer_token)) -> str:
-        tenant_id = verifier.verify_tenant(token)
+    def workforce_session(request: Request) -> WorkforceSession:
+        return workforce_repository.authenticate(request.cookies.get(COOKIE_NAME))
+
+    def tenant_from_token(
+        request: Request, authorization: Annotated[str | None, Header()] = None
+    ) -> str:
+        if settings.is_production:
+            tenant_id = workforce_session(request).tenant_id
+        else:
+            tenant_id = verifier.verify_tenant(bearer_token(authorization))
         annotate(tenant_id=tenant_id)
         return tenant_id
 
-    def principal_from_token(token: str = Depends(bearer_token)):
-        principal = verifier.verify_principal(token)
+    def principal_from_token(
+        request: Request, authorization: Annotated[str | None, Header()] = None
+    ):
+        if settings.is_production:
+            principal = workforce_session(request).principal
+        else:
+            principal = verifier.verify_principal(bearer_token(authorization))
         annotate(tenant_id=principal.tenant_id)
         return principal
 
@@ -162,6 +179,58 @@ def create_app(
         if second is not None and second.tenant_id != principal.tenant_id:
             raise Problem(403, "tenant_mismatch", "Second approver belongs to another tenant")
         return second
+
+    @app.get("/auth/login")
+    def workforce_login(return_to: str = "/") -> RedirectResponse:
+        return RedirectResponse(workforce_oidc.authorization_url(return_to), status_code=303)
+
+    @app.get("/auth/callback")
+    def workforce_callback(code: str, state: str) -> RedirectResponse:
+        cookie, return_to = workforce_oidc.callback(code, state)
+        response = RedirectResponse(return_to, status_code=303)
+        response.set_cookie(
+            COOKIE_NAME,
+            cookie,
+            secure=settings.is_production,
+            httponly=True,
+            samesite="lax",
+            max_age=settings.workforce_session_ttl_seconds,
+            path="/",
+        )
+        return response
+
+    @app.get("/auth/session")
+    def workforce_session_status(request: Request) -> dict[str, Any]:
+        session = workforce_session(request)
+        return {
+            "session_id": session.session_id,
+            "tenant_id": session.tenant_id,
+            "principal_id": session.principal.principal_id,
+            "roles": session.principal.roles,
+            "control_domains": session.principal.control_domains,
+            "auth_strength": session.principal.auth_strength,
+            "step_up_at": session.step_up_at,
+            "expires_at": session.expires_at,
+        }
+
+    @app.get("/auth/step-up")
+    def workforce_step_up(request: Request, return_to: str = "/") -> RedirectResponse:
+        return RedirectResponse(
+            workforce_oidc.authorization_url(return_to, workforce_session(request)),
+            status_code=303,
+        )
+
+    @app.post("/auth/logout", status_code=204)
+    def workforce_logout(request: Request) -> Response:
+        workforce_repository.revoke(workforce_session(request), "mizan.identity.logout")
+        response = Response(status_code=204)
+        response.delete_cookie(COOKIE_NAME, path="/")
+        return response
+
+    @app.post("/auth/sessions/{session_id}/revoke", status_code=204)
+    def workforce_revoke_session(session_id: str, request: Request) -> Response:
+        workforce_repository.revoke_by_id(workforce_session(request), session_id)
+        return Response(status_code=204)
 
     @app.post("/v1/agents", status_code=201)
     def create_agent(
@@ -444,12 +513,18 @@ def create_app(
     def cast_approval_vote(
         approval_id: str,
         request: ApprovalVoteRequest,
+        http_request: Request,
         principal: Annotated[AuthenticatedPrincipal, Depends(principal_from_token)],
     ) -> dict[str, Any]:
+        risk_tier = approval_repository.risk_tier(principal.tenant_id, approval_id)
+        if settings.is_production and risk_tier in {"HIGH", "CRITICAL"}:
+            workforce_session(http_request).require_fresh_step_up(
+                settings.workforce_step_up_max_age_seconds
+            )
         rate_limiter.require(
             principal.tenant_id,
             "approval",
-            approval_repository.risk_tier(principal.tenant_id, approval_id),
+            risk_tier,
         )
         return approval_repository.vote(
             principal.tenant_id,
@@ -518,21 +593,23 @@ def create_app(
     def heartbeat_lease(
         decision_id: str,
         lease_id: str,
-        tenant_id: Annotated[str, Depends(tenant_from_token)],
+        identity: Annotated[AuthenticatedIdentity, Depends(agent_from_token)],
         peer_spiffe: Annotated[str, Depends(workload_spiffe)],
     ) -> dict[str, Any]:
         if execution_service is None:
             raise Problem(
                 503, "execution_service_unavailable", "Execution keyset is not configured"
             )
-        return execution_service.heartbeat(tenant_id, decision_id, lease_id, peer_spiffe)
+        return execution_service.heartbeat(
+            identity.tenant_id, decision_id, lease_id, peer_spiffe
+        )
 
     @app.post("/v1/actions/{decision_id}/lease/{lease_id}/complete")
     def complete_lease(
         decision_id: str,
         lease_id: str,
         request: ExecutionCompleteRequest,
-        tenant_id: Annotated[str, Depends(tenant_from_token)],
+        identity: Annotated[AuthenticatedIdentity, Depends(agent_from_token)],
         peer_spiffe: Annotated[str, Depends(workload_spiffe)],
     ) -> dict[str, Any]:
         if execution_service is None:
@@ -540,7 +617,7 @@ def create_app(
                 503, "execution_service_unavailable", "Execution keyset is not configured"
             )
         return execution_service.complete(
-            tenant_id,
+            identity.tenant_id,
             decision_id,
             lease_id,
             peer_spiffe,

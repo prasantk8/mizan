@@ -87,7 +87,21 @@ services:
     image: ${MIZAN_IMAGE:-mizan-control-plane:local}
     build:
       context: .
-    environment: *control-environment
+    environment:
+      <<: *control-environment
+      # Workforce credentials belong only in the interactive control plane. Background evidence
+      # workloads do not receive the OIDC client secret.
+      MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT: ${MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT}
+      MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT: ${MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT}
+      MIZAN_WORKFORCE_OIDC_CLIENT_ID: ${MIZAN_WORKFORCE_OIDC_CLIENT_ID}
+      MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE: ${MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE:-/run/mizan/secrets/workforce-oidc-client-secret}
+      MIZAN_WORKFORCE_OIDC_REDIRECT_URI: ${MIZAN_WORKFORCE_OIDC_REDIRECT_URI}
+      MIZAN_WORKFORCE_TENANT_ID: ${MIZAN_WORKFORCE_TENANT_ID}
+      MIZAN_WORKFORCE_GROUP_CLAIM: ${MIZAN_WORKFORCE_GROUP_CLAIM:-groups}
+      MIZAN_WORKFORCE_ROLE_MAPPING: ${MIZAN_WORKFORCE_ROLE_MAPPING}
+      MIZAN_WORKFORCE_SESSION_TTL_SECONDS: ${MIZAN_WORKFORCE_SESSION_TTL_SECONDS:-900}
+      MIZAN_WORKFORCE_STEP_UP_MAX_AGE_SECONDS: ${MIZAN_WORKFORCE_STEP_UP_MAX_AGE_SECONDS:-120}
+      MIZAN_WORKFORCE_STEP_UP_ACR_VALUES: ${MIZAN_WORKFORCE_STEP_UP_ACR_VALUES:-urn:mizan:hardware,urn:mizan:mfa}
     depends_on:
       migrations:
         condition: service_completed_successfully

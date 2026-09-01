@@ -39,6 +39,21 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.runtime }}
                   key: {{ .Values.secrets.identityJwksKey }}
+            - {name: MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT, value: {{ .Values.config.workforceOidcAuthorizationEndpoint | quote }} }
+            - {name: MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT, value: {{ .Values.config.workforceOidcTokenEndpoint | quote }} }
+            - {name: MIZAN_WORKFORCE_OIDC_CLIENT_ID, value: {{ .Values.config.workforceOidcClientId | quote }} }
+            - name: MIZAN_WORKFORCE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.runtime }}
+                  key: {{ .Values.secrets.workforceOidcClientSecretKey }}
+            - {name: MIZAN_WORKFORCE_OIDC_REDIRECT_URI, value: {{ .Values.config.workforceOidcRedirectUri | quote }} }
+            - {name: MIZAN_WORKFORCE_TENANT_ID, value: {{ .Values.config.workforceTenantId | quote }} }
+            - {name: MIZAN_WORKFORCE_GROUP_CLAIM, value: {{ .Values.config.workforceGroupClaim | quote }} }
+            - {name: MIZAN_WORKFORCE_ROLE_MAPPING, value: {{ .Values.config.workforceRoleMapping | quote }} }
+            - {name: MIZAN_WORKFORCE_SESSION_TTL_SECONDS, value: {{ .Values.config.workforceSessionTtlSeconds | quote }} }
+            - {name: MIZAN_WORKFORCE_STEP_UP_MAX_AGE_SECONDS, value: {{ .Values.config.workforceStepUpMaxAgeSeconds | quote }} }
+            - {name: MIZAN_WORKFORCE_STEP_UP_ACR_VALUES, value: {{ .Values.config.workforceStepUpAcrValues | quote }} }
             - {name: MIZAN_KEY_CUSTODY_MODE, value: {{ .Values.config.keyCustodyMode | quote }}}
             - {name: MIZAN_VAULT_ADDR, value: {{ .Values.config.vaultAddr | quote }}}
             - {name: MIZAN_VAULT_TOKEN_FILE, value: {{ .Values.config.vaultTokenFile | quote }}}

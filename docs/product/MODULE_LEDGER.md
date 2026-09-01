@@ -68,7 +68,7 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | Python SDK | `sdk/python/mizan/` (`client.py`, `decorator.py`, `adapters.py`, `binding.py`) | shipped |
 | TypeScript SDK | none | **none** |
 | Java SDK | none | **none** |
-| Approver console | `ui/` | wired, unproven — and it takes a pasted bearer JWT into a textarea and keeps it in `sessionStorage`. No IdP, no OIDC, no MFA step-up. Acceptable for a localhost demo, **not** for a pilot |
+| Approver console | `ui/`, `mizan_control_plane/workforce.py` | pilot-wired — customer OIDC Authorization Code + PKCE, opaque HttpOnly server-side sessions, mapped roles/control domains, and fresh HIGH/CRITICAL vote step-up. Production E2E proves the path; customer IdP onboarding remains deployment work |
 | Examples | none | **none**. `scripts/demo_walk.py` is the runnable end-to-end path; T-114 owns shipping real `examples/` |
 | Policy bundles | none | **none**. Demo policies are seeded by `scripts/seed_demo.py` |
 

@@ -153,11 +153,11 @@ CP-F does **not** include, and no engineer should start:
 | Twenty-three stub directories | **Deleted** (T-115) | `sdk/typescript` is 94 bytes, `sdk/java` 88, `integrations/siem` 78, `integrations/kafka` 111. A browsing design partner reads them as shipped surface. This is not tidying — it is a claim we cannot support. |
 | The directory-ownership lane model | Dead, confirmed | Withdrawn by PR-PROTOCOL §5. Reduce `AGENT_ALLOCATION.md` to one line pointing there. |
 
-**Named, not fixed, and it must not be discovered by a bank's security review:** the console takes a
-pasted bearer JWT into a textarea (`ui/index.html:33`) and keeps it in `sessionStorage`
-(`ui/app.js:2`). There is no IdP, no OIDC, no session, and no MFA step-up in the approval path — and
-no T-number anywhere covers it. That is acceptable for a demo a stranger runs on localhost, and it is
-not acceptable in a pilot. It goes in the pilot pack as a named gap with a CP-G number against it.
+**Closed by T-132:** the console no longer accepts or retains a pasted bearer. Production uses the
+customer IdP's OIDC Authorization Code flow with PKCE/state/nonce, an opaque HttpOnly server-side
+session, group-to-role/control-domain mapping, and a fresh MFA/hardware step-up immediately before a
+HIGH/CRITICAL vote. Logout, revocation and refused expired/revoked sessions leave chained identity
+events. Customer IdP registration and group mapping remain installation inputs, not product gaps.
 
 Two things are **finished and must not be rebuilt.** `scripts/migrate.py` is a real versioned runner —
 `mizan.schema_migrations`, per-file sha256, `pg_advisory_lock` around the run, checksum enforcement,

@@ -10,7 +10,7 @@ BEGIN
     ('adr_record_policies'),('authorization_contexts'),('approvals'),('role_authority_versions'),('approval_epochs'),('approval_votes'),
     ('execution_tokens'),('execution_leases'),('decision_events'),('decision_event_heads'),('audit_trails'),('external_payload_envelopes'),
     ('degraded_mode_grants'),('outbox'),('evidence_receipts'),('evidence_anchors'),
-    ('anchor_attestations')
+    ('anchor_attestations'),('workforce_login_transactions'),('workforce_sessions')
   ) expected(name)
   LEFT JOIN pg_class c ON c.relname = expected.name
   LEFT JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'mizan'

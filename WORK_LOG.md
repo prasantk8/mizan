@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is executing its Tier-B gate cohort.** T-128 was squash-merged as `c1ebb21`; PR #39 has no independent `REVIEW:` comment or submitted review, so the merge remains a recorded protocol exception. By founder direction on 2026-09-01, T-129 through T-132 are one delivery cohort on branch `t-129-install-walkthrough` and draft PR #40, explicitly overriding PR-PROTOCOL §2's one-task/one-PR rule. The single live T-129 claim is the cohort lease; scope covers installation/walkthrough, restore, production E2E, OIDC/step-up, their tests and contracts, and this ledger.
+**The T-129–T-132 Tier-B engineering cohort is implemented in draft PR #40.** T-129 installation engineering, T-130 paired restore, T-131 production full journey and T-132 workforce OIDC/step-up are in one founder-directed PR, explicitly overriding PR-PROTOCOL §2's one-task/one-PR rule. The cohort is parked only at T-129's human acceptance boundary: a named person outside the build team must run the corrected clean-machine walkthrough and record timings/corrections/rerun. The programme-wide Memtara-in-bundle condition remains T-135 and is not credited by T-131.
 
 ## Agent Queue
 
@@ -19,7 +19,7 @@
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
 | T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | REVIEW |
 | T-128 | UI truth corrections: runtime-derived environment badge, exact product claims, counted event label, integrity-check label, and simulation terminology | CODEX | T-127 | REVIEW |
-| T-129 | **Founder-directed T-129–T-132 cohort:** clean-machine install/walkthrough; database/object-store restore drill; production full-journey CI; workforce OIDC login and high-risk step-up | CODEX | T-128 | IN_PROGRESS |
+| T-129 | **Founder-directed T-129–T-132 cohort:** clean-machine install/walkthrough; database/object-store restore drill; production full-journey CI; workforce OIDC login and high-risk step-up | CODEX | T-128 | PARKED(HUMAN-WALKTHROUGH) |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -129,12 +129,13 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-129 | CODEX | d581d382-5e1f-4f25-a6e3-1424d9038cc0 | 1 | 2026-09-01T09:14:08Z | 2026-09-01T09:33:11Z | 2026-09-01T13:14:08Z | c1ebb2109989ff2d304a79b1a9f0696c82557a67 |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
 ## Blockers & Dependencies
 
+- **T-129 walkthrough acceptance (open, HUMAN, 2026-09-01):** Engineering preflight is green, but the workplan requires a named person outside the build team to install from a clean machine, record observed timings and non-empty corrections, then rerun from a clean state. `docs/reviews/CP-F-WALKTHROUGH.md` remains an explicit unfilled record; no agent-run substitute is credited. This is the only blocker to moving the T-129–T-132 cohort from `PARKED(HUMAN-WALKTHROUGH)` to `REVIEW`.
+- **T-135 programme dependency (open, outside this cohort):** Workplan programme DoD item 1 requires `production-e2e` eventually to include a real Memtara proof in its bundle. T-131 proves the complete Mizan authorize→approve→execute→attest→export→two-verifier journey; it does not implement or claim T-135's cross-product proof field.
 - **B-18 (resolved 2026-08-29, HUMAN):** *Key backend for the pilot.* Founder ruled **unblocked**. **HashiCorp Vault Transit** — native Ed25519, `custody=kms`, delivered by T-102. AWS/GCP/Azure KMS remain rejected: none signs Ed25519, and choosing one reopens bundle format 1.0 and every verifier written against it. PKCS#11 is the second backend and is not in CP-F. Unblocks T-101 and, through it, T-105.
 - **B-21 (resolved 2026-08-29, HUMAN):** *Evidence durability substrate.* Founder ruled **unblocked**, choosing S3-compatible object storage with Object Lock — *"just mock it for now but build the functionality"*. So the Object Lock semantics are implemented and gated against a local S3-compatible server; a managed bucket is a deployment choice, not a code path. The compliance claim `"retention_class": "regulatory_7y"` is already inside records this system has signed, and a PVC cannot support it. Unblocks T-104 and, through it, T-113.
 - **B-24 (ruled 2026-08-29, HUMAN):** *What is bundle 1.0, and does 1.1 owe an archive-timestamp chain?* Founder ruled: **adapt to the changing format; do not be rigid at any point; change with proper proof.** So the format is versioned and evolves, and every change to it carries an executable demonstration rather than a note — the standing requirement being that a change ships with a fixture the previous verifier rejects and the new one accepts, plus the reverse. T-110's descriptive reconciliation stands; 1.1's long-term-validation question moves to CP-G with a written answer rather than silence. Recorded 2026-08-30 with T-102.
@@ -171,12 +172,11 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Complete the founder-directed T-129–T-132 cohort in draft PR #40.** In dependency order: make the
-> clean-machine install path executable and prepare its outside-team walkthrough; prove database and object
-> store restore by passing both verifiers on a restored bundle; add the production full-journey CI gate; then
-> deliver workforce OIDC login, role/control-domain mapping, short sessions, high-risk step-up, logout and
-> revocation evidence. Record any H-7 choice not already ratified instead of silently choosing it. Do not
-> fabricate the T-129 participant identity, timings, corrections, or rerun result.
+> **Have a named person outside the build team execute `INSTALL.md` from a clean machine, complete
+> `docs/reviews/CP-F-WALKTHROUGH.md` with observed timings and non-empty corrections, apply those
+> corrections in PR #40, and repeat the clean run.** Once that evidence is committed and final-head CI is
+> green, move the cohort to `REVIEW` for the independent `REVIEW:` gate. Do not credit T-135's Memtara
+> proof-in-bundle programme condition to this T-131 Mizan-only journey.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -203,6 +203,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-129 · **T-129–T-132 engineering is complete in the one founder-directed draft PR #40; acceptance is parked at the real T-129 human walkthrough.** T-131 adds the exact `production-e2e` job and a live production-mode authorize→two-domain approval→execution→receipt→RFC3161 attestation→export journey over PostgreSQL, Vault Transit and S3 Object Lock; every hop asserts its artifact and the Python/independent JavaScript verifiers agree on machine-readable `VALID` plus derived assurance. T-132 replaces the pasted bearer/sessionStorage console with Authorization Code+PKCE/state/nonce customer OIDC, pinned issuer/audience/JWKS, reviewed group→role/control-domain mapping, opaque short HttpOnly sessions, fresh IdP MFA/hardware step-up before HIGH/CRITICAL votes, and chained login/step-up/logout/revocation/refusal events. The OIDC client secret is present only in the API workload; the final deployment gate first failed because shared production parsing demanded it in drain/attestation workers, then passed after enforcement moved to the API composition boundary. Other rule-10 corrections from the live journey: production agent tokens needed a real customer issuer rather than the development minter; lease completion had accidentally crossed into workforce-cookie authentication and was restored to agent JWT+mTLS; repeated immutable-store runs required fresh disposable stores; verifier JSON calls the field `derived_assurance`; malformed IdP/session inputs and incomplete no-payload audit metadata were tightened before handoff. Rule 9: the new T-131 workflow-wiring gate rejects exact pre-fix `c1ebb21` because it has only `production-boot`, and the current T-132 browser truth gate rejects that same pre-fix artifact's pasted `sessionStorage` bearer UI. Local proof: `make check`, Ruff, contract coverage, deployment manifests, 477 unit tests, 36 live PostgreSQL tests, execution coverage tripwire, eight browser tests, the paired restore drill and the live production journey are green. No benchmark numbers claimed. H-7 is satisfied by ratified ADR-001/ADR-007 authentication and approval authority; Amendment F and SPEC carry the endpoint/config/session delta. Claim released. · next: named outside-build-team clean-machine walkthrough and correction rerun, then final-head CI and independent `REVIEW:`
 
 - 2026-09-01 · CODEX · T-130 · Added the paired PostgreSQL/Object Lock recovery runbook, destructive-target guard, executable drill and nightly/PR continuity workflow. The real local drill created two source ADR records and one anchor, backed up PostgreSQL plus two Object Lock objects, restored into database `mizan_restore_drill_restored` and a fresh locked bucket, exported solely from the restored pair, and both the Python and independently implemented JavaScript verifiers returned machine-readable `VALID`; report lives under ignored `var/continuity/` locally and is a CI artifact. Rule 10: first direct run exposed a sibling-module import hidden by pytest; the helper moved into the installed object-store module. Second reached populated source stores but found no host `pg_dump`; added a version-matched container-tools mode. Third reached two successful verifier exits but the wrapper incorrectly required the Python human output to contain `VALID` although it says `PASS`; switched to each verifier's JSON verdict. No performance numbers claimed; recovery does not change signed retention meaning or custody semantics, so H-7 does not fire. · next: build T-131's single production-mode full-journey gate from the shipped closed loop and production dependencies
 
