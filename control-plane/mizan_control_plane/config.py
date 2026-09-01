@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from itertools import pairwise
 from os import environ
@@ -101,6 +103,17 @@ class Settings:
     s3_secret_access_key: str = ""
     object_lock_retention_years: int = 7
     rate_limits_per_minute: tuple[int, int, int, int] = (60, 120, 240, 480)
+    workforce_oidc_authorization_endpoint: str = ""
+    workforce_oidc_token_endpoint: str = ""
+    workforce_oidc_client_id: str = ""
+    workforce_oidc_client_secret: str = ""
+    workforce_oidc_redirect_uri: str = ""
+    workforce_tenant_id: str = ""
+    workforce_group_claim: str = "groups"
+    workforce_role_mapping: dict[str, dict[str, object]] | None = None
+    workforce_session_ttl_seconds: int = 900
+    workforce_step_up_max_age_seconds: int = 120
+    workforce_step_up_acr_values: tuple[str, ...] = ("urn:mizan:hardware", "urn:mizan:mfa")
 
     @property
     def rate_limit_map(self) -> dict[str, int]:
@@ -120,8 +133,50 @@ class Settings:
             self.tls_certificate_file and self.tls_private_key_file and self.tls_client_ca_file
         )
 
+    def require_workforce_oidc(self) -> None:
+        """Refuse an API runtime that cannot authenticate its workforce browser.
+
+        Background workers share this settings document but do not serve browser routes. Requiring
+        the confidential OIDC client secret while parsing their configuration would needlessly
+        grant that secret to the drain and attestation workloads.
+        """
+        if not self.is_production:
+            return
+        required = {
+            "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT": (
+                self.workforce_oidc_authorization_endpoint
+            ),
+            "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT": self.workforce_oidc_token_endpoint,
+            "MIZAN_WORKFORCE_OIDC_CLIENT_ID": self.workforce_oidc_client_id,
+            "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET[_FILE]": self.workforce_oidc_client_secret,
+            "MIZAN_WORKFORCE_OIDC_REDIRECT_URI": self.workforce_oidc_redirect_uri,
+            "MIZAN_WORKFORCE_TENANT_ID": self.workforce_tenant_id,
+            "MIZAN_WORKFORCE_ROLE_MAPPING": self.workforce_role_mapping,
+        }
+        problems: list[str] = []
+        absent = [name for name, value in required.items() if not value]
+        if absent:
+            problems.append("production workforce OIDC is incomplete: " + ", ".join(absent))
+        if any(
+            value and not value.startswith("https://")
+            for value in (
+                self.workforce_oidc_authorization_endpoint,
+                self.workforce_oidc_token_endpoint,
+                self.workforce_oidc_redirect_uri,
+            )
+        ):
+            problems.append("production workforce OIDC endpoints require HTTPS")
+        if self.workforce_tenant_id and not re.fullmatch(
+            r"tnt_[a-z0-9-]{4,64}", self.workforce_tenant_id
+        ):
+            problems.append("MIZAN_WORKFORCE_TENANT_ID is not a valid tenant ID")
+        if problems:
+            raise RuntimeError(
+                "production configuration is not usable:\n  - " + "\n  - ".join(problems)
+            )
+
     @classmethod
-    def from_environment(cls) -> Settings:
+    def from_environment(cls, *, require_workforce_oidc: bool = False) -> Settings:
         required = ("MIZAN_DATABASE_URL", "MIZAN_JWT_ISSUER", "MIZAN_IDENTITY_JWKS")
         missing = [name for name in required if not environ.get(name)]
         if missing:
@@ -210,9 +265,9 @@ class Settings:
         )
         if len(set(refs)) != 4:
             raise RuntimeError("the four signing key roles require distinct key references")
-        if environment == "production" and (custody == "development" or any(
-            item.startswith("local://") for item in refs
-        )):
+        if environment == "production" and (
+            custody == "development" or any(item.startswith("local://") for item in refs)
+        ):
             production_problems.append(
                 "production refuses development custody and local:// signing keys"
             )
@@ -232,6 +287,64 @@ class Settings:
         tls_client_ca_file = environ.get("MIZAN_TLS_CLIENT_CA_FILE") or None
         evaluator_build = environ.get("MIZAN_EVALUATOR_BUILD", "development")
         configuration_hash = environ.get("MIZAN_EVALUATOR_CONFIGURATION_HASH", "0" * 64)
+        workforce_secret = environ.get("MIZAN_WORKFORCE_OIDC_CLIENT_SECRET", "")
+        workforce_secret_file = environ.get("MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE", "")
+        if workforce_secret_file:
+            try:
+                workforce_secret = Path(workforce_secret_file).read_text(encoding="utf-8").strip()
+            except OSError as error:
+                raise RuntimeError(
+                    "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE="
+                    f"{workforce_secret_file!r} could not be read: {error.strerror}"
+                ) from error
+        workforce_authorization_endpoint = environ.get(
+            "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT", ""
+        )
+        workforce_token_endpoint = environ.get("MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT", "")
+        workforce_client_id = environ.get("MIZAN_WORKFORCE_OIDC_CLIENT_ID", "")
+        workforce_redirect_uri = environ.get("MIZAN_WORKFORCE_OIDC_REDIRECT_URI", "")
+        workforce_tenant_id = environ.get("MIZAN_WORKFORCE_TENANT_ID", "")
+        try:
+            workforce_mapping = json.loads(environ.get("MIZAN_WORKFORCE_ROLE_MAPPING", "{}"))
+        except json.JSONDecodeError as error:
+            raise RuntimeError("MIZAN_WORKFORCE_ROLE_MAPPING must be a JSON object") from error
+        if not isinstance(workforce_mapping, dict):
+            raise RuntimeError("MIZAN_WORKFORCE_ROLE_MAPPING must be a JSON object")
+        for group, mapping in workforce_mapping.items():
+            if (
+                not isinstance(group, str)
+                or not isinstance(mapping, dict)
+                or not isinstance(mapping.get("roles"), list)
+                or not mapping.get("roles")
+                or not all(
+                    isinstance(role, str) and bool(role.strip())
+                    for role in mapping.get("roles", [])
+                )
+                or not isinstance(mapping.get("control_domain"), str)
+                or not mapping.get("control_domain")
+            ):
+                raise RuntimeError(
+                    "each MIZAN_WORKFORCE_ROLE_MAPPING entry requires non-empty roles and "
+                    "control_domain"
+                )
+        session_ttl = int(environ.get("MIZAN_WORKFORCE_SESSION_TTL_SECONDS", "900"))
+        step_up_age = int(environ.get("MIZAN_WORKFORCE_STEP_UP_MAX_AGE_SECONDS", "120"))
+        if not 60 <= session_ttl <= 3600:
+            raise RuntimeError("MIZAN_WORKFORCE_SESSION_TTL_SECONDS must be between 60 and 3600")
+        if not 30 <= step_up_age <= session_ttl:
+            raise RuntimeError(
+                "MIZAN_WORKFORCE_STEP_UP_MAX_AGE_SECONDS must be between 30 and the session TTL"
+            )
+        workforce_acr_values = tuple(
+            item.strip()
+            for item in environ.get(
+                "MIZAN_WORKFORCE_STEP_UP_ACR_VALUES",
+                "urn:mizan:hardware,urn:mizan:mfa",
+            ).split(",")
+            if item.strip()
+        )
+        if not workforce_acr_values:
+            raise RuntimeError("MIZAN_WORKFORCE_STEP_UP_ACR_VALUES must not be empty")
         if environment == "production":
             if environ["MIZAN_JWT_ISSUER"].startswith("urn:mizan:development:"):
                 production_problems.append(
@@ -254,6 +367,36 @@ class Settings:
                     "and MIZAN_TLS_CLIENT_CA_FILE; execution endpoints authenticate the workload "
                     "from the verified TLS peer only (ADR-001 Amendment B)"
                 )
+            if require_workforce_oidc:
+                workforce_required = {
+                    "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT": (
+                        workforce_authorization_endpoint
+                    ),
+                    "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT": workforce_token_endpoint,
+                    "MIZAN_WORKFORCE_OIDC_CLIENT_ID": workforce_client_id,
+                    "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET[_FILE]": workforce_secret,
+                    "MIZAN_WORKFORCE_OIDC_REDIRECT_URI": workforce_redirect_uri,
+                    "MIZAN_WORKFORCE_TENANT_ID": workforce_tenant_id,
+                    "MIZAN_WORKFORCE_ROLE_MAPPING": workforce_mapping,
+                }
+                absent = [name for name, value in workforce_required.items() if not value]
+                if absent:
+                    production_problems.append(
+                        "production workforce OIDC is incomplete: " + ", ".join(absent)
+                    )
+                if any(
+                    value and not value.startswith("https://")
+                    for value in (
+                        workforce_authorization_endpoint,
+                        workforce_token_endpoint,
+                        workforce_redirect_uri,
+                    )
+                ):
+                    production_problems.append("production workforce OIDC endpoints require HTTPS")
+                if workforce_tenant_id and not re.fullmatch(
+                    r"tnt_[a-z0-9-]{4,64}", workforce_tenant_id
+                ):
+                    production_problems.append("MIZAN_WORKFORCE_TENANT_ID is not a valid tenant ID")
         log_format = environ.get("MIZAN_LOG_FORMAT", "json").lower()
         if log_format not in ("json", "text"):
             raise RuntimeError("MIZAN_LOG_FORMAT must be 'json' or 'text'")
@@ -269,13 +412,15 @@ class Settings:
         if approval_epoch_expiry not in ("enforced", "advisory"):
             raise RuntimeError("MIZAN_APPROVAL_EPOCH_EXPIRY must be 'enforced' or 'advisory'")
         drain_tenants = tuple(
-            item.strip() for item in environ.get("MIZAN_DRAIN_TENANTS", "").split(",") if item.strip()
+            item.strip()
+            for item in environ.get("MIZAN_DRAIN_TENANTS", "").split(",")
+            if item.strip()
         )
         if production_problems:
             raise RuntimeError(
                 "production configuration is not usable:\n  - " + "\n  - ".join(production_problems)
             )
-        return cls(
+        settings = cls(
             database_url=environ["MIZAN_DATABASE_URL"],
             jwt_issuer=environ["MIZAN_JWT_ISSUER"],
             jwt_audience=environ.get("MIZAN_JWT_AUDIENCE", "mizan-control-plane"),
@@ -360,7 +505,21 @@ class Settings:
             rate_limits_per_minute=parse_rate_limits(
                 environ.get("MIZAN_RATE_LIMITS_PER_MINUTE", "60,120,240,480")
             ),
+            workforce_oidc_authorization_endpoint=workforce_authorization_endpoint,
+            workforce_oidc_token_endpoint=workforce_token_endpoint,
+            workforce_oidc_client_id=workforce_client_id,
+            workforce_oidc_client_secret=workforce_secret,
+            workforce_oidc_redirect_uri=workforce_redirect_uri,
+            workforce_tenant_id=workforce_tenant_id,
+            workforce_group_claim=environ.get("MIZAN_WORKFORCE_GROUP_CLAIM", "groups"),
+            workforce_role_mapping=workforce_mapping,
+            workforce_session_ttl_seconds=session_ttl,
+            workforce_step_up_max_age_seconds=step_up_age,
+            workforce_step_up_acr_values=workforce_acr_values,
         )
+        if require_workforce_oidc:
+            settings.require_workforce_oidc()
+        return settings
 
 
 def resolve_served_tenants(explicit: list[str] | None, environment_key: str) -> list[str]:

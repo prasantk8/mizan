@@ -472,16 +472,16 @@ class EvidenceRepository:
         if not isinstance(attestation, dict) or not required <= attestation.keys():
             raise Problem(503, "redaction_attestation_missing", "Audit write lacks DLP attestation")
         dlp = attestation.get("dlp", {})
-        if (
-            dlp.get("status") == "scan_failed"
-            or not dlp.get("scanner_version")
-            or not dlp.get("coverage_profile")
+        no_payload = redacted.payload is None and dlp.get("status") == "not_applicable"
+        if dlp.get("status") == "scan_failed" or (
+            not no_payload
+            and (not dlp.get("scanner_version") or not dlp.get("coverage_profile"))
         ):
             raise Problem(
                 503, "redaction_attestation_invalid", "Audit DLP attestation failed closed"
             )
-        if not getattr(redacted, "stored_payload_hash", None) or not getattr(
-            redacted, "source_commitment", None
+        if not getattr(redacted, "stored_payload_hash", None) or (
+            not no_payload and not getattr(redacted, "source_commitment", None)
         ):
             raise Problem(503, "redaction_commitment_missing", "Audit commitments are incomplete")
         if canonical_hash(redacted.payload) != redacted.stored_payload_hash:

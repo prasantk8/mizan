@@ -39,6 +39,38 @@ class ObjectStoreRefused(RuntimeError):
     """Storage that would accept writes, but not with the durability Mizan claims."""
 
 
+def provision_object_lock_bucket(
+    client: Any, bucket: str, region: str, retention_days: int
+) -> dict[str, Any]:
+    """Create an Object Lock bucket and verify its default COMPLIANCE retention."""
+    request: dict[str, Any] = {"Bucket": bucket, "ObjectLockEnabledForBucket": True}
+    if region != "us-east-1":
+        request["CreateBucketConfiguration"] = {"LocationConstraint": region}
+    try:
+        client.create_bucket(**request)
+    except Exception as error:
+        code = _error_code(error)
+        if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+            raise
+    configuration = {
+        "ObjectLockEnabled": "Enabled",
+        "Rule": {"DefaultRetention": {"Mode": "COMPLIANCE", "Days": retention_days}},
+    }
+    client.put_object_lock_configuration(
+        Bucket=bucket, ObjectLockConfiguration=configuration
+    )
+    observed = client.get_object_lock_configuration(Bucket=bucket)["ObjectLockConfiguration"]
+    if observed.get("ObjectLockEnabled") != "Enabled":
+        raise RuntimeError(f"bucket {bucket!r} does not have Object Lock enabled")
+    retention = observed.get("Rule", {}).get("DefaultRetention", {})
+    if retention.get("Mode") != "COMPLIANCE" or int(retention.get("Days", 0)) < retention_days:
+        raise RuntimeError(
+            f"bucket {bucket!r} default retention is {retention!r}, expected COMPLIANCE "
+            f"for at least {retention_days} days"
+        )
+    return observed
+
+
 class ImmutableObjectStore(Protocol):
     def put_once(self, key: str, payload: bytes) -> str: ...
 

@@ -1,9 +1,12 @@
-.PHONY: check validate-baseline validate-ui-contract validate-ui-truth validate-vulnerability-allowlist test-postgres demo demo-down benchmark-policy benchmark-sequencer benchmark-chain
+.PHONY: check validate-baseline validate-installation validate-ui-contract validate-ui-truth validate-vulnerability-allowlist test-postgres demo demo-down benchmark-policy benchmark-sequencer benchmark-chain
 
-check: validate-baseline validate-ui-contract validate-ui-truth validate-vulnerability-allowlist
+check: validate-baseline validate-installation validate-ui-contract validate-ui-truth validate-vulnerability-allowlist
 
 validate-baseline:
 	uv run --frozen python scripts/validate_baseline.py
+
+validate-installation:
+	uv run --frozen python scripts/validate_installation.py
 
 validate-ui-contract:
 	uv run python scripts/validate_ui_contract.py

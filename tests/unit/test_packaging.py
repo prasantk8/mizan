@@ -34,6 +34,7 @@ def test_migration_set_is_ordered_and_every_file_is_atomic() -> None:
         "0003_anchor_attestations.sql",
         "0004_outbox_quarantine.sql",
         "0005_evidence_immutability.sql",
+        "0006_workforce_sessions.sql",
     ]
     assert all("BEGIN;" not in migration.body.splitlines()[:1] for migration in migrations)
 
@@ -187,6 +188,17 @@ def test_the_supply_chain_scan_is_wired_and_its_artifacts_are_named() -> None:
     assert "--scanners vuln --skip-version-check --severity HIGH,CRITICAL --exit-code 1" in workflow
     # The gate that replaced this function must itself be wired, or T-100 buys nothing.
     assert "scripts/validate_deployment_manifests.py" in workflow
+
+
+def test_production_e2e_job_runs_the_full_journey_test() -> None:
+    """The production guarantee belongs to a named required job, not an opt-in local command."""
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "\n  production-e2e:\n" in workflow
+    assert (
+        "tests/integration/test_production_boot.py "
+        "tests/integration/test_production_e2e.py" in workflow
+    )
+    assert "actions/setup-node@" in workflow
 
 
 def test_the_dockerfile_still_builds_the_runtime_rather_than_the_toolchain() -> None:

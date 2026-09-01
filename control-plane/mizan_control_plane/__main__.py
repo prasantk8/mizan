@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     # reconfigures with the settings' level once it can read them.
     configure_logging(arguments.log_level or "info")
     try:
-        settings = Settings.from_environment()
+        settings = Settings.from_environment(require_workforce_oidc=True)
         runtime = build_runtime(settings)
     except (StartupRefused, RuntimeError) as exc:
         print(f"mizan-control-plane refused to start: {exc}", file=sys.stderr)

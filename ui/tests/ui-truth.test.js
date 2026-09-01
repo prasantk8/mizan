@@ -109,25 +109,26 @@ class FakeDocument {
   }
 }
 
-function browser({ token = "", responses = {} } = {}) {
+function browser({ session = null, responses = {} } = {}) {
   const document = new FakeDocument();
+  if (session && !responses["/auth/session"]) {
+    responses["/auth/session"] = { status: 200, body: session };
+  }
+  const requests = [];
+  const location = { pathname: "/", search: "", assigned: null, assign(value) { this.assigned = value; } };
   const context = {
     console,
     document,
     FormData: class {},
     URLSearchParams,
-    sessionStorage: {
-      getItem(key) {
-        return key === "mizan_token" ? token : "";
-      },
-      setItem() {},
-    },
+    window: { location },
     setInterval() {},
     setTimeout(callback) {
       callback();
     },
-    fetch: async (url) => {
+    fetch: async (url, options = {}) => {
       const pathname = new URL(url, "https://ui.test").pathname;
+      requests.push({ pathname, options });
       const response = responses[pathname];
       if (!response) throw new Error(`unexpected request: ${pathname}`);
       return {
@@ -136,13 +137,10 @@ function browser({ token = "", responses = {} } = {}) {
         json: async () => response.body,
       };
     },
-    atob(value) {
-      return Buffer.from(value, "base64url").toString("utf8");
-    },
   };
   vm.createContext(context);
   vm.runInContext(source, context, { filename: "ui/app.js" });
-  return { context, document };
+  return { context, document, requests, location };
 }
 
 test("the static DOM states only claims the shipped interface can support", () => {
@@ -201,7 +199,7 @@ test("the runtime DOM never calls an unready or non-production runtime Productio
 
 test("the dashboard DOM names the counted mizan.security event class", async () => {
   const { document } = browser({
-    token: "header.payload.signature",
+    session: { principal_id: "prn_alice", tenant_id: "tnt_bank-a" },
     responses: {
       "/health/ready": { status: 200, body: { status: "ready", checks: { database: "ok" } } },
       "/v1/dashboard/summary": {
@@ -223,6 +221,62 @@ test("the dashboard DOM names the counted mizan.security event class", async () 
   const labels = document.getElementById("metrics").children.map((card) => card.children[0].textContent);
   assert.ok(labels.includes("mizan.security.* audit events today"));
   assert.ok(!labels.includes("Security alerts"));
+});
+
+test("the operator UI uses an HttpOnly workforce session and exposes no pasted bearer field", async () => {
+  const { document, requests } = browser({
+    session: { principal_id: "prn_alice", tenant_id: "tnt_bank-a", roles: ["manager"] },
+    responses: {
+      "/health/ready": { status: 200, body: { status: "ready", checks: { database: "ok" } } },
+      "/v1/dashboard/summary": { status: 200, body: {} },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.doesNotMatch(html, /Bearer token|apiToken|connectionDialog/);
+  assert.doesNotMatch(source, /sessionStorage|mizan_token|Authorization:\s*`Bearer/);
+  assert.equal(document.getElementById("connectionButton").textContent, "Sign out");
+  assert.ok(requests.every((request) => request.options.credentials === "same-origin"));
+  assert.ok(requests.every((request) => !request.options.headers?.Authorization));
+});
+
+test("an anonymous operator is redirected to the customer IdP login entrypoint", async () => {
+  const { document, location } = browser({
+    responses: { "/health/ready": { status: 503, body: { status: "not_ready", checks: {} } } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  document.getElementById("connectionButton").onclick();
+  assert.equal(location.assigned, "/auth/login?return_to=/");
+});
+
+test("a high-risk vote refusal redirects the browser through fresh IdP step-up", async () => {
+  const { context, location } = browser({
+    session: { principal_id: "prn_alice", tenant_id: "tnt_bank-a", roles: ["manager"] },
+    responses: {
+      "/health/ready": { status: 200, body: { status: "ready", checks: { database: "ok" } } },
+      "/v1/dashboard/summary": { status: 200, body: {} },
+      "/v1/approvals/apr_test": {
+        status: 200,
+        body: {
+          approval_id: "apr_test",
+          decision_id: "dec_test",
+          state: "PENDING",
+          current_epoch_id: "epc_test",
+          epochs: [{ epoch_id: "epc_test", epoch_number: 1, expires_at: "2099-01-01T00:00:00Z", votes: [], eligibility: { members: [] } }],
+        },
+      },
+      "/v1/decisions/dec_test": { status: 200, body: { decision_id: "dec_test" } },
+      "/v1/approvals/apr_test/votes": {
+        status: 403,
+        body: { type: "https://mizan.ai/problems/workforce_step_up_required", detail: "step up" },
+      },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await context.openApproval("apr_test", "dec_test", "prn_requester");
+  await context.castVote({ vote: "APPROVE", epoch_number: 1 });
+
+  assert.equal(location.assigned, "/auth/step-up?return_to=%2F");
 });
 
 test("the policy studio DOM uses simulation language and discloses its limit", () => {

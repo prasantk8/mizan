@@ -322,6 +322,7 @@ class ApprovalRepository:
                 role_claim=request.get("role_claim"),
                 justification=request.get("justification"),
                 comment=request.get("comment"),
+                control_domains=principal.control_domains,
                 enforce_expiry=self.expiry_enforced,
             )
             connection.execute(

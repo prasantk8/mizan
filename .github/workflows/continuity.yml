@@ -1,0 +1,72 @@
+name: Continuity
+
+on:
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+        env:
+          POSTGRES_PASSWORD: continuity-owner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          enable-cache: true
+      - name: Install locked dependencies and PostgreSQL client
+        run: |
+          uv sync --locked --dev
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+      - name: Start an isolated Object Lock store
+        run: |
+          docker run -d --name mizan-continuity-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=mizan-drill-access \
+            -e MINIO_ROOT_PASSWORD=mizan-drill-secret \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null
+      - name: Restore both stores and verify the restored bundle twice
+        env:
+          MIZAN_CONTINUITY_DRILL_EPHEMERAL: "true"
+          MIZAN_S3_ACCESS_KEY_ID: mizan-drill-access
+          MIZAN_S3_SECRET_ACCESS_KEY: mizan-drill-secret
+        run: >-
+          uv run --frozen python scripts/backup_restore_drill.py
+          --admin-database-url postgresql://postgres:continuity-owner@127.0.0.1:5432/postgres
+          --s3-endpoint-url http://127.0.0.1:9000
+          --report var/continuity/backup-restore-report.json
+      - name: Upload continuity evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-restore-${{ github.sha }}
+          path: var/continuity/backup-restore-report.json
+          if-no-files-found: error
+      - name: Stop the isolated object store
+        if: always()
+        run: docker rm -f mizan-continuity-minio || true
+

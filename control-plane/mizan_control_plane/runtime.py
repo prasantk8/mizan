@@ -209,6 +209,7 @@ class Runtime:
 
 def build_runtime(settings: Settings | None = None) -> Runtime:
     settings = settings or Settings.from_environment()
+    settings.require_workforce_oidc()
     try:
         metrics, tracer, metrics_server = build_observability(settings)
     except TracingRefused as refused:

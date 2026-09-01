@@ -13,6 +13,7 @@ postgres_tests=(
   tests/integration/test_policy_studio_postgres.py
   tests/integration/test_sdk_postgres.py
   tests/integration/test_service_boot_postgres.py
+  tests/integration/test_workforce_postgres.py
 )
 cleanup() {
   "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true

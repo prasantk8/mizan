@@ -1,6 +1,6 @@
 const state = {
-  token: sessionStorage.getItem("mizan_token") || "",
-  origin: sessionStorage.getItem("mizan_origin") || "",
+  session: null,
+  origin: "",
   decisionCursor: null,
   auditCursor: null,
   approvalCursor: null,
@@ -32,23 +32,14 @@ function badge(value) {
   return element("span", value, `badge ${String(value || "unknown").toUpperCase()}`);
 }
 
-function tokenClaims() {
-  try {
-    const payload = state.token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(payload));
-  } catch (_error) {
-    return {};
-  }
-}
-
 async function api(path, options = {}) {
   const { authentication = "required", ...transportOptions } = options;
-  if (authentication === "required" && !state.token) throw new Error("Connect with an operator token first.");
+  if (authentication === "required" && !state.session) throw new Error("Sign in with your workforce identity first.");
   const response = await fetch(state.origin + path, {
     ...transportOptions,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
       ...transportOptions.headers,
     },
   });
@@ -60,6 +51,19 @@ async function api(path, options = {}) {
     throw error;
   }
   return body;
+}
+
+async function loadSession() {
+  try {
+    state.session = await request("GET", "/auth/session", "/auth/session", null, "optional");
+    $("connectionButton").textContent = "Sign out";
+    setStatus(`Signed in as ${state.session.principal_id}.`);
+    return true;
+  } catch (_error) {
+    state.session = null;
+    $("connectionButton").textContent = "Sign in";
+    return false;
+  }
 }
 
 function request(method, contractPath, path = contractPath, body = null, authentication = "required") {
@@ -479,14 +483,14 @@ function applyApprovalGuards() {
 
   const terminal = approval.state !== "PENDING" && approval.state !== "PARTIALLY_APPROVED";
   const expired = !epoch || Date.parse(epoch.expires_at) <= Date.now();
-  const selfApproval = tokenClaims().sub === state.requesterId;
+  const selfApproval = state.session?.principal_id === state.requesterId;
   const members = epoch?.eligibility?.members || [];
-  const inSnapshot = members.length === 0 || members.some((member) => (member.id || member.principal_id || member) === tokenClaims().sub);
+  const inSnapshot = members.length === 0 || members.some((member) => (member.id || member.principal_id || member) === state.session?.principal_id);
   const disabled = terminal || expired || selfApproval || !inSnapshot;
   controls.disabled = disabled;
   $("escalateApproval").disabled = terminal || expired;
   $("overrideApproval").disabled = terminal || !epoch;
-  $("withdrawApproval").disabled = terminal || tokenClaims().sub !== state.requesterId;
+  $("withdrawApproval").disabled = terminal || state.session?.principal_id !== state.requesterId;
 
   const reasons = [];
   if (terminal) reasons.push(`Approval is terminal (${approval.state}).`);
@@ -567,6 +571,11 @@ async function castVote(body = voteBody()) {
     setStatus("Vote recorded against the displayed epoch.");
     await refreshApproval();
   } catch (error) {
+    if (error.problem?.type?.endsWith("workforce_step_up_required")) {
+      const returnTo = `${window.location.pathname}${window.location.search}`;
+      window.location.assign(`/auth/step-up?return_to=${encodeURIComponent(returnTo)}`);
+      return;
+    }
     if (error.status === 409) {
       setStatus("This request was escalated while you were reading it. Reloaded the current epoch; review it before voting again.", "error");
       await refreshApproval();
@@ -663,20 +672,15 @@ $("refreshButton").onclick = () => {
   loadRuntimeStatus();
   (loaders[state.activeView] || loadDashboard)();
 };
-$("connectionButton").onclick = () => {
-  $("apiOrigin").value = state.origin;
-  $("apiToken").value = state.token;
-  $("connectionDialog").showModal();
-};
-$("saveConnection").onclick = () => {
-  state.origin = $("apiOrigin").value.replace(/\/$/, "");
-  state.token = $("apiToken").value.trim();
-  sessionStorage.setItem("mizan_origin", state.origin);
-  sessionStorage.setItem("mizan_token", state.token);
-  setTimeout(() => {
-    loadRuntimeStatus();
-    (loaders[state.activeView] || loadDashboard)();
-  }, 0);
+$("connectionButton").onclick = async () => {
+  if (!state.session) {
+    window.location.assign("/auth/login?return_to=/");
+    return;
+  }
+  await request("POST", "/auth/logout");
+  state.session = null;
+  $("connectionButton").textContent = "Sign in";
+  setStatus("Signed out.");
 };
 $("verifyForm").onsubmit = async (event) => {
   event.preventDefault();
@@ -702,4 +706,4 @@ setInterval(() => {
   else if (state.activeView === "approvals") loadApprovals();
 }, 60000);
 loadRuntimeStatus();
-if (state.token) loadDashboard();
+loadSession().then((authenticated) => { if (authenticated) loadDashboard(); });

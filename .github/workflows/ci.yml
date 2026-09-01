@@ -293,8 +293,8 @@ jobs:
         if: always()
         run: docker rm -f mizan-ci-minio || true
 
-  production-boot:
-    # T-101. Every other production assertion in this repository is a *refusal*, and a complete set
+  production-e2e:
+    # T-101/T-131. Every other production assertion in this repository was a *refusal*, and a complete set
     # of refusals with nothing left that starts is indistinguishable from a system that refuses
     # everything. CI's only container boot passes `--env MIZAN_ENV=development`, so `app.py`'s
     # production readiness branch had never executed anywhere.
@@ -322,6 +322,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install locked dependencies
         run: uv sync --locked --dev
       - name: Install PostgreSQL client
@@ -380,7 +383,7 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:9000/minio/health/live > /dev/null
-      - name: Boot the control plane with MIZAN_ENV=production
+      - name: Boot production, execute the governed journey, and verify its attested export twice
         env:
           MIZAN_TEST_DATABASE_URL: postgresql://mizan_app:integration-only-mizan@127.0.0.1:5432/mizan
           MIZAN_TEST_VAULT_ADDR: https://127.0.0.1:8200
@@ -392,14 +395,14 @@ jobs:
           export MIZAN_TEST_VAULT_CA_CERT="$RUNNER_TEMP/vault-ca.pem"
           # Skipped is not passed: this file skips itself without a database and a Vault, so a job
           # that lost either would go green having proved nothing (R-008 F-11).
-          if ! output=$(uv run --frozen pytest -q tests/integration/test_production_boot.py 2>&1); then
+          if ! output=$(uv run --frozen pytest -q tests/integration/test_production_boot.py tests/integration/test_production_e2e.py 2>&1); then
             printf '%s\n' "$output"
             exit 1
           fi
           printf '%s\n' "$output"
           case "$(printf '%s\n' "$output" | tail -1)" in
             *skipped*|*"no tests ran"*)
-              echo "::error::production boot did not run against a real database and Vault"
+              echo "::error::production E2E did not run against real PostgreSQL, Vault and Object Lock"
               exit 1
               ;;
           esac

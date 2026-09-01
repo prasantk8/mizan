@@ -1262,6 +1262,19 @@ x-sla:
 
 paths:
 
+  /auth/login:
+    get: { summary: "Begin customer-IdP OIDC Authorization Code + PKCE login; state and nonce are one-use", responses: { "303": {description: Redirect to the configured customer IdP} } }
+  /auth/callback:
+    get: { summary: "Validate state, nonce, issuer, audience, signature, MFA and group mapping; issue an opaque server-side workforce session", responses: { "303": {description: Local return redirect with Secure HttpOnly session cookie}, "401": {description: OIDC exchange or token validation failed}, "403": {description: Principal, group, MFA or control-domain mapping refused} } }
+  /auth/session:
+    get: { summary: "Return the current tenant-scoped workforce session without exposing IdP tokens", responses: { "200": {description: Session identity, roles/domains, strength, step-up and expiry}, "401": {description: Missing, expired, invalid or revoked session} } }
+  /auth/step-up:
+    get: { summary: "Begin a fresh prompt=login OIDC authentication for a HIGH/CRITICAL vote", responses: { "303": {description: Redirect to IdP with configured MFA/hardware ACR values} } }
+  /auth/logout:
+    post: { summary: "Revoke the current workforce session and clear its cookie", responses: { "204": {description: Logged out} } }
+  /auth/sessions/{session_id}/revoke:
+    post: { summary: "Revoke a tenant-scoped workforce session; requires the mapped session.admin role", responses: { "204": {description: Revoked}, "403": {description: session.admin role absent}, "404": {description: Session absent in tenant} } }
+
   /v1/authorize:
     post:
       summary: Evaluate a proposed agent action (the heartbeat API, PRD §86)
@@ -1677,6 +1690,17 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_JWT_AUDIENCE` | `mizan-control-plane` | deployment | Exact accepted `aud` for identity tokens. |
 | `MIZAN_IDENTITY_JWKS` | *(required)* | deployment | Local public-only JWKS for identity-token verification. Every key requires a unique non-empty `kid`, explicit `use: sig`, and `alg` in `RS256`/`ES256`/`EdDSA`; symmetric and private keys are refused at startup. Rotation is old-only → old+new → new-only after at least `MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS`; the token header selects only a configured `kid` and never a URL or trust root. |
 | `MIZAN_IDENTITY_TOKEN_MAX_TTL_SECONDS` | `3600` | deployment | Maximum accepted `exp - iat` for an identity token. `exp` in the future is not a bounded lifetime, and there is no revocation path for identity tokens, so a token's lifetime is the whole of its blast radius. Refused as 401 `identity_token_ttl_excessive`. |
+| `MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT` | *(required in production)* | deployment | Customer IdP authorization endpoint. Production requires HTTPS; callers never select identity metadata. |
+| `MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT` | *(required in production)* | deployment | Customer IdP code-exchange endpoint. Production requires HTTPS and a bounded exchange. |
+| `MIZAN_WORKFORCE_OIDC_CLIENT_ID` | *(required in production)* | deployment | Exact OIDC ID-token audience for the operator console. |
+| `MIZAN_WORKFORCE_OIDC_CLIENT_SECRET` / `MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE` | *(required by the production API workload)* | deployment | Confidential-client credential. Prefer the file form; an unreadable file is refused and never falls back silently. It is not supplied to evidence background workers, which expose no workforce routes. |
+| `MIZAN_WORKFORCE_OIDC_REDIRECT_URI` | *(required in production)* | deployment | Exact local callback URI registered at the IdP; HTTPS is mandatory in production. |
+| `MIZAN_WORKFORCE_TENANT_ID` | *(required in production)* | deployment | Tenant served by this customer-IdP configuration. It selects an RLS scope but conveys no authority without the opaque session secret. |
+| `MIZAN_WORKFORCE_GROUP_CLAIM` | `groups` | deployment | ID-token claim containing customer group strings. Non-array claims are refused. |
+| `MIZAN_WORKFORCE_ROLE_MAPPING` | *(required in production)* | deployment | JSON object mapping each accepted customer group to non-empty `roles` and one `control_domain`. Ambiguous role/domain mappings fail closed; approval epoch snapshots remain authoritative. |
+| `MIZAN_WORKFORCE_SESSION_TTL_SECONDS` | `900` | deployment | Opaque server-side workforce-session lifetime, bounded to 60–3600 seconds. The browser receives only a Secure HttpOnly SameSite=Lax cookie. |
+| `MIZAN_WORKFORCE_STEP_UP_MAX_AGE_SECONDS` | `120` | deployment | Maximum age of the fresh IdP authentication immediately before a HIGH/CRITICAL vote; bounded to 30 seconds through the session TTL. |
+| `MIZAN_WORKFORCE_STEP_UP_ACR_VALUES` | `urn:mizan:hardware,urn:mizan:mfa` | deployment | Ordered IdP ACR values requested with `prompt=login,max_age=0`; the callback must return one of them for step-up to succeed. |
 | `MIZAN_MAX_REQUEST_BODY_BYTES` | `1048576` | deployment | Largest accepted request body. Applied at the ASGI layer, before the body is parsed and before any caller is authenticated. Refused as 413 `request_body_too_large`. |
 | `MIZAN_RATE_LIMITS_PER_MINUTE` | `60,120,240,480` | deployment | Per-replica token-bucket capacities for LOW, MEDIUM, HIGH and CRITICAL, shared as policy across but independently enforced for each protected route class. Exactly four positive, strictly increasing integers are required. Exhaustion is 429 `rate_limit_exceeded`; configured values and refusals are visible on `/metrics`. |
 | `MIZAN_EVALUATOR_BUILD` | `development` | deployment | Recorded in every ADR_Record's `evaluator.build`. Production refuses the `development` placeholder: an unpinned evaluator makes the record unreplayable. |

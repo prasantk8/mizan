@@ -36,6 +36,7 @@ over mutual TLS. Rendering a manifest is necessary; this boot is the assertion t
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -94,6 +95,15 @@ PRODUCTION_REQUIRED_ENVIRONMENT = {
     "MIZAN_EXECUTION_TOKEN_ISSUER": None,
     "MIZAN_EVALUATOR_BUILD": None,
     "MIZAN_EVALUATOR_CONFIGURATION_HASH": None,
+}
+CONTROL_PLANE_REQUIRED_ENVIRONMENT = {
+    "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT",
+    "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT",
+    "MIZAN_WORKFORCE_OIDC_CLIENT_ID",
+    "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE",
+    "MIZAN_WORKFORCE_OIDC_REDIRECT_URI",
+    "MIZAN_WORKFORCE_TENANT_ID",
+    "MIZAN_WORKFORCE_ROLE_MAPPING",
 }
 
 # Commands that are legitimately not console scripts. Each is an interpreter invocation, and each
@@ -291,6 +301,12 @@ def check_compose(scripts: set[str], path: Path = PRODUCTION_COMPOSE) -> None:
                     f"{path}:{name} sets {setting}={value!r}; production requires "
                     f"{required_value!r}"
                 )
+        if name == "control-plane-production":
+            for setting in sorted(CONTROL_PLANE_REQUIRED_ENVIRONMENT):
+                if not environment.get(setting):
+                    fail(f"{path}:{name} does not set production-required {setting}")
+        elif "MIZAN_WORKFORCE_OIDC_CLIENT_SECRET_FILE" in environment:
+            fail(f"{path}:{name} receives the workforce OIDC client secret unnecessarily")
         targets: set[str | None] = set()
         for volume in service.get("volumes", []):
             if isinstance(volume, dict):
@@ -367,6 +383,9 @@ def prepare_validation_credentials(root: Path) -> tuple[Path, Path]:
     shutil.copyfile(paths["client_key"], tls / "health-client-key.pem")
     secrets.mkdir()
     (secrets / "vault-token").write_text("validation-only-root\n", encoding="utf-8")
+    (secrets / "workforce-oidc-client-secret").write_text(
+        "validation-only-oidc-secret\n", encoding="utf-8"
+    )
 
     # Bind-mounted validation files must be readable by the image's non-root UID 65532. They are
     # short-lived under a private temporary directory and removed in the finally block below.
@@ -427,6 +446,19 @@ def validate_production_compose_boot() -> None:
                 "MIZAN_APP_PASSWORD": "validation-app-password",
                 "MIZAN_JWT_ISSUER": "https://issuer.validation.invalid",
                 "MIZAN_IDENTITY_JWKS": UNUSED_IDENTITY_JWKS,
+                "MIZAN_WORKFORCE_OIDC_AUTHORIZATION_ENDPOINT": "https://issuer.validation.invalid/authorize",
+                "MIZAN_WORKFORCE_OIDC_TOKEN_ENDPOINT": "https://issuer.validation.invalid/token",
+                "MIZAN_WORKFORCE_OIDC_CLIENT_ID": "mizan-console",
+                "MIZAN_WORKFORCE_OIDC_REDIRECT_URI": "https://mizan.validation.invalid/auth/callback",
+                "MIZAN_WORKFORCE_TENANT_ID": "tnt_validation",
+                "MIZAN_WORKFORCE_ROLE_MAPPING": json.dumps(
+                    {
+                        "validation-ops": {
+                            "roles": ["manager"],
+                            "control_domain": "operations",
+                        }
+                    }
+                ),
                 "MIZAN_VAULT_ADDR": "https://vault-validation:8200",
                 "MIZAN_VAULT_CA_CERT": "/run/mizan/tls/vault-ca.pem",
                 "MIZAN_ANCHOR_TSA_ENDPOINTS": "https://tsa.validation.invalid",
