@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-125 is in REVIEW on PR #36 after all 13 CI checks passed on implementation head `f13fe17`; T-126 is READY next. T-124 merged through replacement PR #35 with all CI checks green but without the required independent `REVIEW:` comment.
+**The two-product pilot programme is in WS-1a hardening.** T-125 merged through PR #36 at `c744742` with all 13 CI checks green but without the required independent `REVIEW:` comment. T-126 is IN_PROGRESS from that merged base, resolving the authorization service's hard-coded non-degraded evidence against the existing ADR-003 degraded-mode contract.
 
 ## Agent Queue
 
@@ -15,8 +15,8 @@
 | T-123 | Wire the nine PostgreSQL integration files omitted from PR CI into `postgres-contract`; no skipped masking | CODEX | T-121 | DONE |
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
 | T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
-| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | REVIEW |
-| T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | READY |
+| T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | DONE |
+| T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | IN_PROGRESS |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -126,6 +126,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
+| T-126 | CODEX | d4135095-16f2-402e-b690-08e4bd2bcce1 | 1 | 2026-09-01T02:47:18Z | 2026-09-01T02:47:18Z | 2026-09-01T06:47:18Z | c7447426df287881eba07db1178ac9ee9f4c47fe |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -167,12 +168,11 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge T-125 PR #36.** Require a comment beginning `REVIEW:` on the
-> final head after verifying authoritative stored risk selects the tenant/route bucket, all protected new
-> work is refused with 429 before mutation or minting, idempotent retries do not consume fresh capacity,
-> and the fifth adversarial fault disables the real limiter guard. After merge, claim T-126 from the merged
-> base and resolve the literal `is_degraded: False` contract honestly by wiring the existing degraded-mode
-> module or deleting it and its ledger row.
+> **Complete T-126 on branch `t-126-degraded-mode`.** Open the draft PR from claim commit, reproduce at
+> pre-fix `c744742` that a dependency failure records literal `is_degraded: false`, then wire the existing
+> ADR-003 degraded gate into authorization or remove it if end-to-end analysis disproves reachability.
+> Fault injection must prove policy-engine unavailability remains fail closed and any permitted LOW-risk
+> degraded result is truthfully marked before handoff for independent review.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -199,6 +199,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-126 · Claimed from merged T-125 base `c744742`. PR #36 carried 13/13 green checks but no independent `REVIEW:` comment, recorded as a protocol exception rather than credited. Existing ADR-003/SPEC I-21/I-26 degraded code is substantive but absent from the authorization composition path, whose records always say `is_degraded: false`; scope is to resolve that contradiction with behavioral pre-fix proof and truthful fail-closed/degraded evidence. · next: open draft PR, reproduce the old dependency-failure output, then wire and fault-test the authorization path
 
 - 2026-09-01 · CODEX · T-125 · Handed off PR #36 for independent review after CI run `33436554920` passed all 13 jobs on implementation head `f13fe17`. The final contract is tenant/route/stored-risk token buckets for authorize, approval mutations and new execution-token minting; recorded authorize retries and outstanding-token reissues remain idempotent without fresh capacity. Local proof: 469 unit tests, 35/35 PostgreSQL tests, 83.86% execution coverage, five adversarial faults caught, Ruff and `make check` green. Pre-fix `81d2adf` accepted and mutated on request 61; Rule 10 corrections and the T-124 review-protocol exception remain disclosed above and in the PR. No benchmark numbers claimed; H-7 does not fire because admission control precedes and does not change approval, outcome, money, crypto, key or tenant authority semantics. · next: independent `REVIEW:` on the final head and squash-merge PR #36, then claim T-126
 
