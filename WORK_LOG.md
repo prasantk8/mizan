@@ -6,7 +6,7 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-1a hardening.** T-125 merged through PR #36 at `c744742` with all 13 CI checks green but without the required independent `REVIEW:` comment. T-126 is IN_PROGRESS from that merged base, resolving the authorization service's hard-coded non-degraded evidence against the existing ADR-003 degraded-mode contract.
+**The two-product pilot programme is in WS-1a hardening.** T-126 is in REVIEW on PR #37 after all 13 CI checks passed on implementation head `cd1646e`; T-127 is READY next. T-125 merged through PR #36 with all CI checks green but without the required independent `REVIEW:` comment.
 
 ## Agent Queue
 
@@ -16,7 +16,8 @@
 | T-122 | Identity-token key rotation: JWKS keyset, `kid` routing, overlap window, rotation runbook and drill | CODEX | T-121 | DONE |
 | T-124 | Protect every evidence table against mutation and reconcile database streams against bucket objects in the drain worker | CODEX | T-123 | DONE |
 | T-125 | Rate limiting per ADR-003 tiers on `/v1/authorize`, approvals and token issuance | CODEX | T-124 | DONE |
-| T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | IN_PROGRESS |
+| T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
+| T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | READY |
 | T-121 | Make `compose.production.yaml` boot with the S3 evidence store and every production-required setting; launch it and reach readiness in `deployment-manifests` | CODEX | T-120 | DONE |
 | T-120 | Re-triage the 13 production-image CVE exceptions before 2026-09-03; upgrade fixed packages and renew only residual findings with dated per-entry justification | CODEX | — | DONE |
 | T-001 | Ratify SPEC v1.2 + ADR-001..008 (incl. R-002 amendments) | HUMAN | — | DONE |
@@ -45,7 +46,7 @@
 | T-024 | Adversarial suite: token replay, cross-tenant fuzz, chain tamper, prompt-injection corpus; nightly CI (PRD §39/§62) | CODEX | T-022 | REVIEW |
 | T-025 | ADR-004 Amd. G.1: four key roles, KMS/HSM `KeyProvider`, published `/v1/audit/keys` keyset, additive never-retroactive rotation, production refuses `local://` at startup | CODEX | T-033 | DONE |
 | T-026 | Outbox drain operations: runner, backpressure, poison handling, lag SLO, SIEM delivery | CODEX | T-022 | READY |
-| T-027 | Threat model v1 — CLAUDE draft at `threat-models/TM-001-control-plane-v1.md`; awaiting HUMAN ratification of three judgement calls in §6 (adversary A-8 scope, R-1 disposition, R-7 deferral to TM-002). Produced one new engineering finding (R-2 → T-054) | HUMAN | — | READY(draft) |
+| T-027 | Threat model v1 — CLAUDE draft at `threat-models/TM-001-control-plane-v1.md`; awaiting HUMAN ratification of three judgement calls in §6 (adversary A-8 scope, R-1 disposition, R-7 deferral to TM-002). Produced one new engineering finding (R-2 → T-054) | HUMAN | — | DONE(absorbed by T-127) |
 | T-028 | Constrained-execution specification incl. executor-side enforcement contract (B-10 Option B) | HUMAN | — | PARKED(v1.4) |
 | T-029 | R-005 F-12: benchmark artifact discipline — every `benchmarks/` module writes `benchmarks/results/<name>-<sha>.json` with measurement, host, SHA; CI fails on a missing artifact | CODEX | — | DONE |
 | T-030 | R-005 F-14: anchor chaining/ordering/density — `prev_anchor_hash`, monotonic `anchor_number`, `covered_record_count`; verifier checks anchor-set continuity; three negative fixtures | CODEX | — | DONE |
@@ -126,7 +127,6 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-126 | CODEX | d4135095-16f2-402e-b690-08e4bd2bcce1 | 1 | 2026-09-01T02:47:18Z | 2026-09-01T02:55:50Z | 2026-09-01T06:47:18Z | c7447426df287881eba07db1178ac9ee9f4c47fe |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -168,11 +168,10 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Complete T-126 on branch `t-126-degraded-mode`.** Open the draft PR from claim commit, reproduce at
-> pre-fix `c744742` that a dependency failure records literal `is_degraded: false`, then wire the existing
-> ADR-003 degraded gate into authorization or remove it if end-to-end analysis disproves reachability.
-> Fault injection must prove policy-engine unavailability remains fail closed and any permitted LOW-risk
-> degraded result is truthfully marked before handoff for independent review.
+> **Independently review and squash-merge T-126 PR #37.** Require a comment beginning `REVIEW:` on the
+> final head after verifying policy/risk dependency failures remain `system_fail_closed` DENYs, their
+> evidence is marked degraded with no grant, healthy decisions alone record false, and the sixth
+> adversarial fault disables the real state reporter. After merge, claim T-127 from the merged base.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -199,6 +198,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-126 · Handed off PR #37 for independent review after CI run `33464386848` passed all 13 jobs on implementation head `cd1646e`. Authorization now uses the security module for healthy/fail-closed dependency state; policy/risk failures remain evidence-bearing DENYs and the ledger explicitly does not credit the still-unwired signed degraded-ALLOW path. Exact pre-fix `c744742` recorded the outage as healthy; the new sixth adversarial mutation flips the real reporter and is caught. Local proof: 484 focused unit/adversarial tests, 470 PostgreSQL-gate unit tests, 35/35 live PostgreSQL tests, 83.86% execution coverage, 6/6 adversarial faults, Ruff and `make check` green. No benchmark numbers claimed; H-7 does not fire because the change reports dependency health without changing authority semantics. Claim released and T-127 queued. · next: independent `REVIEW:` on final head and squash-merge PR #37, then claim T-127
 
 - 2026-09-01 · CODEX · T-126 · Wired authorization's healthy and dependency-failure evidence through `mizan_security.degraded`; policy/risk backend failures remain evidence-bearing `system_fail_closed` DENYs but now truthfully record `is_degraded=true`, the failed component, and no grant. ADR-003 Amendment F and SPEC V-27 distinguish dependency health from permission; the module ledger explicitly leaves the signed LOW-risk degraded-ALLOW path unwired rather than overclaiming it. Exact pre-fix `c744742` persisted `is_degraded:false, reason:none` under the new policy-backend fault test. Local proof: 484 focused unit/adversarial tests, 470 PostgreSQL-gate unit tests, 35/35 live PostgreSQL tests, 83.86% execution coverage, 6/6 adversarial faults, Ruff and `make check` green. The routine sequencer emitted a dirty-worktree artifact and it was removed; no benchmark numbers claimed. · next: commit/push implementation, let PR CI arbitrate, then complete review handoff
 
