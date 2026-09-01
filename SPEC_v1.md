@@ -46,7 +46,7 @@ ActionType:        read | write | financial_read | financial_write | communicate
                    export | delete | delegate
 AuthMethod:        oauth2_client_credentials | oidc | jwt_svid | mtls | workload_identity
 AuthStrength:      password | mfa | hardware | federated
-DegradedReason:    risk_engine_down | policy_cache_down | store_down | none
+DegradedReason:    risk_engine_down | policy_engine_down | policy_cache_down | store_down | none
 ```
 
 ---
@@ -522,8 +522,8 @@ The immutable authorization snapshot (PRD §13, §93). Written exactly once per 
       "type": "object", "additionalProperties": false,
       "required": ["is_degraded"],
       "properties": {
-        "is_degraded":   { "type": "boolean" },
-        "reason":        { "enum": ["risk_engine_down", "policy_cache_down", "store_down", "none"], "default": "none" },
+        "is_degraded":   { "type": "boolean", "description": "True whenever a required authorization dependency was unavailable, including a fail-closed DENY; it does not by itself mean the request was allowed." },
+        "reason":        { "enum": ["risk_engine_down", "policy_engine_down", "policy_cache_down", "store_down", "none"], "default": "none" },
         "grant_ref":     { "type": ["string", "null"], "maxLength": 256, "description": "Signed degraded-mode grant under which this decision was taken (ADR-003)" },
         "buffered_at":   { "oneOf": [{ "$ref": "common#/$defs/Timestamp" }, { "type": "null" }] }
       }
@@ -1860,6 +1860,7 @@ Cross-field constraints JSON Schema cannot express. Each is contract, each gets 
 | V-24 | Every identity token carries `kid`; it selects exactly one public key from deployment-pinned `MIZAN_IDENTITY_JWKS`, and the JOSE `alg` must equal that key's allowlisted algorithm. Missing, unknown/retired, duplicate, symmetric, private, or algorithm-confused keys fail closed. A token may never select a JWKS URL or trust root. | identity authentication |
 | V-25 | Every database evidence receipt reconciles to exactly one record in its receipt-bound immutable object: signatures and content versions verify, object membership is exact in both directions, and the reconstructed receipt stream is dense. A mismatch is checked by the managed drainer and makes `/health/ready` and `/readyz` return 503. Unpublished outbox rows remain governed by the publication-lag SLO and are not reconciliation mismatches. | outbox drainer + readiness |
 | V-26 | Every authorize, approval-mutation and execution-token request that would enter protected evaluation/mutation/minting consumes capacity from a bucket keyed by the authenticated tenant, protected route class and authoritative risk tier. Idempotent replay/reissue returns already-recorded state without consuming capacity. Exhaustion is 429 `rate_limit_exceeded`; limits and refusals are visible on the private metrics listener. | control-plane admission guard |
+| V-27 | A dependency-triggered `system_fail_closed` record has `degraded.is_degraded=true`, the named unavailable component, and a null `grant_ref`; a healthy evaluation alone records `is_degraded=false`. `degraded_grant` remains the distinct, grant-backed executable path. | authorization service / ADR writer |
 
 ---
 

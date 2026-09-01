@@ -40,7 +40,7 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | Key custody and published keyset | `keys.py`, `/v1/audit/keys` | shipped for `development` custody only; **no KMS/HSM backend exists** (B-18, T-102) |
 | Structured logs and `/metrics` | `observability.py`, `app.py` | shipped |
 | Mutual TLS and peer SPIFFE identity | `mtls.py`, `runtime.py` protocol class | shipped |
-| Degraded mode | `security/mizan_security/degraded.py` | **unwired** — `service.py:195` and `:266` write `is_degraded: False` as a literal and never consult it (T-109) |
+| Degraded state / signed LOW-risk allow gate | `security/mizan_security/degraded.py`, called by `service.py` | **shipped for truthful healthy/fail-closed state**; the signed LOW-risk degraded-ALLOW gate remains default-off and has no production caller |
 
 ## Security
 

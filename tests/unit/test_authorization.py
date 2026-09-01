@@ -121,6 +121,11 @@ def test_no_matching_policy_is_recorded_default_deny() -> None:
     assert repository.adr_documents[0]["decision_basis"] == "default_deny"
     assert repository.adr_documents[0]["resource"]["resource_owner"] == "core-banking"
     assert repository.adr_documents[0]["risk"]["level"] == "HIGH"
+    assert repository.adr_documents[0]["degraded"] == {
+        "is_degraded": False,
+        "reason": "none",
+        "grant_ref": None,
+    }
 
 
 def test_authorize_uses_the_registered_tool_tier_and_stops_before_evaluation() -> None:
@@ -389,6 +394,11 @@ def test_i8_risk_engine_failure_persists_system_fail_closed_deny() -> None:
     assert repository.adr_documents[0]["decision"] == "DENY"
     assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
     assert repository.adr_documents[0]["policies"] == []
+    assert repository.adr_documents[0]["degraded"] == {
+        "is_degraded": True,
+        "reason": "risk_engine_down",
+        "grant_ref": None,
+    }
     ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
 
 
@@ -403,7 +413,28 @@ def test_v15_policy_engine_failure_persists_system_fail_closed_deny() -> None:
     assert raised.value.status == 403
     assert raised.value.code == "authorization_failed_closed"
     assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
+    assert repository.adr_documents[0]["degraded"]["is_degraded"] is True
+    assert repository.adr_documents[0]["degraded"]["reason"] == "policy_engine_down"
     ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", repository.adr_documents[0])
+
+
+def test_policy_backend_failure_is_truthfully_marked_degraded_and_fail_closed() -> None:
+    _, template = service()
+    repository = FailingPolicyRepository(
+        agents=template.agents.values(), tools=template.tools.values()
+    )
+
+    with pytest.raises(Problem) as raised:
+        _service_with_repository(repository).authorize(identity(), context())
+
+    assert raised.value.code == "authorization_failed_closed"
+    assert repository.adr_documents[0]["decision"] == "DENY"
+    assert repository.adr_documents[0]["decision_basis"] == "system_fail_closed"
+    assert repository.adr_documents[0]["degraded"] == {
+        "is_degraded": True,
+        "reason": "policy_engine_down",
+        "grant_ref": None,
+    }
 
 
 def test_policy_compile_failure_inside_the_evaluator_records_system_fail_closed() -> None:

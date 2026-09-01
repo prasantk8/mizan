@@ -126,7 +126,7 @@ One row per active claim. A task is `IN_PROGRESS` **iff** it has a live row here
 
 | task_id | claimed_by | claim_token | claim_version | claimed_at | heartbeat_at | lease_expires_at | base_commit |
 |---|---|---|---|---|---|---|---|
-| T-126 | CODEX | d4135095-16f2-402e-b690-08e4bd2bcce1 | 1 | 2026-09-01T02:47:18Z | 2026-09-01T02:47:18Z | 2026-09-01T06:47:18Z | c7447426df287881eba07db1178ac9ee9f4c47fe |
+| T-126 | CODEX | d4135095-16f2-402e-b690-08e4bd2bcce1 | 1 | 2026-09-01T02:47:18Z | 2026-09-01T02:55:50Z | 2026-09-01T06:47:18Z | c7447426df287881eba07db1178ac9ee9f4c47fe |
 
 The expired T-092 row was cleared after observing claim version 1; it expired on 2026-08-27 and its work landed through PR #1/#26. Parallel lane branches are retired.
 
@@ -199,6 +199,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-01 · CODEX · T-126 · Wired authorization's healthy and dependency-failure evidence through `mizan_security.degraded`; policy/risk backend failures remain evidence-bearing `system_fail_closed` DENYs but now truthfully record `is_degraded=true`, the failed component, and no grant. ADR-003 Amendment F and SPEC V-27 distinguish dependency health from permission; the module ledger explicitly leaves the signed LOW-risk degraded-ALLOW path unwired rather than overclaiming it. Exact pre-fix `c744742` persisted `is_degraded:false, reason:none` under the new policy-backend fault test. Local proof: 484 focused unit/adversarial tests, 470 PostgreSQL-gate unit tests, 35/35 live PostgreSQL tests, 83.86% execution coverage, 6/6 adversarial faults, Ruff and `make check` green. The routine sequencer emitted a dirty-worktree artifact and it was removed; no benchmark numbers claimed. · next: commit/push implementation, let PR CI arbitrate, then complete review handoff
 
 - 2026-09-01 · CODEX · T-126 · Claimed from merged T-125 base `c744742`. PR #36 carried 13/13 green checks but no independent `REVIEW:` comment, recorded as a protocol exception rather than credited. Existing ADR-003/SPEC I-21/I-26 degraded code is substantive but absent from the authorization composition path, whose records always say `is_degraded: false`; scope is to resolve that contradiction with behavioral pre-fix proof and truthful fail-closed/degraded evidence. · next: open draft PR, reproduce the old dependency-failure output, then wire and fault-test the authorization path
 

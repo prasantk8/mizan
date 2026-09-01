@@ -194,3 +194,19 @@ store, and putting PostgreSQL on this admission path would contradict the breake
 budget. A deployment with multiple replicas therefore has the sum of their capacities and must
 divide a desired cluster budget among replicas. This amendment does not claim a global billing or
 abuse-prevention quota.
+
+## Amendment F — degraded state describes dependency health, not permission (T-126)
+
+**Date:** 2026-09-01 · **Trigger:** two-product pilot WS-1a · **Spec anchors:** SPEC V-27
+
+`ADR_Record.degraded` answers whether the authorization path lacked a required dependency while it
+made this decision. It is independent of whether the decision was executable. A policy-engine or
+risk-engine failure therefore records `is_degraded=true`, the named unavailable component, and a
+null `grant_ref` on the evidence-bearing `system_fail_closed` DENY. Only a fully healthy evaluation
+records `is_degraded=false` and `reason=none`.
+
+This does not make policy-engine failure eligible for degraded ALLOW. `decision_basis` carries that
+separate authority statement: `system_fail_closed` is a DENY with no grant, while
+`degraded_grant` requires the signed grant and WAL guarantees in Amendments A and B. Treating
+`is_degraded` as synonymous with fail-open was the source of the old literal false value and made
+the exact outage an operator needed to see look healthy in its signed evidence.
