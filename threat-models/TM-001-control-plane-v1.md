@@ -1,6 +1,6 @@
 # TM-001 — Mizan Control Plane, Threat Model v1
 
-**Status:** DRAFT — refreshed for T-127, awaiting explicit HUMAN ratification · **Date:** 2026-09-01
+**Status:** RATIFIED — founder ruling recorded for T-127 · **Date:** 2026-09-01
 **Scope:** the authorization path, the evidence plane, and the boundary between them, at `bc16436`
 **Companion documents:** `SPEC_v1.md` §6 (invariants), `docs/adr/` ADR-001..ADR-009,
 `docs/spec/EVIDENCE-BUNDLE-FORMAT.md`, `docs/product/FALSIFICATION_TESTS.md`,
@@ -296,22 +296,13 @@ boundaries harder to review. Owner: Security/Platform.
 
 ## 6. Ratification
 
-This remains a draft until the human owner records the three judgements below. T-127 refreshed engineering
-facts and recommendations; it does not turn those recommendations into founder decisions.
+**Founder ruling — 2026-09-01:** ratified T-127 items 1/2/3 as recommended.
 
-The owner is asked to ratify three things specifically, because each is a judgement rather than an
-engineering fact:
+1. **A-8 remains in the v1 adversary set.** Compelled or selective disclosure is in scope.
+2. **R-1 remains open.** Take the examiner/business question to a design partner before choosing a build
+   response. T-038/T-039 are partial submitted-history controls and are not proof against pre-chain omission.
+3. **The shipped object-store boundary and remaining infrastructure residual stay in TM-001.** TM-002 is
+   reserved for the Mizan↔Memtara seam; unshipped Redis/Kafka are not mixed into it.
 
-1. **The adversary list, particularly A-8.** If compelled selective disclosure is not in scope for v1, say so
-   explicitly and R-1 becomes a recorded accepted risk rather than an open question. Either answer is fine.
-   Silence is not.
-2. **R-1's disposition.** Whether to take its business form to a design partner before building, or to
-   commit to inclusion proofs (T-038) as the answer now.
-3. **R-7's disposition.** Whether the shipped object-store boundary stays in v1 and unshipped Redis/Kafka
-   remain an explicit infrastructure residual, rather than being mixed into the Memtara seam's TM-002.
-
-**T-127 recommendation:** retain A-8 in v1; keep R-1 open for a design-partner answer rather than treating
-T-038/T-039 as proof of pre-chain completeness; keep the object-store analysis and named infrastructure
-residual in TM-001 while reserving TM-002 for Memtara. Ratify by replacing this paragraph with a dated
-decision record, the way R-005 §9 was ratified. Do not ratify by silence, and do not ratify by approving a
-document nobody disagreed with — a threat model that produced no argument produced no information.
+This dated decision ratifies the refreshed model. The open residuals remain explicit engineering or product
+work; ratification records their accepted disposition and does not claim that they are closed.
