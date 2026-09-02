@@ -79,6 +79,17 @@ Estimates are man-days for one engineer of the named role, excluding review.
 
 ### WS-P1 · The demonstrable claim — make the sentence a recording, not a slogan
 
+> **Status 2026-09-02 — T-145 delivered; T-144 and T-146 not started.** The architecture note is
+> `docs/product/GOVERNED-PRIVATE-STACK.md` and the boundary skeleton is
+> `threat-models/TM-003-model-endpoint-boundary-v1.md`. Two notes for whoever takes T-144:
+>
+> * **TM-003 turns six of T-144's design choices into questions its PR must answer** (§6), and one of
+>   its controls is not a preference: a model action that gets **DENIED stays in the recording**. That
+>   is the counter to demo theatre and it is the control most likely to be dropped under pressure.
+> * **TM-002 was found stale while writing this** — it describes the Memtara seam as unbuilt, which
+>   stopped being true when PR #41 merged the day after it was written. Recorded in
+>   `threat-models/README.md`; a v2 revision is owed and is SE-lane work with founder ratification.
+
 | Task | Description | R / A / C | Days | Acceptance | Unlocks |
 |---|---|---|---:|---|---|
 | **T-144** | **Private-model reference demo.** A compose profile (sibling of `compose.test.yaml`) adds one container: an OpenAI-compatible local endpoint (llama.cpp server or vLLM) serving a pinned open-weight model (digest recorded), standing in for *the customer's model*. A scripted agent (sibling of `scripts/demo_walk.py`) plans with that model and attempts consequential tool calls through `integrations/mcp/mizan_mcp_gateway`; Mizan produces one ALLOW, one REQUIRE_APPROVAL → approved → executed once, one DENY; evidence exported; **both** verifiers PASS offline. The compose network is egress-isolated and a test asserts no external connection is attempted — that assertion *is* the "private" claim. Transcript committed **from a real run** with `worktree_clean: true` recorded; nightly CI job re-runs and diffs it | CP + PS / TL / SE, EV | 5–7 | New CI job `private-stack-demo` (nightly) green: boots the profile, runs the walk, diffs the transcript, asserts zero egress; README section "Run it on your own metal" | The sentence as a recording; Phase-3 conversations |
