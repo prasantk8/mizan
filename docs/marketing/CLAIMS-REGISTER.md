@@ -1,9 +1,16 @@
-# Claims register — the Mizan↔Memtara seam (UC-2)
+# Claims register
 
 **Owner:** Product Marketing · **Engineering signatory:** Tech Lead · **Issued:** 2026-09-02
-**Scope:** the two-product seam only (workplan T-133–T-138). Claims about Mizan's control plane,
-evidence plane and deployment posture live in `docs/product/MODULE_LEDGER.md` and are not restated
-here.
+**Last amended:** 2026-09-02 (T-141 — positioning hypothesis added as §4)
+
+**Scope.** Two parts, and they are not equal.
+
+* **Part A (§1–§3) — the Mizan↔Memtara seam** (workplan T-133–T-138). Cleared for use today.
+  Claims about Mizan's control plane, evidence plane and deployment posture live in
+  `docs/product/MODULE_LEDGER.md` and are not restated here.
+* **Part B (§4) — the private-stack positioning hypothesis** (workplan T-141). **Not cleared for any
+  external use.** It is registered before the work so that the words are auditable while they are
+  still cheap to withdraw.
 
 The commercial strategy's §11 review must be able to answer *"which product claim was challenged and
 what evidence supports it"* by naming a CI job. That is the only purpose of this file. A sentence is
@@ -14,6 +21,10 @@ show the gate. If you want to say something not in this table, it is not cleared
 rather than paraphrasing a neighbouring row.
 
 ---
+
+---
+
+# Part A — the seam (cleared)
 
 ## 1. Cleared — the seam
 
@@ -53,8 +64,64 @@ Say the whole cell, including the second sentence. Dropping the qualifier makes 
 | "Approve once, run for thirty days" (standing/delegated approval) | No such capability exists; `ExecutionLease` is the opposite. Founder-gated as T-139. |
 | Any mention of AIHOOTS as a shipping component | Retired; it is not a product (decision record §1). |
 
-## 4. Maintenance
+---
+
+# Part B — the positioning hypothesis (not cleared)
+
+## 4. The sentence, per word
+
+> **HYPOTHESIS — 2026-09-02.** *"Enterprise-grade, private, auditable AI for firms that can't afford
+> to get it wrong."*
+
+**This sentence has no cleared external use.** It is under evaluation by
+`docs/handoff/PRIVATE-STACK-POSITIONING-WORKPLAN.md`, tested by **F-T-7**, and ruled on by **T-149**
+on **2026-10-31** as Adopt / Adapt / Abandon. Three separate gates stand in front of it, and *all
+three* must clear before any part of it is said in public:
+
+1. **T-142 trademark ruling.** No public use of the sentence before counsel rules on the Mizan AI
+   (DIFC) collision. Internal codename only until then (risk R-1).
+2. **Per-word status below.** A word whose row says *not sayable* is not sayable inside the sentence
+   either. Truncating the sentence to its sayable words is permitted; implying the rest is not.
+3. **T-149 itself.** Adoption is a founder ruling in writing, not the absence of an objection.
+
+| Word | What it is permitted to mean **today** | Status | Gate that would fail if it stopped being true |
+|---|---|---|---|
+| **Auditable** | An auditor recomputes the decision record offline, with either of two independently written verifiers, against an externally timestamped anchor and write-once storage. | **Cleared** — this is the only word of the four that is | `offline-evidence-verifier`, `evidence-object-lock`, `adversarial-fault-injection` |
+| **Enterprise-grade** | Nothing yet. | **Not sayable** until Tier B (T-129–T-132) merges: clean-machine install performed by a stranger, restore drill, full-journey production gate, OIDC with step-up. Draft PR #40 is open, not merged | Will be `production-e2e` and the walkthrough document; neither exists today |
+| **Private** | *Deployment* privacy only: Mizan runs inside the customer's own perimeter, and it reports nothing to Mizan the company. Its only outbound connections are to three endpoints the operator configures — the customer's Vault, the customer's chosen timestamp authority, and the Memtara JWKS URL. None is a Mizan-operated service, and there is no telemetry, no phone-home and no inference path of any kind. | **Cleared for deployment privacy, with the qualifier in §5. Not sayable about data.** | `deployment-manifests`, `production-boot`, `vault-transit`. Nothing today asserts the *absence* of an outbound connection — that assertion is T-144's, and until it exists this row rests on reading the code, not on a gate |
+| **AI** | Only as the object of the sentence, never the subject: the customer's own model, governed by Mizan. Mizan supplies no model, hosts none, tunes none, and sees no inference telemetry. | **Not sayable until T-144** makes it a recording rather than an assertion. Even then it is *governed* AI, and the "we are not a model provider" answer travels with it | Will be `private-stack-demo` (nightly); does not exist today |
+
+**The load-bearing sentence for the whole row set:** three of the four words are promises about work
+that has not merged. Registering them now is not clearing them. If this table is ever read as
+permission, it has failed at its only job.
+
+## 5. What moves each row — and what does not
+
+| Row | The only thing that moves it | What explicitly does not move it |
+|---|---|---|
+| Enterprise-grade | T-129–T-132 merged and green | A successful demo; a prospect saying it feels enterprise-grade |
+| Private (to include data) | **T-146** — `security/mizan_security/redaction.py` wired into evidence export with adversarial tests proving redacted fields are absent while the chain still verifies, or deleted. See the finding below | Deployment privacy being real. They are different claims and the sentence does not distinguish them, which is precisely why the qualifier is mandatory |
+| AI | T-144's nightly `private-stack-demo`, transcript reproduced by CI from a clean tree | A model running on a laptop during a call |
+| The whole sentence | T-142's ruling **and** T-149's | Time passing without an objection |
+
+> **Finding, recorded 2026-09-02 while registering the "private" row (T-141).** The workplan describes
+> `security/mizan_security/redaction.py` as "229 lines, zero production callers". That is true and it
+> understates the gap. `EvidenceRepository.append_audit`
+> (`control-plane/mizan_control_plane/evidence.py:453`) — the method that *enforces* the DLP
+> attestation, the payload-hash commitment and the redaction manifest, failing closed with 503 on each
+> — has no production caller either. Its only caller in the tree is
+> `tests/integration/test_authorize_postgres.py`. So the redaction path is not merely unwired at the
+> producing end; the consuming end is unreached too, and **T-146's wire-or-delete decision is larger
+> than one module.** Until it is taken, "private" means deployment and nothing else.
+
+## 6. Maintenance
 
 Every PR that changes a row's backing code must change this file in the same change-set, exactly as
 `MODULE_LEDGER.md` requires. A claim whose gate is deleted is withdrawn the same day — the failure
 mode this file exists to prevent is a sentence that outlives its evidence.
+
+For Part B there is a second rule, because its rows have no gates yet: **a HYPOTHESIS row is
+withdrawn or promoted on its decision date, never renewed by silence.** On 2026-10-31, T-149 either
+promotes these rows into Part A with their gates named, rewrites them for the Adapt fallback
+(*"auditable AI operations"*), or deletes them. A row still marked HYPOTHESIS after that date is a
+defect in this file.

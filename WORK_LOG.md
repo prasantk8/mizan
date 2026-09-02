@@ -6,10 +6,16 @@
 
 ## Active Task
 
-**The two-product pilot programme is in WS-2 — the Mizan↔Memtara seam.** WS-0 and WS-1a are merged
-(T-120..T-128, PRs #30–#39). T-133 through T-138 are on branch `ws-2-memtara-seam` as one pull
-request, per the founder's instruction to take the whole workstream in a single PR. T-129..T-132
-(Tier B) remain open as draft PR #40.
+**WS-2 is merged (PR #41) and the programme's critical path has left this repository.** WS-0, WS-1a
+and WS-2 are merged (T-120..T-128, T-133..T-138; PRs #30–#39 and #41). The seam's remaining half is
+**M-01 and M-04 in `memtara-zkp`**, which is not checked out here. T-129..T-132 (Tier B) remain open
+as draft PR #40 and are currently in conflict with `main`.
+
+Work in this repository is therefore on the **private-stack positioning evaluation**
+(`docs/handoff/PRIVATE-STACK-POSITIONING-WORKPLAN.md`), which is explicitly a slack-lane programme:
+it freezes itself if the seam slips, and it is capped at 15 engineering man-days. **WS-P0 (T-141,
+T-142, T-143) is on branch `ws-p0-positioning-words`.** T-142 cannot be closed by engineering — its
+acceptance is a counsel ruling.
 
 ## Agent Queue
 
@@ -22,6 +28,9 @@ request, per the founder's instruction to take the whole workstream in a single 
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
 | T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | REVIEW |
 | T-128 | UI truth corrections: runtime-derived environment badge, exact product claims, counted event label, integrity-check label, and simulation terminology | CODEX | T-127 | REVIEW |
+| T-141 | Register the private-stack positioning sentence as a HYPOTHESIS, per word, with no cleared external use; "we are not a model provider" row in the catalogue | CLAUDE | T-138 | REVIEW |
+| T-142 | Trademark / brand ruling package: founder brief compiling the go/no-go list, the DIFC collision facts and T-140's four rename surfaces | CLAUDE | — | BLOCKED — brief written; acceptance is a counsel ruling, which is the founder's action |
+| T-143 | Adopt F-T-7 — "the private-stack message attracts the wrong buyer" — before the work, with owner, observable and decision date 2026-10-31 | CLAUDE | — | REVIEW |
 | T-133 | Memtara proof-token verification in Mizan: deployment-pinned issuer/JWKS, `jti` replay set, `x-memtara-proof` on `/v1/authorize` and via the SDK | CLAUDE | T-128 | REVIEW |
 | T-134 | Bind the verified proof into the decision: typed `mapped` projection, reference `require_suitability_proof` policy, `suitability_declined` DENY | CLAUDE | T-133 | REVIEW |
 | T-135 | One cross-anchored bundle: `external_proofs[]` in `ADR_Record` 1.3, bundle format 1.1, both verifiers check it, conformance corpus and CI gate | CLAUDE | T-134 | REVIEW |
@@ -181,11 +190,24 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Independently review and squash-merge PR #39 for T-128.** Confirm the five DOM truth tests reject
-> pre-fix `5a9d9a0`, the runtime badge cannot render `Production` without ready production-only
-> anchor-provider and mutual-TLS checks, and final-head CI is green. The reviewer must
-> leave a substantive `REVIEW:` comment. After merge, claim T-129 and identify the outside-build-team
-> walkthrough participant before treating its acceptance as complete.
+> **Founder: instruct counsel on T-142, and rank what follows.** The brief is written and the
+> standstill binds from today, but T-142's acceptance is a *ruling*, which only the founder can start.
+> Nothing else in the positioning plan is blocked by it — WS-P1's build is not, and the interviews are
+> not — but every **external** use of the sentence is.
+>
+> Then rank three lanes that no longer have an obvious order, because the seam's critical path has
+> left this repository:
+>
+> 1. **`memtara-zkp` M-01 and M-04** — the actual critical path, and the half that makes T-135's "one
+>    record, both chain heads" true. Not checked out here; it needs a working copy or another lane.
+> 2. **Tier B, draft PR #40 (T-129–T-132)** — CODEX's, and now **conflicting with `main`** after PR #41
+>    merged. It needs a rebase before it needs review. It is what gates the word "enterprise-grade".
+> 3. **WS-P1 T-144** — the private-model demo, 5–7 days, the only thing that makes "AI" sayable. The
+>    freeze rule says it pauses the moment the seam slips, so starting it is a bet that the seam holds.
+>
+> A reviewer should also leave an independent `REVIEW:` on the WS-P0 PR: it is documentation, but it is
+> documentation that decides what may be said to a customer, and it was written by the same lane that
+> wrote the tasks' status blocks.
 >
 > Standing rules unchanged, plus one added by R-006 V-7:
 >
@@ -212,6 +234,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-02 · CLAUDE · T-141..T-143 · WS-2 merged as PR #41, so the seam's critical path left this repository for `memtara-zkp` (M-01, M-04, not checked out here) and Tier B is CODEX's draft PR #40, currently conflicting. Took **WS-P0 of the private-stack positioning evaluation** — the slack-lane, 15-man-day-capped programme — as one PR, which departs from that plan's own one-task-one-PR rule; said so in the PR body rather than quietly. **T-143 first, deliberately:** F-T-7 is adopted *before* the words are registered and long before T-144 builds anything, per that file's rule that a falsification test written after the disappointment is a rationalisation. Its observable is two-pronged (≥ 5 variant-B model-hosting expectations, or audit-only sponsorship in ≥ half), it defines when an expectation counts (first raised unprompted, not after we correct it), and it states that **fewer than fifteen conversations is an unread test, not a pass** — the failure mode where a sentence is adopted by default. **T-141** registers the sentence as a HYPOTHESIS in a new Part B of the claims register, with Part A (the seam) explicitly separated so the file cannot be read as clearing it; three gates stand in front of any public use. The per-word table was **not** copied verbatim from the workplan as instructed, because one row of it was optimistic: the plan calls "private" *deployment-privacy real*, and the register instead names the three outbound endpoints that actually exist — Vault, the timestamp authority, the Memtara JWKS URL, all operator-configured, none Mizan-operated — because "private" and "makes no outbound connection" are different sentences and only the first is true today. The catalogue gains the "we are not a model provider — we govern yours" row, written as a permanent founder ruling rather than a current stage. **T-142** compiles the counsel brief with the four rename surfaces counted from the tree rather than repeated from the plan (`X-Mizan-Second-Approval` ×8, problem URIs ×12, 16 event types, the `mizan` MCP/policy key ×4, 56 test files), and states which of the four can never be applied retroactively — event types live inside signed evidence. Rule 10: **T-142 cannot be closed by engineering.** Its acceptance is a *ruling recorded as a dated note*; the brief exists, counsel has not been instructed, and no ruling has been written — it is queued BLOCKED, not DONE, and the standstill in its §5 binds from today regardless. Finding while registering the "private" row: the workplan's "`redaction.py` has zero production callers" is true and understates the gap — `EvidenceRepository.append_audit`, the method that *enforces* the redaction attestation and fails closed on it, has no production caller either (only `tests/integration/test_authorize_postgres.py`), so **T-146's wire-or-delete decision spans both ends of the path**. Documentation-only change: no runtime, schema, API, config, benchmark, approval, money, crypto, key or tenant-authority change. H-7 does not fire. · next: founder instructs counsel on T-142; then T-147's message kit (founder/PO time) or T-144's demo build, whichever the founder ranks first
 
 - 2026-09-02 · CLAUDE · T-133..T-138 · Resumed CODEX's uncommitted WS-2 working tree, rebased it onto `main` @ `c1ebb21` (ten merged commits it predated; resolved four conflicts and one real interaction — T-122 replaced `MIZAN_JWT_PUBLIC_KEY` with `MIZAN_IDENTITY_JWKS`), then audited every task against its stated acceptance and closed what the audits found. **The seam itself was sound; its proof was not.** Blocking defect: `evidence_export.py` still stamped `bundle_version: "1.0"` while every ADR became schema 1.3 carrying `external_proofs`, so **every bundle Mizan exported was MALFORMED to both its own verifiers** — the version is now adaptive. T-135's verification code had no fixture, no corpus case and no CI step: added `scripts/build_memtara_fixtures.py`, which re-signs three bundles from the inside out so a `proof_hash` tamper reaches the binding check instead of stopping at the manifest digest, plus four corpus cases and CI steps asserting each verifier's exit code **separately**. T-137's committed transcript was a hardcoded literal no run produced, gated by a test asserting a constant equals itself; the walk now records its own milestones and the fixture is regenerated from a fake-driven end-to-end run that goes red if a milestone is renamed, dropped or reordered. The organisation API key moved off the subprocess argv. T-133's signature guard — the one the seam rests on — had no test; added forged-key, swapped-claim, truncated-signature, `alg:none` and HS256-confusion cases. T-134's "decline and approval bundles diff only in decision fields" had zero implementation; now asserted with exempt sets read out of `service.py`. ADR-010 records the verified-attestation boundary SPEC §0 requires for the 1.2→1.3 bump. Local proof: 527 unit/adversarial/integration tests, 78 verifier-two tests, `compare_verifiers.py` PASS on 12 bundles, `validate_gate_inventory.py` PASS (bundles +4, verifier-two tests +9, fault categories +2), Ruff and `make check` green. Rule 10: three of four parallel agents died mid-task when the machine slept and their partial work was finished by hand; two UC-2 matrix rows could **not** be closed honestly (an expired proof is a 403 with no ADR, not the evidenced DENY the catalogue promised, and no shipped read policy exists) — the catalogue was corrected to match the system rather than the tests bent to match the catalogue. Filed **B-29**: the differential gate is narrowly weakened because the two verifiers disclose differently on late refusals. H-7 does not fire — no money, approval semantics, key management or tenant-authority change; the crypto added is verification of a third party's signature, and ADR-010 states what it does not establish. · next: independent `REVIEW:` on the WS-2 PR, then M-01/M-04 on the Memtara side
 

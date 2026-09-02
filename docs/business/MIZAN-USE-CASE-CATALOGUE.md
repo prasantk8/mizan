@@ -291,6 +291,7 @@ UC-7. Worth one discovery question in retail-credit conversations; not a pilot.
 
 | Ask | Answer |
 |---|---|
+| **A model — hosted, supplied, fine-tuned, or resold** | **We are not a model provider. We govern yours.** Mizan supplies no model, hosts none, tunes none, and never sees inference telemetry or training data. Your model runs where you choose, on your metal or your cloud account; Mizan sits at the action boundary and decides, before execution, whether what it asked for may happen — and evidences that. There is no GPU line on our price list and never will be: a founder ruling of 2026-09-02, recorded in `../handoff/PRIVATE-STACK-POSITIONING-WORKPLAN.md`, makes this permanent rather than a stage we are at. If a prospect wants a model, the honest answer is a referral, not a roadmap. |
 | "The three-product Trust Stack bundle" | Retired 2026-08-31. Mizan, with Memtara for UC-2. |
 | A runtime prompt-injection / PII proxy (the AIHOOTS shape) | Not our product. Keep the customer's AI firewall; its signal can become Mizan policy context later. |
 | "Approve once, let it run for 30 days" | Not built (T-139, 15–25 days, only if pilots demand it). What exists is the opposite: minutes-long, single-decision execution grants. |
