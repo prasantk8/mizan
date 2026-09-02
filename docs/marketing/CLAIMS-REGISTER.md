@@ -104,7 +104,7 @@ permission, it has failed at its only job.
 | Row | The only thing that moves it | What explicitly does not move it |
 |---|---|---|
 | Enterprise-grade | T-129–T-132 merged and green | A successful demo; a prospect saying it feels enterprise-grade |
-| Private (to include data) | **T-146** — `security/mizan_security/redaction.py` wired into evidence export with adversarial tests proving redacted fields are absent while the chain still verifies, or deleted. See the finding below | Deployment privacy being real. They are different claims and the sentence does not distinguish them, which is precisely why the qualifier is mandatory |
+| Private (to include data) | **T-146, and T-146 is blocked** — see the finding below. It is not the 2–3 day wire-or-delete its row describes: wiring needs the audit commitment key to have custody (T-054), which needs a founder amendment to ADR-004 G.1's ratified four key roles (**B-30**, H-7), and deleting would leave three ratified invariants unimplemented. **Assume this row does not move before the 2026-10-31 ruling** | Deployment privacy being real. They are different claims and the sentence does not distinguish them, which is precisely why the qualifier is mandatory |
 | AI | T-144's nightly `private-stack-demo`, transcript reproduced by CI from a clean tree | A model running on a laptop during a call |
 | The whole sentence | T-142's ruling **and** T-149's | Time passing without an objection |
 
@@ -117,6 +117,16 @@ permission, it has failed at its only job.
 > `tests/integration/test_authorize_postgres.py`. So the redaction path is not merely unwired at the
 > producing end; the consuming end is unreached too, and **T-146's wire-or-delete decision is larger
 > than one module.** Until it is taken, "private" means deployment and nothing else.
+
+> **Second finding, 2026-09-02, on taking T-146 up: it offers a choice neither half of which exists.**
+> *Wiring* requires the audit commitment key (`MIZAN_AUDIT_HMAC_KEY_REF`) to have custody, which is
+> T-054, filed a week earlier and still open — the key is not one of ADR-004 G.1's four ratified
+> `KeyRole`s, and the provider's `SigningKey` contract requires a `public_key()` that an HMAC key does
+> not have. That is a contract change to a ratified custody model, so it is **B-30**: H-7, a founder
+> ruling. *Deleting* would leave invariants **I-12, I-18 and I-19** and SPEC §2.5's required
+> `AuditTrail` members with no implementation — a §0 change-control decision, not a cleanup.
+> **Plan on the "private" row staying deployment-only through the decision date**, and do not let a
+> roadmap slide imply otherwise.
 
 ## 6. Maintenance
 
