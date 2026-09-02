@@ -101,6 +101,10 @@ class Settings:
     s3_secret_access_key: str = ""
     object_lock_retention_years: int = 7
     rate_limits_per_minute: tuple[int, int, int, int] = (60, 120, 240, 480)
+    # Memtara is a separately operated issuer. Both values are deployment-pinned; request
+    # material is never allowed to choose an issuer or a verification URL.
+    memtara_trusted_issuer: str = ""
+    memtara_jwks_url: str = ""
 
     @property
     def rate_limit_map(self) -> dict[str, int]:
@@ -271,6 +275,16 @@ class Settings:
         drain_tenants = tuple(
             item.strip() for item in environ.get("MIZAN_DRAIN_TENANTS", "").split(",") if item.strip()
         )
+        memtara_trusted_issuer = environ.get("MIZAN_MEMTARA_TRUSTED_ISSUER", "")
+        memtara_jwks_url = environ.get("MIZAN_MEMTARA_JWKS_URL", "")
+        if bool(memtara_trusted_issuer) != bool(memtara_jwks_url):
+            raise RuntimeError(
+                "MIZAN_MEMTARA_TRUSTED_ISSUER and MIZAN_MEMTARA_JWKS_URL must be set together"
+            )
+        if environment == "production" and memtara_jwks_url and not memtara_jwks_url.startswith(
+            "https://"
+        ):
+            production_problems.append("production requires an https:// MIZAN_MEMTARA_JWKS_URL")
         if production_problems:
             raise RuntimeError(
                 "production configuration is not usable:\n  - " + "\n  - ".join(production_problems)
@@ -360,6 +374,8 @@ class Settings:
             rate_limits_per_minute=parse_rate_limits(
                 environ.get("MIZAN_RATE_LIMITS_PER_MINUTE", "60,120,240,480")
             ),
+            memtara_trusted_issuer=memtara_trusted_issuer,
+            memtara_jwks_url=memtara_jwks_url,
         )
 
 

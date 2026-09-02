@@ -96,6 +96,13 @@ TOOLS = [
         classification="financial",
         bound=["/customer_id", "/amount"],
     ),
+    tool(
+        "tool_product-recommendation",
+        risk="HIGH",
+        action="communicate",
+        classification="financial",
+        bound=["/customer_id", "/product_isin", "/amount"],
+    ),
 ]
 
 AGENT_DOCUMENT = {
@@ -162,6 +169,41 @@ POLICIES = [
         ["tool_portfolio-rebalance"],
         "REQUIRE_APPROVAL",
         priority=200,
+        approval_requirements={
+            "quorum": 2,
+            "approver_roles": ["manager", "risk"],
+            "distinct_roles_required": True,
+            "expiry_seconds": 3600,
+            "rejection_mode": "veto",
+        },
+    ),
+    policy(
+        "pol_demo-suitability",
+        "Recommendations require a verified suitable Memtara proof and supervisor quorum",
+        ["tool_product-recommendation"],
+        "REQUIRE_APPROVAL",
+        priority=500,
+        conditions={
+            "all": [
+                {"field": "mapped.source", "op": "eq", "value": "memtara"},
+                {
+                    "field": "mapped.fields.circuit",
+                    "op": "eq",
+                    "value": "wealth_suitability",
+                },
+                {
+                    "field": "mapped.fields.predicate",
+                    "op": "eq",
+                    "value": "structured_product_suitable",
+                },
+                {"field": "mapped.fields.suitable", "op": "eq", "value": True},
+                {
+                    "field": "mapped.fields.product_isin",
+                    "op": "eq_field",
+                    "value": "tool.arguments.product_isin",
+                },
+            ]
+        },
         approval_requirements={
             "quorum": 2,
             "approver_roles": ["manager", "risk"],

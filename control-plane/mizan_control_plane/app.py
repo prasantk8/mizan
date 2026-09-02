@@ -45,6 +45,7 @@ from .observability import (
     annotate,
 )
 from .problems import Problem, problem_response
+from .proofs.memtara import MemtaraProofVerifier, ProofTokenError
 from .rate_limits import RateLimiter
 from .registry import RegistryRepository
 from .repository import PostgresAuthorizationRepository
@@ -64,6 +65,7 @@ def create_app(
     metrics: Metrics | None = None,
     tracer: Tracer | None = None,
     rate_limiter: RateLimiter | None = None,
+    memtara_verifier: MemtaraProofVerifier | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_environment()
     metrics = metrics or Metrics()
@@ -75,6 +77,10 @@ def create_app(
         settings.jwt_audience,
         settings.identity_jwks,
         settings.identity_token_max_ttl_seconds,
+    )
+    memtara_verifier = memtara_verifier or MemtaraProofVerifier(
+        settings.memtara_trusted_issuer or None,
+        settings.memtara_jwks_url or None,
     )
     authorization_repository = PostgresAuthorizationRepository(settings.database_url)
     registry_repository = RegistryRepository(settings.database_url)
@@ -125,9 +131,38 @@ def create_app(
 
     @app.post("/v1/authorize", response_model=AuthorizationResponse)
     def authorize(
-        context: EvaluationContext, token: str = Depends(bearer_token)
+        context: EvaluationContext,
+        token: str = Depends(bearer_token),
+        memtara_proof: Annotated[str | None, Header(alias="x-memtara-proof")] = None,
+        memtara_chain_head: Annotated[
+            str | None, Header(alias="x-memtara-chain-head")
+        ] = None,
     ) -> AuthorizationResponse:
-        return service.authorize(verifier.verify(token), context)
+        identity = verifier.verify(token)
+        if memtara_proof is None:
+            if memtara_chain_head is not None:
+                raise Problem(
+                    403,
+                    "invalid_memtara_proof",
+                    "A Memtara chain head was presented without a proof token",
+                )
+            if context.mapped is not None and context.mapped.source == "memtara":
+                # `mapped` is part of the public request model for other verified adapters. A
+                # caller cannot self-assert this reserved provenance and satisfy a proof policy.
+                context.mapped = None
+            return service.authorize(identity, context)
+        try:
+            proof = memtara_verifier.verify(
+                memtara_proof,
+                identity.tenant_id,
+                memtara_chain_head=memtara_chain_head,
+            )
+        except ProofTokenError as exc:
+            raise Problem(403, "invalid_memtara_proof", str(exc)) from exc
+        # A caller cannot blend asserted fields with signed ones. The typed projection replaces
+        # the whole mapped namespace, and neither compact token nor chain head reaches Cedar.
+        context.mapped = proof.mapped_input()
+        return service.authorize(identity, context, external_proof=proof.external_proof())
 
     def tenant_from_token(token: str = Depends(bearer_token)) -> str:
         tenant_id = verifier.verify_tenant(token)

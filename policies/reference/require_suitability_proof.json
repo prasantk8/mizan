@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.3",
+  "policy_id": "pol_require-suitability-proof",
+  "tenant_id": "tnt_example-bank",
+  "name": "Require a verified Memtara suitability proof",
+  "version": 1,
+  "status": "ACTIVE",
+  "author": "wealth-risk-policy-owner",
+  "approver": "wealth-compliance-approver",
+  "effective_from": "2026-09-02T00:00:00Z",
+  "applies_to": {
+    "tool_ids": [
+      "tool_product-recommendation"
+    ],
+    "action_types": [
+      "communicate"
+    ]
+  },
+  "conditions": {
+    "all": [
+      {
+        "field": "mapped.source",
+        "op": "eq",
+        "value": "memtara"
+      },
+      {
+        "field": "mapped.fields.circuit",
+        "op": "eq",
+        "value": "wealth_suitability"
+      },
+      {
+        "field": "mapped.fields.predicate",
+        "op": "eq",
+        "value": "structured_product_suitable"
+      },
+      {
+        "field": "mapped.fields.suitable",
+        "op": "eq",
+        "value": true
+      },
+      {
+        "field": "mapped.fields.product_isin",
+        "op": "eq_field",
+        "value": "tool.arguments.product_isin"
+      }
+    ]
+  },
+  "decision": "ALLOW",
+  "priority": 500,
+  "fail_open_allowed": false,
+  "execution_token_ttl_seconds": 300,
+  "compiled_ref": null,
+  "content_hash": "8f130e0fe84efb5be5b5464f89220c3b7722980b6ad9bfed87438c7ac22280dd",
+  "created_at": "2026-09-02T00:00:00Z"
+}

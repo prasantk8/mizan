@@ -253,6 +253,36 @@ ASN.1 type to the reader. The fixtures hold a Base64 `TimeStampResp` (RFC 3161 �
 `ContentInfo` token. Verifier-two accepts either, because guessing wrong here costs an
 implementer a day and the spec gave no way to know.
 
+## S-10 — what a *refusal* must additionally disclose is undefined. Surfaced by T-135. **Open.**
+
+The spec says what a verifier must decide. It does not say what a verifier must *say* when it
+decides against the bundle, and the two implementations answered that silence in opposite ways:
+`scripts/verify_evidence_export.py` raises at the first failure and emits a bare refusal
+(`derived_assurance: null`, `notes: []`); verifier-two collects every finding and appends its
+standing disclosures at the end of phase 5.
+
+For three years of this corpus that difference was invisible, because **every** non-VALID case
+failed early — `invalid-record-checksum` stops at the phase-3 digest and the three `malformed-*`
+cases stop at phase-2 or phase-4 grammar — and verifier-two never reached the code that would have
+said anything. The two agreed by accident.
+
+T-135's cross-anchored proofs are the first cases that fail *last*: an external proof is checked
+after the record chain, the receipts, the anchors and the assurance derivation. So
+`invalid-memtara-proof-binding` and the rootless `valid-memtara-proof` reach the end of phase 5
+with an assurance derived and disclosures attached — node reports both, python reports neither,
+on cases where both return the identical verdict for the identical reason.
+
+**Resolved, for now, by scoping the gate rather than either verifier.** `compare_verifiers.py`
+compares verdicts on every case, and compares `derived_assurance` and the disclosure set only on
+VALID and EXPIRED — the verdicts for which §5 gives those fields a meaning. Requiring one
+implementation's *reporting style* of the other is the single thing the T-062 seal exists to
+prevent, and the spec provides no rule to prefer either shape. B-24 already records the disclosure
+obligation as normatively unsettled.
+
+This is a genuine, if narrow, weakening of the differential gate and it is recorded as such rather
+than quietly absorbed. Closing it properly means either the spec stating what a refusal discloses,
+or one verifier changing shape — neither of which belongs in the change-set that discovered it.
+
 ---
 
 ## What the two implementations agree on

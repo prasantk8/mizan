@@ -104,6 +104,15 @@ jobs:
         run: uv run --frozen ruff check .
       - name: Run unit, invariant, and property tests
         run: uv run --frozen pytest -q tests/unit
+      # `tests/integration` is not collected anywhere by directory: the PostgreSQL modules run in
+      # `postgres-contract` from an explicit inventory, and Vault/Object Lock/production boot are
+      # each named by the job that provisions their dependency. T-136's MCP forwarding test needs
+      # none of that -- it drives a real MCP session over in-memory streams -- so it landed in a
+      # directory no job reads and had never executed in CI. Named here rather than switched to a
+      # directory sweep, because a sweep would drag the PostgreSQL modules into a job with no
+      # database and fail for a reason unrelated to the code under test.
+      - name: Run the in-process integration tests that need no external service
+        run: uv run --frozen pytest -q tests/integration/test_mcp_proof_forwarding.py
       - name: Run the identity verification key rotation drill
         run: uv run --frozen python scripts/identity_key_rotation_drill.py
       - name: Verify contract coverage references are collected
@@ -543,6 +552,53 @@ jobs:
             scripts/check_evidence_conformance.py
           sudo unshare --net -- .offline-verifier/bin/python \
             scripts/check_evidence_mutations.py
+      # Section 2.1's cross-anchored Memtara proofs. Both verifiers have carried this code since
+      # T-135 landed the format change and nothing in CI had ever run a single line of it: no
+      # fixture anywhere held an `external_proofs` member, and this job passed no
+      # `--memtara-trust-root`. The fixtures below are built and re-signed end to end by
+      # `scripts/build_memtara_fixtures.py`, so the tampered one reaches the proof-binding check
+      # instead of stopping at the manifest digest.
+      #
+      # Each verifier's exit status is asserted **separately** rather than only through
+      # `compare_verifiers.py`. The differential gate proves the two agree; it cannot prove they
+      # are both right, and two implementations that skipped the same check would agree perfectly.
+      - name: The Memtara trust root turns a proof-bearing bundle from CANNOT CHECK into VALID
+        run: |
+          bundle=tests/fixtures/conformance/valid-memtara-proof
+          root=tests/fixtures/conformance/memtara-trust-root.jwks.json
+          sudo unshare --net -- .offline-verifier/bin/python \
+            scripts/verify_evidence_export.py "$bundle" --memtara-trust-root "$root"
+          # The same bytes, no operator root. Section 2.1: Memtara keys MUST NOT come from the
+          # bundle, so an unevaluable proof is CANNOT CHECK (exit 2) and never INVALID.
+          if sudo unshare --net -- .offline-verifier/bin/python \
+              scripts/verify_evidence_export.py "$bundle"
+          then rootless_status=0; else rootless_status=$?; fi
+          test "$rootless_status" -eq 2 || {
+            echo "expected CANNOT CHECK (exit 2) without a Memtara root, got $rootless_status" >&2
+            exit 1
+          }
+      - name: A proof_hash the signed Memtara token does not state is INVALID in the reference verifier
+        run: |
+          bundle=tests/fixtures/conformance/invalid-memtara-proof-binding
+          root=tests/fixtures/conformance/memtara-trust-root.jwks.json
+          if sudo unshare --net -- .offline-verifier/bin/python \
+              scripts/verify_evidence_export.py "$bundle" --memtara-trust-root "$root"
+          then python_status=0; else python_status=$?; fi
+          test "$python_status" -eq 1 || {
+            echo "reference verifier: expected INVALID (exit 1), got $python_status" >&2
+            exit 1
+          }
+      - name: A record carrying external_proofs under a 1.0 manifest is MALFORMED
+        run: |
+          bundle=tests/fixtures/conformance/malformed-memtara-in-1.0
+          root=tests/fixtures/conformance/memtara-trust-root.jwks.json
+          if sudo unshare --net -- .offline-verifier/bin/python \
+              scripts/verify_evidence_export.py "$bundle" --memtara-trust-root "$root"
+          then malformed_status=0; else malformed_status=$?; fi
+          test "$malformed_status" -eq 3 || {
+            echo "expected MALFORMED (exit 3) for external_proofs under bundle 1.0, got $malformed_status" >&2
+            exit 1
+          }
       # `verifier-two/` has existed since T-062 and CI has never run it. It was written from the
       # specification alone, under a seal, precisely so its verdicts could be diffed against the
       # reference -- and until now that diff was a thing a human did once, by hand, and wrote up.
@@ -551,9 +607,27 @@ jobs:
         with:
           node-version: "22"
       - name: verifier-two's own suite
-        # 69 tests that CI has never run. `node --test` resolves its own test directory, so this
+        # A suite CI had never run at all. `node --test` resolves its own test directory, so this
         # runs from the package root exactly as its `npm test` script does.
         run: cd verifier-two && node --test
+      # The independent verifier's own exit statuses over the same Memtara fixtures. The
+      # reference verifier was asserted above; this is the other half of "each verifier
+      # separately", and it is a separate assertion from the differential gate below on purpose.
+      - name: verifier-two reaches all four Memtara verdicts on its own
+        run: |
+          root=tests/fixtures/conformance/memtara-trust-root.jwks.json
+          run_two() {
+            if sudo unshare --net -- node verifier-two/bin/mizan-verify-two.js "$@" >/dev/null
+            then echo 0; else echo $?; fi
+          }
+          status=$(run_two tests/fixtures/conformance/valid-memtara-proof --memtara-trust-root "$root")
+          test "$status" -eq 0 || { echo "verifier-two: expected VALID (0), got $status" >&2; exit 1; }
+          status=$(run_two tests/fixtures/conformance/valid-memtara-proof)
+          test "$status" -eq 2 || { echo "verifier-two: expected CANNOT CHECK (2), got $status" >&2; exit 1; }
+          status=$(run_two tests/fixtures/conformance/invalid-memtara-proof-binding --memtara-trust-root "$root")
+          test "$status" -eq 1 || { echo "verifier-two: expected INVALID (1), got $status" >&2; exit 1; }
+          status=$(run_two tests/fixtures/conformance/malformed-memtara-in-1.0 --memtara-trust-root "$root")
+          test "$status" -eq 3 || { echo "verifier-two: expected MALFORMED (3), got $status" >&2; exit 1; }
       - name: Both verifiers agree on every conformance bundle
         # Offline like every other check in this job: an auditor verifies a bundle with the
         # network off, and a comparison that needed the network would not be comparing what they

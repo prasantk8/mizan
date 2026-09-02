@@ -15,6 +15,7 @@
 | [ADR-007](ADR-007-approval-authority-epochs.md) | Approval Authority — Epochs, Dual Control & Rejection Semantics | ACCEPTED | R-003 independently controlled review epoch ratified and implemented |
 | [ADR-008](ADR-008-execution-token-binding.md) | Execution Token Binding & Long-Running Leases | ACCEPTED | + R-003 transient arguments and execution revalidation |
 | [ADR-009](ADR-009-operator-console-read-model.md) | Operator Console Read Model | DRAFT | Tenant-scoped exact dashboard aggregates and evidence-backed detail views |
+| [ADR-010](ADR-010-verified-external-attestation-boundary.md) | Verified External Attestation Boundary (the Memtara seam) | PROPOSED | Why a cryptographically verified third-party attestation may reach policy when ADR-006 says foreign data may not, and the three limits that buys |
 
 ADR-006/007/008 and the first amendments were written in response to the SPEC v1.0 baseline review — see [`docs/reviews/R-001-baseline-review-disposition.md`](../reviews/R-001-baseline-review-disposition.md). SPEC v1.2 and v1.3 amendments dispose of the later findings in [`docs/reviews/R-002-baseline-review-disposition.md`](../reviews/R-002-baseline-review-disposition.md) and [`docs/reviews/R-003-completion-blocker-disposition.md`](../reviews/R-003-completion-blocker-disposition.md).
 

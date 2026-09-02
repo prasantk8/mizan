@@ -87,6 +87,12 @@ def compile_condition(node: dict[str, Any]) -> str:
                 }
                 return f"(({presence}) && {target}.{decimal_methods[operator]}({_literal(value)}))"
             return f"(({presence}) && {target} {comparisons[operator]} {_literal(value)})"
+        if operator == "eq_field":
+            if not isinstance(value, str):
+                raise PolicyCompileError("eq_field requires a field path as its value")
+            other = _path(value)
+            other_presence = _present_expression(value)
+            return f"(({presence}) && ({other_presence}) && {target} == {other})"
         if operator in {"in", "not_in"}:
             if not isinstance(value, list):
                 raise PolicyCompileError(f"operator {operator} requires an array")

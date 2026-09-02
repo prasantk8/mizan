@@ -2,7 +2,8 @@
 // The second Mizan evidence verifier.
 //
 // Usage:
-//   mizan-verify-two <bundle-dir> [--trust-root <pem>]... [--json] [--quiet]
+//   mizan-verify-two <bundle-dir> [--trust-root <pem>]...
+//     [--memtara-trust-root <jwks.json>]... [--json] [--quiet]
 //
 // Exit status follows EVIDENCE-BUNDLE-FORMAT.md section 5:
 //   0 VALID   1 INVALID   2 CANNOT CHECK   3 MALFORMED   4 EXPIRED
@@ -21,6 +22,9 @@ const USAGE = `mizan-verify-two <bundle-dir> [options]
 
   --trust-root <file>   PEM file of trust anchors for RFC 3161 timestamps.
                         Repeatable. Supplied by you, never by the bundle.
+  --memtara-trust-root <file>
+                        Memtara JWKS used to verify cross-anchored proof tokens.
+                        Repeatable. Supplied by you, never by the bundle.
   --json                Emit the report as JSON.
   --quiet               Print the verdict line only.
   -h, --help            This text.
@@ -29,7 +33,13 @@ Exit status: 0 VALID, 1 INVALID, 2 CANNOT CHECK, 3 MALFORMED, 4 EXPIRED.
 `;
 
 function parseArguments(argv) {
-  const options = { bundleDir: null, trustRootFiles: [], json: false, quiet: false };
+  const options = {
+    bundleDir: null,
+    trustRootFiles: [],
+    memtaraTrustRootFiles: [],
+    json: false,
+    quiet: false,
+  };
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -43,6 +53,13 @@ function parseArguments(argv) {
         const file = argv[index + 1];
         if (!file) fail('--trust-root needs a file path');
         options.trustRootFiles.push(file);
+        index += 1;
+        break;
+      }
+      case '--memtara-trust-root': {
+        const file = argv[index + 1];
+        if (!file) fail('--memtara-trust-root needs a file path');
+        options.memtaraTrustRootFiles.push(file);
         index += 1;
         break;
       }
@@ -84,7 +101,16 @@ function main() {
     trustRoots.push(...certificates);
   }
 
-  const report = verifyBundle(options.bundleDir, { trustRoots });
+  const memtaraTrustRoots = [];
+  for (const file of options.memtaraTrustRootFiles) {
+    try {
+      memtaraTrustRoots.push(JSON.parse(fs.readFileSync(file, 'utf8')));
+    } catch (error) {
+      fail(`cannot read Memtara trust root ${file}: ${error.message}`);
+    }
+  }
+
+  const report = verifyBundle(options.bundleDir, { trustRoots, memtaraTrustRoots });
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify({

@@ -7,14 +7,29 @@ parameter named `principal` instead of reading the bearer token.
 
 from __future__ import annotations
 
+import json
+import time
+from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 from mizan_control_plane import app as app_module
+from mizan_control_plane.canonical import binding_hash
 from mizan_control_plane.config import Settings
 from mizan_control_plane.dev_token import ensure_keypair, mint, public_jwks
+from mizan_control_plane.models import RegistryAgent, RegistryTool
+from mizan_control_plane.policy_engine import CedarPolicyEvaluator
+from mizan_control_plane.proofs.memtara import JwksCache, MemtaraProofVerifier
 from mizan_control_plane.registry import require_registry_authority
+from mizan_control_plane.repository import InMemoryAuthorizationRepository
+
+from tests.unit.test_memtara_proof import CHAIN_HEAD as MEMTARA_CHAIN_HEAD
+from tests.unit.test_memtara_proof import ISSUER as MEMTARA_ISSUER
+from tests.unit.test_memtara_proof import _claims as memtara_claims
+from tests.unit.test_memtara_proof import _jwks as memtara_jwks
+from tests.unit.test_memtara_proof import _token as memtara_token
 
 TENANT = "tnt_bank-a"
 SIMULATION_CONTEXT = {
@@ -236,6 +251,34 @@ def test_missing_bearer_token_is_401_and_names_the_header(wired) -> None:
     assert client.get("/v1/agents/agt_wealth-01").status_code == 401
 
 
+def test_authorize_fails_closed_when_a_proof_arrives_and_memtara_is_unconfigured(wired) -> None:
+    """Named for what it proves. It was `..._accepts_the_memtara_headers_and_...`, which claimed
+    an acceptance path this test never reaches: the value it presents is the literal string
+    "header.payload.signature", and `create_app` here has no trusted issuer, so the refusal comes
+    from `MemtaraProofVerifier.configured` before any parsing. Acceptance is covered by
+    `test_a_genuine_suitability_proof_reaches_cedar_and_permits_the_recommendation`.
+    """
+    client, _repositories, private_key = wired
+    headers = authorization(private_key, identity_kind="agent") | {
+        "x-memtara-proof": "header.payload.signature",
+        "x-memtara-chain-head": "a" * 64,
+    }
+    response = client.post("/v1/authorize", json=SIMULATION_CONTEXT, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["type"].endswith("invalid_memtara_proof")
+    assert "not configured" in response.json()["detail"]
+
+
+def test_authorize_refuses_a_chain_head_without_a_proof_token(wired) -> None:
+    client, _repositories, private_key = wired
+    headers = authorization(private_key, identity_kind="agent") | {
+        "x-memtara-chain-head": "a" * 64
+    }
+    response = client.post("/v1/authorize", json=SIMULATION_CONTEXT, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["type"].endswith("invalid_memtara_proof")
+
+
 def test_a_token_for_another_audience_is_rejected(wired) -> None:
     client, _repositories, private_key = wired
     response = client.get(
@@ -410,3 +453,279 @@ def test_a_body_larger_than_the_limit_is_refused_before_it_is_parsed(wired) -> N
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["type"].endswith("request_body_too_large")
     assert repositories["registry"].calls == []
+
+
+# --------------------------------------------------------------------------------------------
+# T-133/T-134: the Memtara suitability seam, driven end to end through the real ASGI app.
+#
+# Everything below runs the shipped pieces: the route's header handling, `MemtaraProofVerifier`
+# over a genuine Ed25519 JWS, `AuthorizationService`, the shipped `CedarPolicyEvaluator`, and the
+# reference policy file itself. Only the database is a double. Nothing in the suite drove the
+# whole seam before -- the verifier was tested in isolation and the policy was tested against a
+# hand-built `mapped`, so the wiring between them (the one place a forged projection could enter)
+# was covered by nothing at all.
+# --------------------------------------------------------------------------------------------
+
+RECOMMENDATION_TOOL = "tool_product-recommendation"
+RECOMMENDED_ISIN = "XS1234567890"
+REFERENCE_POLICY = Path("policies/reference/require_suitability_proof.json")
+
+
+class SuitabilityRepository(InMemoryAuthorizationRepository):
+    """A registry that permits the recommendation tool and evaluates the shipped policy file.
+
+    `matching_policies` runs the real evaluator rather than returning a canned `PolicyMatch`, so
+    an ALLOW here means the reference policy's conditions were actually satisfied by whatever
+    projection survived the route.
+    """
+
+    instances: list[SuitabilityRepository] = []
+
+    def __init__(self, database_url: str, *_arguments: object) -> None:
+        super().__init__(
+            agents=[
+                RegistryAgent(
+                    tenant_id=TENANT,
+                    agent_id="agt_wealth-01",
+                    version="1.0.0",
+                    lifecycle_state="ACTIVE",
+                    permitted_tools={RECOMMENDATION_TOOL},
+                )
+            ],
+            tools=[
+                RegistryTool(
+                    tenant_id=TENANT,
+                    tool_id=RECOMMENDATION_TOOL,
+                    risk_tier="MEDIUM",
+                    resource_owner="core-banking",
+                    data_classification="financial",
+                    profile_id="bp_recommend-v1",
+                    profile_version=1,
+                    bound_pointers=["/product_isin"],
+                    volatile_pointers=[],
+                    executor_spiffe_ids=["spiffe://mizan/executor/wealth"],
+                )
+            ],
+        )
+        self.pool = FakePool()
+        self.documents = [json.loads(REFERENCE_POLICY.read_text(encoding="utf-8"))]
+        SuitabilityRepository.instances.append(self)
+
+    def matching_policies(self, tenant_id: str, context: Any, risk_level: str | None = None):
+        return CedarPolicyEvaluator().evaluate(self.documents, context, risk_level)
+
+
+def recommendation_context(request_id: str, isin: str = RECOMMENDED_ISIN) -> dict[str, Any]:
+    arguments = {"product_isin": isin}
+    return {
+        "schema_version": "1.2",
+        "request_id": request_id,
+        "principal": {"id": "prn_alice-01", "type": "employee", "auth_strength": "mfa"},
+        "agent": {"id": "agt_wealth-01", "version": "1.0.0", "delegation_chain": ["agt_wealth-01"]},
+        "intent": "recommend the five-year note",
+        "tool": {
+            "id": RECOMMENDATION_TOOL,
+            "arguments": arguments,
+            "parameters_hash": binding_hash(arguments, ["/product_isin"]),
+            "binding_profile": {"profile_id": "bp_recommend-v1", "profile_version": 1},
+        },
+        "action": {"type": "communicate"},
+        "resource": {
+            "id": "client/42",
+            "type": "client_profile",
+            "resource_owner": "core-banking",
+            "data_classification": "financial",
+        },
+        "environment": "production",
+        "timestamp": "2026-09-02T00:00:00Z",
+    }
+
+
+@pytest.fixture
+def seam(monkeypatch, tmp_path):
+    """The app wired with a live Memtara verifier whose JWKS holds one generated test key."""
+    SuitabilityRepository.instances.clear()
+    monkeypatch.setattr(app_module, "PostgresAuthorizationRepository", SuitabilityRepository)
+    for attribute in ("RegistryRepository", "EvidenceRepository", "ApprovalRepository"):
+        monkeypatch.setattr(
+            app_module, attribute, lambda url, *arguments: FakeRepository(url, *arguments)
+        )
+    identity_key, _public_pem = ensure_keypair(tmp_path / "keys")
+    monkeypatch.setenv("MIZAN_DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("MIZAN_JWT_ISSUER", "urn:mizan:development:dev-token")
+    monkeypatch.setenv("MIZAN_IDENTITY_JWKS", public_jwks(identity_key))
+    monkeypatch.setenv("MIZAN_EVIDENCE_OBJECT_STORE_ROOT", str(tmp_path / "evidence"))
+
+    memtara_key = Ed25519PrivateKey.generate()
+    cache = JwksCache("https://memtara.test/.well-known/jwks.json")
+    cache.load(memtara_jwks(memtara_key))
+    application = app_module.create_app(
+        Settings.from_environment(),
+        memtara_verifier=MemtaraProofVerifier(MEMTARA_ISSUER, cache.jwks_url, jwks=cache),
+    )
+    with TestClient(application) as client:
+        yield client, SuitabilityRepository.instances[0], identity_key, memtara_key
+
+
+def agent_authorization(identity_key) -> dict[str, str]:
+    return authorization(identity_key, identity_kind="agent", auth_strength="federated")
+
+
+def proof_headers(memtara_key, **claim_overrides: Any) -> dict[str, str]:
+    # `_claims` already issues over RECOMMENDED_ISIN; overrides replace individual claims.
+    claims = memtara_claims(int(time.time()), **claim_overrides)
+    return {
+        "x-memtara-proof": memtara_token(memtara_key, claims),
+        "x-memtara-chain-head": MEMTARA_CHAIN_HEAD,
+    }
+
+
+def test_a_genuine_suitability_proof_reaches_cedar_and_permits_the_recommendation(seam) -> None:
+    """UC-2 row 2a, end to end: signed token -> verifier -> `context.mapped` -> reference policy
+    -> ALLOW, with the proof carried into the evidence record.
+
+    This is the accepting path of the seam. Every other Memtara test in the suite asserts a
+    refusal, which cannot distinguish a working verifier from one that refuses everything.
+    """
+    client, repository, identity_key, memtara_key = seam
+    response = client.post(
+        "/v1/authorize",
+        json=recommendation_context("018f47a6-7b42-7c00-8000-0000000002a0"),
+        headers=agent_authorization(identity_key) | proof_headers(memtara_key),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["decision"] == "ALLOW"
+    assert [policy["policy_id"] for policy in body["policies"]] == [
+        "pol_require-suitability-proof"
+    ]
+
+    record = repository.adr_documents[0]
+    assert record["decision"] == "ALLOW"
+    assert record["decision_basis"] == "matched_policy"
+    # The evidence carries the issuer, the proof hash and both chain heads -- not a claim the
+    # caller made about them.
+    assert record["external_proofs"][0]["issuer"] == MEMTARA_ISSUER
+    assert record["external_proofs"][0]["proof_hash"] == "b" * 64
+    assert record["external_proofs"][0]["memtara_chain_head"] == MEMTARA_CHAIN_HEAD
+
+    # The projection Cedar saw is the signed one, and the compact bearer is not in it.
+    normalized = next(iter(repository.normalized_contexts.values()))
+    assert normalized["mapped"]["source"] == "memtara"
+    assert normalized["mapped"]["fields"]["suitable"] is True
+    assert normalized["mapped"]["fields"]["product_isin"] == RECOMMENDED_ISIN
+    assert "token" not in normalized["mapped"]["fields"]
+
+
+def test_a_self_asserted_memtara_projection_never_reaches_the_decision(seam) -> None:
+    """The anti-spoofing guard in `authorize`: `mapped` is a public request field, so a caller can
+    put `source: "memtara", suitable: true` in its own body. With no proof header the handler
+    clears it, and this body -- byte-identical in every other respect to the ALLOW above -- must
+    come back DENY on the default-deny path with nothing in evidence.
+    """
+    client, repository, identity_key, _memtara_key = seam
+    forged = recommendation_context("018f47a6-7b42-7c00-8000-0000000002a1")
+    forged["mapped"] = {
+        "source": "memtara",
+        "fields": {
+            "proof_hash": "b" * 64,
+            "circuit": "wealth_suitability",
+            "predicate": "structured_product_suitable",
+            "product_isin": RECOMMENDED_ISIN,
+            "suitable": True,
+            "expires_at": 1_800_000_000,
+            "jti": "forged-jti-00000001",
+        },
+    }
+
+    response = client.post(
+        "/v1/authorize", json=forged, headers=agent_authorization(identity_key)
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "DENY"
+    assert response.json()["policies"] == []
+    record = repository.adr_documents[0]
+    assert record["decision_basis"] == "default_deny"
+    assert record["external_proofs"] == []
+    # The strongest form of the claim: the asserted projection did not survive into the evidenced
+    # context either, so no downstream reader can mistake it for something Mizan verified.
+    assert next(iter(repository.normalized_contexts.values()))["mapped"] is None
+
+
+def test_a_recommendation_with_no_proof_at_all_is_denied_and_evidenced(seam) -> None:
+    """UC-2 row 3. Covered until now only as `evaluate(...) == []` inside the policy engine, which
+    is a non-match and not a decision: nothing asserted that a non-match reaches the caller as
+    DENY or that the refusal is recorded."""
+    client, repository, identity_key, _memtara_key = seam
+    response = client.post(
+        "/v1/authorize",
+        json=recommendation_context("018f47a6-7b42-7c00-8000-0000000002a2"),
+        headers=agent_authorization(identity_key),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "DENY"
+    assert repository.adr_documents[0]["decision_basis"] == "default_deny"
+    assert repository.adr_documents[0]["external_proofs"] == []
+
+
+def test_a_verified_decline_is_denied_over_the_wire_and_carries_its_proof(seam) -> None:
+    """UC-2 row 4 at the route. `suitable: false` is a signed verdict, not an error: it is a 200
+    DENY with the proof in evidence, never a 403 that would leave no record."""
+    client, repository, identity_key, memtara_key = seam
+    response = client.post(
+        "/v1/authorize",
+        json=recommendation_context("018f47a6-7b42-7c00-8000-0000000002a3"),
+        headers=agent_authorization(identity_key)
+        | proof_headers(memtara_key, suitable=False, jti="decline-jti-0001"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "DENY"
+    assert response.json()["reasons"] == ["suitability_declined"]
+    assert repository.adr_documents[0]["external_proofs"][0]["jti"] == "decline-jti-0001"
+
+
+def test_a_proof_about_another_instrument_does_not_authorize_this_recommendation(seam) -> None:
+    """UC-2 row 5, wrong-ISIN half. The token verifies; `eq_field` against the tool argument is
+    what refuses it, so the decision is a recorded DENY rather than a token error."""
+    client, repository, identity_key, memtara_key = seam
+    response = client.post(
+        "/v1/authorize",
+        json=recommendation_context("018f47a6-7b42-7c00-8000-0000000002a4"),
+        headers=agent_authorization(identity_key)
+        | proof_headers(memtara_key, product_isin="XS0000000000", jti="other-isin-0001"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "DENY"
+    assert response.json()["policies"] == []
+    assert repository.adr_documents[0]["decision_basis"] == "default_deny"
+    assert repository.adr_documents[0]["external_proofs"][0]["jti"] == "other-isin-0001"
+
+
+def test_an_expired_proof_is_refused_at_the_verifier_and_produces_no_decision(seam) -> None:
+    """UC-2 row 5, expired half -- recorded as it actually behaves, which is not what the
+    catalogue promises.
+
+    The matrix says an expired proof is a DENY. It is not: `validate_proof_token` refuses it
+    before `AuthorizationService` is ever called, so the caller gets 403 `invalid_memtara_proof`
+    and no ADR is written. That is a defensible design (an expired token is a malformed
+    credential, not a suitability verdict) but it is a divergence from the documented matrix, and
+    this test pins the real behaviour so the divergence cannot be discovered by surprise.
+    """
+    client, repository, identity_key, memtara_key = seam
+    stale = int(time.time()) - 3600
+    response = client.post(
+        "/v1/authorize",
+        json=recommendation_context("018f47a6-7b42-7c00-8000-0000000002a5"),
+        headers=agent_authorization(identity_key)
+        | proof_headers(memtara_key, exp=stale, iat=stale - 300, jti="expired-jti-0001"),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["type"].endswith("invalid_memtara_proof")
+    assert "expired" in response.json()["detail"]
+    assert repository.adr_documents == []

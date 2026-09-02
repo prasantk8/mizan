@@ -75,7 +75,10 @@ class AuthorizationService:
         self.rate_limiter = rate_limiter
 
     def authorize(
-        self, identity: AuthenticatedIdentity, context: EvaluationContext
+        self,
+        identity: AuthenticatedIdentity,
+        context: EvaluationContext,
+        external_proof: dict[str, str] | None = None,
     ) -> AuthorizationResponse:
         self._validate_identity_binding(identity, context)
         enriched = copy.deepcopy(context)
@@ -189,6 +192,18 @@ class AuthorizationService:
             decision = "DENY"
             reasons = [f"NOT_IMPLEMENTED: {exc.detail}"]
             constraints = None
+        if (
+            enriched.mapped is not None
+            and enriched.mapped.source == "memtara"
+            and enriched.mapped.fields.get("suitable") is False
+        ):
+            # A verified negative verdict is a normal, fully evidenced authorization outcome.
+            # It is not a malformed-token error and must never be overridden by an unrelated
+            # matching ALLOW policy.
+            decision = "DENY"
+            reasons = ["suitability_declined"]
+            constraints = None
+            winner = None
         now = datetime.now(UTC)
         decision_id = self._decision_id(identity.tenant_id, context.request_id)
         annotate(tenant_id=identity.tenant_id, decision_id=decision_id)
@@ -206,7 +221,13 @@ class AuthorizationService:
             degraded=DegradedState.healthy(),
         )
         adr = self._adr_document(
-            identity, enriched, response, context_hash, now, classification_source
+            identity,
+            enriched,
+            response,
+            context_hash,
+            now,
+            classification_source,
+            external_proof=external_proof,
         )
         persisted = PersistedDecision(
             decision_id=decision_id,
@@ -427,13 +448,15 @@ class AuthorizationService:
         now: datetime,
         classification_source: str,
         decision_basis: str | None = None,
+        external_proof: dict[str, str] | None = None,
     ) -> dict:
         decision_basis = decision_basis or (
             "matched_policy" if response.policies else "default_deny"
         )
         trace = current_trace() or TraceContext.begin()
         document = {
-            "schema_version": "1.2",
+            "schema_version": "1.3",
+            "external_proofs": [external_proof] if external_proof is not None else [],
             "decision_id": response.decision_id,
             "tenant_id": identity.tenant_id,
             # SPEC section 2 calls this the W3C traceparent trace-id, and until T-073 it was

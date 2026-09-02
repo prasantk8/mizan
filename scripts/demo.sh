@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 PORT="${MIZAN_DEMO_PORT:-8787}"
 KEY_DIR="${MIZAN_DEMO_KEY_DIR:-var/demo-keys}"
 STATE_DIR="var/demo"
+MODE="${1:-up}"
 OWNER_DSN="postgresql://mizan_owner:demo-only-mizan@127.0.0.1:55432/mizan"
 APP_DSN="postgresql://mizan_app:demo-only-mizan@127.0.0.1:55432/mizan"
 compose=(docker compose -f compose.yaml --profile demo -p mizan-demo)
@@ -21,7 +22,7 @@ DEMO_STREAM="tnt_demo-bank:adr:0"
 # leaving a drainer running against a database that has been deleted.
 PIDS=(control-plane drain attest)
 
-case "${1:-up}" in
+case "$MODE" in
 down)
   for name in "${PIDS[@]}"; do
     [ -f "$STATE_DIR/$name.pid" ] && kill "$(cat "$STATE_DIR/$name.pid")" 2>/dev/null || true
@@ -32,11 +33,19 @@ down)
   # beside a surviving store means the next run recomputes an anchor whose object already exists,
   # and `put_once` correctly refuses it as an immutable collision -- which is exactly how the
   # anchor cadence was found crashing the drain worker.
-  rm -rf "$EVIDENCE_DIR" "$BUNDLE_DIR" "$STATE_DIR/keyset.json"
+  rm -rf "$EVIDENCE_DIR" "$BUNDLE_DIR" "$STATE_DIR/keyset.json" \
+    "$STATE_DIR/memtara-jwks.json"
   echo "demo stopped; its volume and evidence store removed"
   exit 0
   ;;
 esac
+
+if [ "$MODE" = "memtara" ]; then
+  : "${MEMTARA_ORG_API_KEY:?set MEMTARA_ORG_API_KEY after the Memtara quickstart}"
+  : "${MEMTARA_USER_ID:?set MEMTARA_USER_ID after the Memtara quickstart}"
+  MEMTARA_URL="${MEMTARA_URL:-http://127.0.0.1:8080}"
+  MEMTARA_REPO="${MEMTARA_REPO:-../memtara-zkp}"
+fi
 
 mkdir -p "$STATE_DIR" "$KEY_DIR"
 "${compose[@]}" up -d --wait postgres-demo
@@ -70,6 +79,12 @@ runtime_environment=(
   "MIZAN_IDENTITY_JWKS=$(cat "$STATE_DIR/identity.jwks.json")"
   "MIZAN_EVIDENCE_OBJECT_STORE_ROOT=$EVIDENCE_DIR"
 )
+if [ "$MODE" = "memtara" ]; then
+  runtime_environment+=(
+    "MIZAN_MEMTARA_TRUSTED_ISSUER=${MEMTARA_URL%/}"
+    "MIZAN_MEMTARA_JWKS_URL=${MEMTARA_URL%/}/.well-known/jwks.json"
+  )
+fi
 
 env "${runtime_environment[@]}" \
   MIZAN_HTTP_PORT="$PORT" \
@@ -124,7 +139,14 @@ echo
 echo "GET /health/ready ->"
 "${curl_mtls[@]}" -w "\nHTTP %{http_code}\n" "$API_URL/health/ready"
 echo
-uv run python scripts/demo_walk.py --api-url "$API_URL" --key-dir "$KEY_DIR" --tls-dir "$TLS_DIR"
+if [ "$MODE" = "memtara" ]; then
+  uv run python scripts/demo_memtara_walk.py \
+    --api-url "$API_URL" --key-dir "$KEY_DIR" --tls-dir "$TLS_DIR" \
+    --memtara-repo "$MEMTARA_REPO" --memtara-url "$MEMTARA_URL" \
+    --memtara-org-api-key "$MEMTARA_ORG_API_KEY" --memtara-user-id "$MEMTARA_USER_ID"
+else
+  uv run python scripts/demo_walk.py --api-url "$API_URL" --key-dir "$KEY_DIR" --tls-dir "$TLS_DIR"
+fi
 
 # The evidence the run just produced, exported and then checked by the standalone verifier --
 # which imports no Mizan module and is the artifact an auditor would actually be handed.
@@ -146,7 +168,15 @@ uv run mizan-export-evidence \
   --database-url "$APP_DSN" --object-store "$EVIDENCE_DIR" --keyset "$STATE_DIR/keyset.json" \
   --tenant-id tnt_demo-bank --stream-id "$DEMO_STREAM" --output "$BUNDLE_DIR" \
   --allow-development-custody "make demo: local development keys, not evidence"
-uv run python scripts/verify_evidence_export.py "$BUNDLE_DIR"
+if [ "$MODE" = "memtara" ]; then
+  curl -fsS "${MEMTARA_URL%/}/.well-known/jwks.json" > "$STATE_DIR/memtara-jwks.json"
+  uv run python scripts/verify_evidence_export.py "$BUNDLE_DIR" \
+    --memtara-trust-root "$STATE_DIR/memtara-jwks.json"
+  node verifier-two/bin/mizan-verify-two.js "$BUNDLE_DIR" \
+    --memtara-trust-root "$STATE_DIR/memtara-jwks.json"
+else
+  uv run python scripts/verify_evidence_export.py "$BUNDLE_DIR"
+fi
 cat <<INFO
 
 Control plane:  $API_URL   (log: $STATE_DIR/control-plane.log)

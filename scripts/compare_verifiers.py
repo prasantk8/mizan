@@ -56,6 +56,30 @@ EXPECTED_LIMITATIONS = frozenset(
 
 # Verdicts for which "what this does not additionally prove" is a meaningful thing to say. A
 # MALFORMED document is not a bundle and an INVALID one failed its checks.
+#
+# This set also scopes the `derived_assurance` and disclosure comparisons, and T-135 is why. The
+# two implementations have different *shapes*: `verify_evidence_export.py` raises on the first
+# failure and emits a bare refusal document (`derived_assurance: null`, `notes: []`), while
+# `verifier-two` collects every finding and appends its disclosures at the end of phase 5. On a
+# bundle that fails early the two agree by accident -- node never reaches the code that would have
+# said anything. Every conformance case that existed before T-135 failed early, so the difference
+# had never been observed: `invalid-record-checksum` stops at the phase-3 digest, and the three
+# `malformed-*` cases stop at phase-2 or phase-4 grammar.
+#
+# The Memtara cases are the first that fail *last*. A cross-anchored proof is checked after the
+# record chain, the receipts, the anchors and the assurance derivation, so `invalid-memtara-proof-
+# binding` and the rootless `valid-memtara-proof` reach the end of phase 5 with an assurance
+# derived and the disclosures attached -- and node reports both while python reports neither.
+#
+# That is a reporting-shape difference, not a verdict difference: both verifiers return the same
+# verdict for the same reason, and section 5 does not say what a refusal must additionally
+# disclose (B-24 records that the disclosure obligation is not settled normatively anywhere). The
+# module docstring is emphatic that requiring one implementation's reporting style of the other is
+# the one thing the seal exists to prevent, and comparing a field that one implementation
+# deliberately does not populate below a passing verdict is exactly that. So these two fields are
+# compared only where the spec gives them a meaning: on a verdict that asserts every required
+# check passed. The verdict itself is still compared on every case, which is the claim that
+# matters, and a qualified verdict is still held to the full disclosure set.
 QUALIFIED_VERDICTS = frozenset({"VALID", "EXPIRED"})
 
 # Exit status is the verdict for both verifiers (verifier-two/README.md, and the same convention
@@ -88,7 +112,9 @@ def run(command: list[str], repository: Path) -> tuple[dict, str]:
     return document, ""
 
 
-def python_command(bundle: Path, roots: list[Path], repository: Path) -> list[str]:
+def python_command(
+    bundle: Path, roots: list[Path], memtara_roots: list[Path], repository: Path
+) -> list[str]:
     command = [
         sys.executable,
         str(repository / "scripts" / "verify_evidence_export.py"),
@@ -97,10 +123,14 @@ def python_command(bundle: Path, roots: list[Path], repository: Path) -> list[st
     ]
     for root in roots:
         command += ["--tsa-trust-anchor", str(root)]
+    for root in memtara_roots:
+        command += ["--memtara-trust-root", str(root)]
     return command
 
 
-def node_command(bundle: Path, roots: list[Path], repository: Path) -> list[str]:
+def node_command(
+    bundle: Path, roots: list[Path], memtara_roots: list[Path], repository: Path
+) -> list[str]:
     command = [
         "node",
         str(repository / "verifier-two" / "bin" / "mizan-verify-two.js"),
@@ -109,6 +139,8 @@ def node_command(bundle: Path, roots: list[Path], repository: Path) -> list[str]
     ]
     for root in roots:
         command += ["--trust-root", str(root)]
+    for root in memtara_roots:
+        command += ["--memtara-trust-root", str(root)]
     return command
 
 
@@ -126,10 +158,17 @@ def main(argv: list[str] | None = None) -> int:
         name = case["bundle"]
         bundle = corpus / name
         roots = [(corpus / root).resolve() for root in case.get("trust_roots", [])]
+        memtara_roots = [
+            (corpus / root).resolve() for root in case.get("memtara_trust_roots", [])
+        ]
         expected = case["verdict"]
 
-        python_document, python_error = run(python_command(bundle, roots, repository), repository)
-        node_document, node_error = run(node_command(bundle, roots, repository), repository)
+        python_document, python_error = run(
+            python_command(bundle, roots, memtara_roots, repository), repository
+        )
+        node_document, node_error = run(
+            node_command(bundle, roots, memtara_roots, repository), repository
+        )
         for who, error in (("python", python_error), ("node", node_error)):
             if error:
                 disagreements.append(f"{name}: {who} did not produce a usable verdict -- {error}")
@@ -157,7 +196,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"like this, which is why the corpus is checked too."
             )
             continue
-        if python_document.get("derived_assurance") != node_document.get("derived_assurance"):
+        qualified = python_verdict in QUALIFIED_VERDICTS
+        if qualified and python_document.get("derived_assurance") != node_document.get(
+            "derived_assurance"
+        ):
             disagreements.append(
                 f"{name}: derived assurance differs -- python "
                 f"{python_document.get('derived_assurance')!r}, node "
@@ -178,10 +220,14 @@ def main(argv: list[str] | None = None) -> int:
         node_limitations = {
             note for note in (node_document.get("notes") or []) if note in EXPECTED_LIMITATIONS
         }
-        required = EXPECTED_LIMITATIONS if python_verdict in QUALIFIED_VERDICTS else frozenset()
+        # Only on a qualified verdict, for the reason set out beside QUALIFIED_VERDICTS: below one,
+        # whether a verifier has anything to disclose is decided by how far it got before it
+        # stopped, and the two implementations stop in different places by design.
+        if not qualified:
+            continue
         for who, disclosed in (("python", python_limitations), ("node", node_limitations)):
-            missing = sorted(required - disclosed)
-            extra = sorted(disclosed - required)
+            missing = sorted(EXPECTED_LIMITATIONS - disclosed)
+            extra = sorted(disclosed - EXPECTED_LIMITATIONS)
             if missing:
                 disagreements.append(
                     f"{name}: {who} does not disclose {len(missing)} limitation(s) it should on "

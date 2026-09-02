@@ -1,0 +1,12 @@
+  Memtara proof          VERIFIED suitable=true
+  Memtara checkpoint     PINNED <hash>…
+  Mizan authorization    REQUIRE_APPROVAL (proof verified and ISIN bound)
+  approver queue         apr_<id> quorum=2
+  premature token        refused: approval_incomplete
+  approval vote          prn_ops-manager (manager) -> PENDING
+  approval vote          prn_risk-officer (risk) -> APPROVED
+  self-approval          refused: 409 (ADR-007)
+  execution token        issued once; asking again returns the same token
+  evidence receipt       published; execution admitted after <n> attempt(s)
+  execute                LEASED executor=spiffe://mizan-demo/executor/wealth
+  complete               EXECUTED

@@ -20,8 +20,10 @@ favourably: every row names the file that backs the claim, or says **none**.
 | **unwired** | code exists and **nothing in production calls it**. It cannot be relied on |
 | **none** | no code. The claim is a roadmap item |
 
-Last verified 2026-08-29 against `main`. This table is checked by hand; where a row says
-"unwired", it was confirmed by searching for callers outside `tests/`, not assumed.
+Last verified 2026-09-02 against the WS-2 branch, rebased on `main` @ c1ebb21 (T-120..T-128 merged;
+the cross-product section re-verified against the code in that branch, not against the plan). This
+table is checked by hand; where a row says "unwired", it was confirmed by searching for callers
+outside `tests/`, not assumed.
 
 ---
 
@@ -38,6 +40,9 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | RFC 3161 attestation | `attestation.py`, run by `attestation_runner.py` | shipped |
 | Lease expiry at rest | `execution.py::sweep_expired_leases`, run by `drain_worker.py` | shipped |
 | Key custody and published keyset | `keys.py`, `vault_transit.py`, `runtime.py`, `/v1/audit/keys` | shipped for development and production Vault Transit (`custody=kms`); the real-Vault CI gate verifies sign/rotate/history behaviour |
+| Durable immutable evidence store | `evidence.py::S3ObjectLockStore`, selected in `runtime.py`; `LocalImmutableObjectStore` remains the development analogue | shipped — Object Lock COMPLIANCE, retention default seven years, exercised live by CI job `evidence-object-lock` (T-104). The `evidence_export.py` CLI still reads the local store only |
+| Production mode boots | `app.py` readiness branch under `MIZAN_ENV=production` | shipped — CI job `production-boot` (T-101). A single full-journey production gate does **not** exist yet (workplan T-131) |
+| Identity-token key rotation | `auth.py` keyset with `kid` routing, `scripts/identity_key_rotation_drill.py` | shipped — overlap window and rotation drill (T-122) |
 | Structured logs and `/metrics` | `observability.py`, `app.py` | shipped |
 | Mutual TLS and peer SPIFFE identity | `mtls.py`, `runtime.py` protocol class | shipped |
 | Degraded state / signed LOW-risk allow gate | `security/mizan_security/degraded.py`, called by `service.py` | **shipped for truthful healthy/fail-closed state**; the signed LOW-risk degraded-ALLOW gate remains default-off and has no production caller |
@@ -58,8 +63,20 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 |---|---|---|
 | MCP governance gateway | `integrations/mcp/mizan_mcp_gateway/` (`server.py`, `governance.py`, `upstream.py`, …) | shipped |
 | External payload envelopes | `integrations/mizan_integrations/external_payload.py` | wired, unproven |
-| Memtara proof verification / evidence seam | none | **none** — TM-002 fixes the boundary, but T-133..T-138 have not shipped |
+| Memtara proof verification / evidence seam | see the Cross-product section below; TM-002 fixes the trust boundary | row-by-row there — this table must not answer the same claim twice |
 | Kafka, Redis, IAM, SIEM, workflow | none | **none**. Evidence leaves through `mizan.outbox` and the drain worker; there is no broker or SIEM delivery |
+
+## Cross-product (added 2026-08-31, per the two-product decision)
+
+| Claim | Backed by | Status |
+|---|---|---|
+| Mizan verifies a Memtara proof token (Ed25519 JWS against Memtara's JWKS) | `proofs/memtara.py`, called by the `/v1/authorize` header boundary in `app.py`; adversarial and route tests in `tests/unit/test_memtara_proof.py` and `test_app_routes.py` | **shipped, with one stated limit** — deployment-pinned issuer and JWKS, bounded token parsing, tenant-scoped `jti` replay refusal (T-133). The replay set is **per process** (`JtiReplaySet` is an in-memory dict): under multiple workers or replicas one `jti` is replayable once per process, so replay defence is not yet a deployment-wide guarantee. The JWKS is fetched once and never refreshed, so a Memtara key rotation is an outage until restart |
+| A Memtara proof gates a Mizan decision | Typed `MappedInput` projection in `proofs/memtara.py`; field-to-field Cedar binding in `policy_engine.py`; `policies/reference/require_suitability_proof.json`; policy and authorization tests | **shipped** — suitability decline is a normal evidence-bearing DENY (T-134) |
+| One evidence bundle carries the Mizan decision and the Memtara proof / chain head | `external_proofs[]` in `ADR_Record` 1.3 (`service.py`), inside the hashed body so the record hash, receipt and anchor commit it; bundle format 1.1 in `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` §2.1; both verifiers check grammar, signature and claim binding; corpus built by `scripts/build_memtara_fixtures.py` | **shipped** — CI job `offline-evidence-verifier` asserts VALID with the operator's Memtara keyset, CANNOT CHECK without it, INVALID on a re-signed `proof_hash` tamper and MALFORMED under a 1.0 manifest, **each verifier separately** (T-135). The chain head is recorded but not authenticated: current Memtara tokens do not sign it, so completeness of Memtara's history still needs M-04 |
+| The SDK and the MCP gateway carry a proof without reading it | `sdk/python/mizan/client.py` and `decorator.py` place the token on a header only, never in the JSON context; `integrations/mcp/mizan_mcp_gateway/server.py` forwards the client's `x-memtara-proof` metadata opaquely | **shipped** — the gateway performs no parse, log, or upstream forward of the token; the negative is asserted in `tests/unit/test_sdk.py` and `test_mcp_gateway.py` (T-136) |
+| One command runs the whole two-product journey, with a backup transcript | `scripts/demo_memtara_walk.py` behind `make demo-memtara`, wrapped by `scripts/demo.sh` for the export and both verifiers; `tests/fixtures/demo_memtara/transcript.txt` | **shipped** — the transcript is a recording of a real journey, re-derived against fake Memtara and Mizan edges on every run and compared, so a renamed, reordered or dropped milestone goes red (T-137). The live run needs a running Memtara from its own quickstart; only the walk is recorded, not the export and verifier steps around it |
+| Mizan delivers a `decision_id` to AIHOOTS | none, and none planned | **retired** — AIHOOTS is not a product (decision record §1) |
+| Delegated / standing approvals (“approve once, run for 30 days”) | none; `ExecutionLease` is the opposite (single decision, minutes) and approvals are `UNIQUE (tenant_id, decision_id)` | **none** — workplan T-139, founder-gated |
 
 ## SDK and surfaces
 

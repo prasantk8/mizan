@@ -1,4 +1,4 @@
-.PHONY: check validate-baseline validate-ui-contract validate-ui-truth validate-vulnerability-allowlist test-postgres demo demo-down benchmark-policy benchmark-sequencer benchmark-chain
+.PHONY: check validate-baseline validate-ui-contract validate-ui-truth validate-vulnerability-allowlist test-postgres demo demo-memtara demo-down benchmark-policy benchmark-sequencer benchmark-chain
 
 check: validate-baseline validate-ui-contract validate-ui-truth validate-vulnerability-allowlist
 
@@ -19,6 +19,9 @@ test-postgres:
 
 demo:
 	bash scripts/demo.sh up
+
+demo-memtara:
+	bash scripts/demo.sh memtara
 
 demo-down:
 	bash scripts/demo.sh down
