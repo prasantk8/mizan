@@ -189,8 +189,14 @@ def export_evidence_bundle(
         "keys.json": keys,
     }
     file_hashes = {name: _write(target / name, value) for name, value in documents.items()}
+    # Adaptive, the way every format bump here has been: a bundle declares the lowest version
+    # that can describe what it actually contains. `external_proofs` exists only in bundle 1.1,
+    # and both offline verifiers refuse a record carrying it under a 1.0 manifest -- so a bundle
+    # with proofs must say 1.1. A bundle without them says 1.0 and stays verifiable by a
+    # verifier that only ever learned 1.0, which is the whole point of not bumping uniformly.
+    bundle_version = "1.1" if any("external_proofs" in record for record in records) else "1.0"
     manifest = {
-        "bundle_version": "1.0",
+        "bundle_version": bundle_version,
         "canonicalization": "RFC8785",
         "hash_algorithm": "SHA-256",
         "tenant_id": tenant_id,

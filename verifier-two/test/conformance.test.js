@@ -18,10 +18,26 @@ function rootsFor(testCase) {
   );
 }
 
+// Section 2.1's Memtara roots are a second, independent operator input: RFC 8037 JWK Sets, never
+// PEM certificates and never bundle members. Reading only `trust_roots` here made this suite
+// disagree with `scripts/compare_verifiers.py` on any proof-bearing case -- that gate passes the
+// JWKS through, this one silently did not, so the same bundle would be CANNOT CHECK on one side
+// and VALID on the other and the corpus would be describing two different questions.
+function memtaraRootsFor(testCase) {
+  return (testCase.memtara_trust_roots ?? []).map((relative) =>
+    JSON.parse(fs.readFileSync(path.resolve(CONFORMANCE, relative), 'utf8')),
+  );
+}
+
 for (const testCase of cases) {
-  test(`conformance: ${testCase.bundle} is ${testCase.verdict}`, () => {
+  // The corpus lists one bundle twice, with and without its Memtara root, because "the same bytes
+  // and a different operator environment" is the claim being made. The root count keeps the two
+  // test names distinct.
+  const roots = (testCase.memtara_trust_roots ?? []).length + testCase.trust_roots.length;
+  test(`conformance: ${testCase.bundle} with ${roots} operator root(s) is ${testCase.verdict}`, () => {
     const report = verifyBundle(path.join(CONFORMANCE, testCase.bundle), {
       trustRoots: rootsFor(testCase),
+      memtaraTrustRoots: memtaraRootsFor(testCase),
     });
     assert.equal(
       report.verdict,
@@ -81,4 +97,58 @@ test('the same bundle becomes VALID once its operator supplies the roots', () =>
   const report = verifyBundle(path.join(CONFORMANCE, 'valid-public'), { trustRoots: rootsFor(publicCase) });
   assert.equal(report.verdict, VERDICT.VALID);
   assert.equal(report.derivedAssurance, 'rfc3161');
+});
+
+const MEMTARA_JWKS = JSON.parse(
+  fs.readFileSync(path.join(CONFORMANCE, 'memtara-trust-root.jwks.json'), 'utf8'),
+);
+
+test('section 2.1: a Memtara proof without an operator JWKS is CANNOT CHECK, not INVALID', () => {
+  // Same distinction as the RFC 3161 case above, and it has to be made separately because it is
+  // a separate root: "we hold no key for this issuer" is not "this token is forged".
+  const report = verifyBundle(path.join(CONFORMANCE, 'valid-memtara-proof'));
+  assert.equal(report.verdict, VERDICT.CANNOT_CHECK);
+  assert.equal(report.exitStatus, 2);
+  assert.ok(
+    report.of(VERDICT.CANNOT_CHECK).some((f) => /memtara-trust-root/.test(f.message)),
+    'the reason must name the missing Memtara root',
+  );
+  assert.equal(report.of(VERDICT.INVALID).length, 0);
+});
+
+test('section 2.1: a proof_hash the signed token does not state is INVALID', () => {
+  // The fixture is re-signed end to end by scripts/build_memtara_fixtures.py: chain, receipts,
+  // anchor and manifest digests all commit the tampered value. If this ever reports MALFORMED or
+  // a checksum mismatch, the generator stopped reaching the binding check and the case is vacuous.
+  const report = verifyBundle(path.join(CONFORMANCE, 'invalid-memtara-proof-binding'), {
+    memtaraTrustRoots: [MEMTARA_JWKS],
+  });
+  assert.equal(report.verdict, VERDICT.INVALID);
+  assert.equal(report.of(VERDICT.MALFORMED).length, 0, 'a re-signed tamper is evidence, not grammar');
+  assert.ok(
+    report
+      .of(VERDICT.INVALID)
+      .every((f) => /does not match signed Memtara claim proof_hash/.test(f.message)),
+    `some other check failed first: ${JSON.stringify(report.findings)}`,
+  );
+});
+
+test('section 2.1: an expired Memtara token is still VALID, because history is not re-dated', () => {
+  // The committed tokens carry an `exp` in 2026-08 and always will. Section 2.1: expiry governed
+  // whether Mizan could accept the token at authorization time; the bundle proves afterwards which
+  // signed token the immutable ADR used. A verifier that compared `exp` to its own clock would
+  // turn every archived bundle INVALID on a date nobody chose.
+  const claims = JSON.parse(
+    Buffer.from(
+      JSON.parse(
+        fs.readFileSync(path.join(CONFORMANCE, 'valid-memtara-proof/records.json'), 'utf8'),
+      )[0].external_proofs[0].token.split('.')[1],
+      'base64url',
+    ).toString('utf8'),
+  );
+  assert.ok(claims.exp * 1000 < Date.now(), 'the fixture token must already be expired');
+  const report = verifyBundle(path.join(CONFORMANCE, 'valid-memtara-proof'), {
+    memtaraTrustRoots: [MEMTARA_JWKS],
+  });
+  assert.equal(report.verdict, VERDICT.VALID);
 });

@@ -81,8 +81,16 @@ class GatewayHandlers:
     async def call_tool(self, params: types.CallToolRequestParams) -> types.CallToolResult:
         arguments = dict(params.arguments or {})
         intent = _intent(params, arguments)
+        proof_token = _proof_token(params)
+        memtara_chain_head = _memtara_chain_head(params)
         verdict = await anyio.to_thread.run_sync(
-            lambda: self.governor.authorize(params.name, arguments, intent=intent)
+            lambda: self.governor.authorize(
+                params.name,
+                arguments,
+                intent=intent,
+                proof_token=proof_token,
+                memtara_chain_head=memtara_chain_head,
+            )
         )
         if isinstance(verdict, Refusal):
             LOGGER.info("refused %s: %s", params.name, verdict.reason_class)
@@ -139,6 +147,20 @@ def _intent(params: types.CallToolRequestParams, arguments: dict[str, Any]) -> s
     if isinstance(stated, str) and stated.strip():
         return stated.strip()[:120]
     return f"MCP tools/call {params.name}"[:120]
+
+
+def _proof_token(params: types.CallToolRequestParams) -> str | None:
+    """Carry the MCP client's proof metadata without reading or interpreting the token."""
+    meta = params.meta or {}
+    token = meta.get("x-memtara-proof") if isinstance(meta, dict) else None
+    return token if isinstance(token, str) else None
+
+
+def _memtara_chain_head(params: types.CallToolRequestParams) -> str | None:
+    """Carry the MCP client's chain-head metadata without reading or interpreting it."""
+    meta = params.meta or {}
+    chain_head = meta.get("x-memtara-chain-head") if isinstance(meta, dict) else None
+    return chain_head if isinstance(chain_head, str) else None
 
 
 def _hashable(result: types.CallToolResult) -> Any:

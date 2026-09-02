@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -10,6 +12,7 @@ from mizan_control_plane.canonical import binding_hash, canonical_hash
 from mizan_control_plane.models import (
     AuthenticatedIdentity,
     EvaluationContext,
+    MappedInput,
     PolicyMatch,
     RegistryAgent,
     RegistryTool,
@@ -145,6 +148,47 @@ def test_authorize_uses_the_registered_tool_tier_and_stops_before_evaluation() -
     assert refused.value.code == "rate_limit_exceeded"
     assert len(repository.adr_documents) == 3
 
+
+
+def test_verified_negative_suitability_is_a_normal_evidenced_decline() -> None:
+    subject, repository = service()
+    repository.policies = [
+        PolicyMatch(
+            policy_id="pol_unrelated-allow",
+            version=1,
+            content_hash="a" * 64,
+            decision="ALLOW",
+            priority=100,
+        )
+    ]
+    request = context()
+    request.mapped = MappedInput.model_validate({
+        "source": "memtara",
+        "fields": {
+            "proof_hash": "b" * 64,
+            "circuit": "wealth_suitability",
+            "predicate": "structured_product_suitable",
+            "product_isin": "XS1234567890",
+            "suitable": False,
+            "expires_at": 1_800_000_000,
+            "jti": "proof-jti-00000001",
+        },
+    })
+    external_proof = {
+        "issuer": "https://api.memtara.test",
+        "proof_hash": "b" * 64,
+        "jti": "proof-jti-00000001",
+        "memtara_chain_head": "c" * 64,
+        "token": "header.payload.signature",
+    }
+
+    response = subject.authorize(identity(), request, external_proof=external_proof)
+
+    assert response.decision == "DENY"
+    assert response.reasons == ["suitability_declined"]
+    assert repository.adr_documents[0]["decision"] == "DENY"
+    assert repository.adr_documents[0]["reasons"] == ["suitability_declined"]
+    assert repository.adr_documents[0]["external_proofs"] == [external_proof]
 
 
 @pytest.mark.parametrize(
@@ -591,3 +635,240 @@ def test_a_require_approval_policy_without_requirements_is_rejected_not_recorded
         subject.authorize(identity(), context())
     assert raised.value.code == "approval_requirements_missing"
     assert repository.adr_documents == []
+
+
+# --------------------------------------------------------------------------------------------
+# T-134: the suitability decline is an ordinary decision, evidenced exactly like the approval.
+#
+# These run the shipped `CedarPolicyEvaluator` over the shipped reference policy file, so an
+# approval here means the policy in `policies/reference/` actually matched.
+# --------------------------------------------------------------------------------------------
+
+RECOMMENDATION_TOOL = "tool_product-recommendation"
+RECOMMENDED_ISIN = "XS1234567890"
+REFERENCE_SUITABILITY_POLICY = Path("policies/reference/require_suitability_proof.json")
+
+# Read out of `AuthorizationService._adr_document` and `_combine` in service.py, not copied from
+# any documented list. These are the only ADR keys a decision outcome is allowed to move.
+DECISION_FIELDS = frozenset({"decision", "reasons", "decision_basis", "policies"})
+# Fields that are a function of *which record this is*, not of what was decided: identifiers,
+# the clock, the request digest and the hash chain the repository assigns on write.
+PER_RECORD_FIELDS = frozenset(
+    {
+        "decision_id",  # sha256 over tenant_id + request_id
+        "trace_id",  # the ambient trace, or one minted for this decision
+        "span_id",
+        "timestamp",  # datetime.now(UTC)
+        "context_hash",  # over the context, which carries request_id
+        "sequence_number",  # assigned by the evidence chain
+        "prev_hash",
+        "record_hash",
+    }
+)
+# The proof carrier itself: two decisions are two different tokens. Checked structurally below
+# rather than waved through.
+PROOF_FIELDS = frozenset({"external_proofs"})
+
+
+def suitability_context(request_id: str, *, suitable: bool, amount: int = 12_500):
+    arguments = {"product_isin": RECOMMENDED_ISIN}
+    request = EvaluationContext.model_validate(
+        {
+            "schema_version": "1.2",
+            "request_id": request_id,
+            "tenant_id": TENANT,
+            "principal": {
+                "id": "prn_alice-01",
+                "type": "employee",
+                "role": "advisor",
+                "auth_strength": "mfa",
+            },
+            "agent": {"id": AGENT, "version": "1.0.0", "delegation_chain": [AGENT]},
+            "intent": "recommend the five-year note",
+            "tool": {
+                "id": RECOMMENDATION_TOOL,
+                "arguments": arguments,
+                "parameters_hash": binding_hash(arguments, ["/product_isin"]),
+                "binding_profile": {"profile_id": "bp_recommend-v1", "profile_version": 1},
+            },
+            "action": {"type": "communicate"},
+            "resource": {
+                "id": "client/42",
+                "type": "client_profile",
+                "resource_owner": "core-banking",
+                "data_classification": "financial",
+            },
+            "business": {"transaction_value": {"amount": amount, "currency": "AED"}},
+            "environment": "production",
+            "timestamp": "2026-09-02T00:00:00Z",
+        }
+    )
+    request.mapped = MappedInput.model_validate(
+        {
+            "source": "memtara",
+            "fields": {
+                "proof_hash": "b" * 64,
+                "circuit": "wealth_suitability",
+                "predicate": "structured_product_suitable",
+                "product_isin": RECOMMENDED_ISIN,
+                "suitable": suitable,
+                "expires_at": 1_800_000_000,
+                "jti": "proof-jti-00000001",
+            },
+        }
+    )
+    return request
+
+
+def suitability_proof(jti: str, proof_hash: str) -> dict[str, str]:
+    return {
+        "issuer": "https://api.memtara.test",
+        "proof_hash": proof_hash,
+        "jti": jti,
+        "memtara_chain_head": "c" * 64,
+        "token": f"header.{jti}.signature",
+    }
+
+
+def suitability_service() -> tuple[AuthorizationService, CedarBackedRepository]:
+    repository = CedarBackedRepository(
+        agents=[
+            RegistryAgent(
+                tenant_id=TENANT,
+                agent_id=AGENT,
+                version="1.0.0",
+                lifecycle_state="ACTIVE",
+                permitted_tools={RECOMMENDATION_TOOL},
+            )
+        ],
+        tools=[
+            RegistryTool(
+                tenant_id=TENANT,
+                tool_id=RECOMMENDATION_TOOL,
+                risk_tier="MEDIUM",
+                resource_owner="core-banking",
+                data_classification="financial",
+                profile_id="bp_recommend-v1",
+                profile_version=1,
+                bound_pointers=["/product_isin"],
+                volatile_pointers=[],
+                executor_spiffe_ids=["spiffe://mizan/executor/wealth"],
+            )
+        ],
+    )
+    repository.documents = [
+        json.loads(REFERENCE_SUITABILITY_POLICY.read_text(encoding="utf-8"))
+    ]
+    return AuthorizationService(
+        repository, RegistryFloorRiskProvider(), "test", "f" * 64
+    ), repository
+
+
+def test_a_suitability_decline_is_evidenced_identically_to_an_approval() -> None:
+    """T-134's stated acceptance: the decline bundle and the approval bundle differ only in
+    decision fields. Nothing implemented it, so "the refusal record is as complete as the
+    approval" was a claim in a catalogue and in no assertion anywhere.
+
+    Rather than trusting a remembered list of exempt fields, the per-record variance is *observed*
+    first, from two decisions that differ in nothing but their request_id. If a field ever starts
+    varying that the exempt sets do not name, that observation fails before the real comparison
+    does, and if a new substantive field ever starts tracking the decision, the substance
+    comparison fails and names it.
+    """
+    subject, repository = suitability_service()
+    proof = suitability_proof("proof-jti-00000001", "b" * 64)
+    for suffix in ("a1", "a2"):
+        subject.authorize(
+            identity(),
+            suitability_context(f"018f47a6-7b42-7c00-8000-0000000003{suffix}", suitable=True),
+            external_proof=proof,
+        )
+    first, second = repository.adr_documents
+    observed_variance = {key for key in first if first[key] != second[key]}
+    assert observed_variance, "two decisions must differ somewhere; a chain that repeats is broken"
+    assert observed_variance <= PER_RECORD_FIELDS, (
+        "a field outside PER_RECORD_FIELDS varies between two otherwise identical decisions: "
+        f"{sorted(observed_variance - PER_RECORD_FIELDS)}"
+    )
+
+    subject.authorize(
+        identity(),
+        suitability_context("018f47a6-7b42-7c00-8000-0000000003d1", suitable=False),
+        external_proof=suitability_proof("proof-jti-00000002", "d" * 64),
+    )
+    approval, decline = repository.adr_documents[0], repository.adr_documents[2]
+
+    assert approval["decision"] == "ALLOW"
+    assert decline["decision"] == "DENY"
+    assert decline["reasons"] == ["suitability_declined"]
+    # A decline is not a thinner record: same schema, same keys, same shape.
+    assert approval.keys() == decline.keys()
+    ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", approval)
+    ContractSchemas(Path("SPEC_v1.md")).validate("ADR_Record", decline)
+
+    exempt = DECISION_FIELDS | PER_RECORD_FIELDS | PROOF_FIELDS
+    substance = {
+        name: {key: value for key, value in record.items() if key not in exempt}
+        for name, record in (("approval", approval), ("decline", decline))
+    }
+    # The loud one: any NEW non-decision field that starts differing shows up here by name.
+    assert substance["approval"] == substance["decline"]
+    # ...and the decision really did move, so the comparison above is not vacuous.
+    assert {key for key in approval if approval[key] != decline[key]} >= DECISION_FIELDS
+
+    # The proof carrier is exempt because the two decisions cite two different proofs -- not
+    # because it is allowed to be shaped differently.
+    (approval_proof,) = approval["external_proofs"]
+    (decline_proof,) = decline["external_proofs"]
+    assert approval_proof.keys() == decline_proof.keys()
+    assert approval_proof["issuer"] == decline_proof["issuer"]
+    assert approval_proof["memtara_chain_head"] == decline_proof["memtara_chain_head"]
+    assert approval_proof["jti"] != decline_proof["jti"]
+
+
+def test_the_reference_policy_alone_cannot_express_the_above_threshold_pause() -> None:
+    """UC-2 row 2b: "REQUIRE_APPROVAL (above threshold)".
+
+    `policies/reference/require_suitability_proof.json` ships one unconditional ALLOW and no
+    threshold at all, so on its own it answers ALLOW for any amount. The pause is a *composition*
+    a deployment writes, and this test states both halves: what the shipped file does by itself,
+    and that a higher-priority threshold policy alongside it produces the documented pause.
+    """
+    subject, repository = suitability_service()
+    large = suitability_context("018f47a6-7b42-7c00-8000-0000000003b1", suitable=True, amount=5_000_000)
+
+    # The shipped reference policy alone: no threshold, so an unbounded order is simply ALLOWed.
+    assert subject.authorize(identity(), large).decision == "ALLOW"
+
+    threshold_policy = copy.deepcopy(repository.documents[0])
+    threshold_policy |= {
+        "policy_id": "pol_desk-authority-threshold",
+        "content_hash": "2" * 64,
+        "decision": "REQUIRE_APPROVAL",
+        "priority": 600,
+        "approval_requirements": APPROVAL_REQUIREMENTS,
+        "conditions": {
+            "all": [
+                *threshold_policy["conditions"]["all"],
+                {
+                    "field": "business.transaction_value.amount",
+                    "op": "gte",
+                    "value": 1_000_000,
+                },
+            ]
+        },
+    }
+    repository.documents.append(threshold_policy)
+
+    above = subject.authorize(
+        identity(),
+        suitability_context("018f47a6-7b42-7c00-8000-0000000003b2", suitable=True, amount=5_000_000),
+    )
+    below = subject.authorize(
+        identity(),
+        suitability_context("018f47a6-7b42-7c00-8000-0000000003b3", suitable=True, amount=12_500),
+    )
+
+    assert above.decision == "REQUIRE_APPROVAL"
+    assert below.decision == "ALLOW"
+    assert repository.approval_requests[0]["requester_id"] == "prn_alice-01"

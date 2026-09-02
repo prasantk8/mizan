@@ -144,7 +144,7 @@ Every identifier in every schema below references this file. A build that inline
           "properties": {
             "field": { "type": "string",
               "pattern": "^(principal|agent|customer|intent|tool|action|resource|business|security|environment|mapped)\\.[a-z0-9_.]{1,120}$" },
-            "op":    { "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "in", "not_in", "present", "absent", "matches"] },
+            "op":    { "enum": ["eq", "eq_field", "neq", "gt", "gte", "lt", "lte", "in", "not_in", "present", "absent", "matches"] },
             "value": {}
           }
         },
@@ -379,7 +379,7 @@ The immutable authorization snapshot (PRD §13, §93). Written exactly once per 
 
 ```json
 {
-  "$id": "https://mizan.ai/schemas/adr_record/1.2.json",
+  "$id": "https://mizan.ai/schemas/adr_record/1.3.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ADR_Record",
   "type": "object",
@@ -387,12 +387,27 @@ The immutable authorization snapshot (PRD §13, §93). Written exactly once per 
   "required": ["schema_version", "decision_id", "tenant_id", "trace_id", "timestamp",
                "principal", "agent", "intent", "tool", "action", "resource",
                "context_hash", "risk", "policies", "decision", "decision_basis", "evaluator", "reasons",
-               "approval", "execution", "degraded", "stream_id", "sequence_number",
+               "approval", "execution", "degraded", "external_proofs", "stream_id", "sequence_number",
                "prev_hash", "record_hash", "hash_alg"],
   "properties": {
-    "schema_version": { "const": "1.2" },
+    "schema_version": { "const": "1.3" },
     "decision_id": { "$ref": "common#/$defs/DecisionId" },
     "tenant_id":   { "$ref": "common#/$defs/TenantId" },
+    "external_proofs": {
+      "type": "array",
+      "description": "Operator-verified external attestations committed into this ADR. Empty means no external proof affected this decision.",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["issuer", "proof_hash", "jti", "memtara_chain_head", "token"],
+        "properties": {
+          "issuer": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "proof_hash": { "$ref": "common#/$defs/Sha256Hex", "description": "Memtara's signed SHA-256 claim over the verified ZK proof bytes." },
+          "jti": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "memtara_chain_head": { "$ref": "common#/$defs/Sha256Hex", "description": "Memtara audit chain head observed at proof issue time. This is committed by Mizan's record/anchor signatures; current Memtara proof tokens do not sign it." },
+          "token": { "type": "string", "minLength": 1, "maxLength": 16384, "description": "Compact EdDSA JWS retained so an offline verifier can authenticate issuer, proof_hash and jti against an operator-supplied Memtara JWKS." }
+        }
+      }
+    },
     "trace_id":    { "$ref": "common#/$defs/TraceId", "description": "W3C traceparent trace-id (OpenTelemetry)" },
     "span_id":     { "oneOf": [{ "$ref": "common#/$defs/SpanId" }, { "type": "null" }] },
     "timestamp":   { "$ref": "common#/$defs/Timestamp" },
@@ -1684,6 +1699,8 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `MIZAN_EVIDENCE_OBJECT_STORE_ROOT` | `var/evidence` | deployment | Root of the immutable object store the verifier reads. In v1 this is the create-only local WORM analogue; a real WORM target is `MIZAN_AUDIT_ANCHOR_BUCKET`. |
 | `MIZAN_HTTP_HOST` | `127.0.0.1` | deployment | Listener address. The default is loopback so an unconfigured process is not reachable. |
 | `MIZAN_HTTP_PORT` | `8080` | deployment | Listener port. |
+| `MIZAN_MEMTARA_TRUSTED_ISSUER` | *(empty; required to accept a proof)* | deployment | Exact accepted Memtara `iss`. It is deployment-pinned and cannot be selected by a token or caller. Must be set together with `MIZAN_MEMTARA_JWKS_URL`. |
+| `MIZAN_MEMTARA_JWKS_URL` | *(empty; required to accept a proof)* | deployment | Operator-selected Memtara public JWKS endpoint. Production requires HTTPS. Fetches are time/size bounded, cached, and never triggered again by an unknown caller-supplied `kid`; verification fails closed while unavailable. |
 | `MIZAN_TLS_CERTIFICATE_FILE` | *(required in production)* | deployment | Server certificate chain for the in-process mTLS listener (ADR-001 Amendment B). |
 | `MIZAN_TLS_PRIVATE_KEY_FILE` | *(required in production)* | deployment | Server private key for the listener. |
 | `MIZAN_TLS_CLIENT_CA_FILE` | *(required in production)* | deployment | Client CA trust bundle. The listener sets `CERT_REQUIRED`; without it no execution endpoint can authenticate a workload and every one answers 401. |

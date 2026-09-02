@@ -32,6 +32,8 @@ import argparse
 import sys
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -114,8 +116,32 @@ def require(condition: bool, message: str) -> None:
         raise WalkFailed(message)
 
 
+_RECORDING: list[str] | None = None
+
+
+@contextmanager
+def recording_steps() -> Iterator[list[str]]:
+    """Capture every ``step`` emitted inside the block, in order, exactly as it was printed.
+
+    A demo transcript is only worth committing if it is a *recording*. Nothing here declares
+    what the walk is supposed to say; the list this yields is filled by the walk running, so a
+    milestone that stops being emitted stops appearing, and one that is renamed appears renamed.
+    """
+    global _RECORDING
+    previous = _RECORDING
+    captured: list[str] = []
+    _RECORDING = captured
+    try:
+        yield captured
+    finally:
+        _RECORDING = previous
+
+
 def step(label: str, detail: str) -> None:
-    print(f"  {label:22s} {detail}")
+    line = f"  {label:22s} {detail}"
+    if _RECORDING is not None:
+        _RECORDING.append(line)
+    print(line)
 
 
 def authorize_three_calls(client: httpx.Client) -> dict:

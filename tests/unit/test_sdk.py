@@ -11,6 +11,7 @@ import pytest
 from mizan.adapters import GovernedTool, GovernedToolRouter
 from mizan.binding import UnclassifiedArgument, parameters_hash
 from mizan.client import MizanClient, Principal, Resource, rfc3339_now, uuid7
+from mizan.decorator import govern
 from mizan.errors import ApprovalRejected, ApprovalTimeout, Denied, ProblemError
 from mizan_control_plane.canonical import binding_hash
 
@@ -66,6 +67,8 @@ class FakeControlPlane:
         self.decision = decision
         self.approval_states = approval_states or []
         self.contexts: list[dict[str, Any]] = []
+        self.proof_headers: list[str | None] = []
+        self.chain_head_headers: list[str | None] = []
         self.token_requests: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -77,6 +80,8 @@ class FakeControlPlane:
 
             context = _json.loads(request.content)
             self.contexts.append(context)
+            self.proof_headers.append(request.headers.get("x-memtara-proof"))
+            self.chain_head_headers.append(request.headers.get("x-memtara-chain-head"))
             body = {
                 "decision_id": "adr_" + "a" * 24,
                 "decision": self.decision,
@@ -151,6 +156,90 @@ def test_the_binding_profile_comes_from_the_registry_not_from_the_caller() -> No
     assert context["tool"]["parameters_hash"] == binding_hash(
         context["tool"]["arguments"], PROFILE["bound_pointers"]
     )
+
+
+def test_the_client_carries_a_memtara_proof_only_on_the_authorization_request() -> None:
+    plane = FakeControlPlane()
+    opaque_token = "not.a-token-the-sdk-understands"
+    opaque_chain_head = "not-validated-by-the-sdk"
+    with client_for(plane) as mizan:
+        mizan.decide(
+            tool_id="tool_transfer",
+            arguments={"amount": 1, "customer_id": "c", "request_time": "t"},
+            action_type="financial_write",
+            intent="recommend a product",
+            principal=ALICE,
+            resource=RESOURCE,
+            proof_token=opaque_token,
+            memtara_chain_head=opaque_chain_head,
+        )
+        mizan.decide(
+            tool_id="tool_transfer",
+            arguments={"amount": 2, "customer_id": "c", "request_time": "t"},
+            action_type="financial_write",
+            intent="read a product",
+            principal=ALICE,
+            resource=RESOURCE,
+        )
+    assert plane.proof_headers == [opaque_token, None]
+    assert plane.chain_head_headers == [opaque_chain_head, None]
+    assert all("proof" not in context for context in plane.contexts)
+
+
+def test_the_decorator_accepts_static_and_per_call_memtara_proofs() -> None:
+    plane = FakeControlPlane()
+    mizan = client_for(plane)
+    performed: list[int] = []
+
+    @govern(
+        tool_id="tool_transfer",
+        action_type="financial_write",
+        resource=RESOURCE,
+        client=mizan,
+        proof_token="static.opaque.proof",
+        memtara_chain_head="static-opaque-chain-head",
+    )
+    def static_proof(amount: int, customer_id: str, request_time: str) -> None:
+        performed.append(amount)
+
+    @govern(
+        tool_id="tool_transfer",
+        action_type="financial_write",
+        resource=RESOURCE,
+        client=mizan,
+        proof_token_factory=lambda **arguments: f"proof-for-{arguments['customer_id']}",
+        memtara_chain_head_factory=lambda **arguments: f"head-for-{arguments['customer_id']}",
+    )
+    def fresh_proof(amount: int, customer_id: str, request_time: str) -> None:
+        performed.append(amount)
+
+    try:
+        static_proof(amount=1, customer_id="c1", request_time="t")
+        fresh_proof(amount=2, customer_id="c2", request_time="t")
+    finally:
+        mizan.close()
+    assert performed == [1, 2]
+    assert plane.proof_headers == ["static.opaque.proof", "proof-for-c2"]
+    assert plane.chain_head_headers == ["static-opaque-chain-head", "head-for-c2"]
+
+
+def test_the_decorator_refuses_two_proof_sources() -> None:
+    with pytest.raises(ValueError, match="proof_token or proof_token_factory"):
+        govern(
+            tool_id="tool_transfer",
+            action_type="financial_write",
+            resource=RESOURCE,
+            proof_token="one",
+            proof_token_factory=lambda **_: "two",
+        )
+    with pytest.raises(ValueError, match="memtara_chain_head or memtara_chain_head_factory"):
+        govern(
+            tool_id="tool_transfer",
+            action_type="financial_write",
+            resource=RESOURCE,
+            memtara_chain_head="one",
+            memtara_chain_head_factory=lambda **_: "two",
+        )
 
 
 def test_a_denial_is_raised_with_the_recorded_reasons() -> None:

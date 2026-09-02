@@ -15,6 +15,8 @@ with MizanClient() as mizan:                     # MIZAN_API_URL, MIZAN_AGENT_TO
             intent="rebalance to the target allocation",
             principal=Principal(id="prn_alice-01", role="advisor"),
             resource=Resource("portfolio/42", "portfolio", "core-banking", "financial"),
+            proof_token=memtara_token,
+            memtara_chain_head=memtara_chain_head,
         )
     except Denied as refused:
         print(refused.reasons)                   # the recorded reasons, not a guess at them
@@ -23,6 +25,10 @@ with MizanClient() as mizan:                     # MIZAN_API_URL, MIZAN_AGENT_TO
 `decide` blocks while humans decide when policy requires an approval, raises `Denied` when policy
 refuses, and returns the decision when it does not. Giving up on an approval (`ApprovalTimeout`)
 does not cancel it: the work stays paused and the approval stays open.
+
+For Memtara-governed calls, `proof_token` and `memtara_chain_head` are sent only as
+`x-memtara-proof` and `x-memtara-chain-head` on `/v1/authorize`. The SDK treats both values as
+opaque: verification and validation happen in the control plane.
 
 ## Wrapping an existing tool
 
@@ -34,6 +40,8 @@ from mizan import govern, Resource
     action_type="financial_read",
     resource=Resource("portfolio/42", "portfolio", "core-banking", "financial"),
     client_factory=MizanClient,
+    proof_token_factory=lambda **arguments: proof_for(arguments["customer_id"]),
+    memtara_chain_head_factory=lambda **arguments: chain_head_for(arguments["customer_id"]),
 )
 def read_portfolio(customer_id: str) -> dict: ...
 ```

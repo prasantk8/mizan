@@ -81,6 +81,25 @@ correctness liability with no offsetting demand.
 
 ---
 
+## F-T-6 · Nobody values the proof *(adopted 2026-08-31 with the two-product decision, before the seam work)*
+
+**Claim under test.** A client-side suitability proof (Memtara) is a buying criterion for an advised-sales
+desk, not an engineering aesthetic.
+
+**Observable.** Across the first **six** wealth or private-banking conversations in which UC-2 is shown,
+at least **two** compliance or risk officers state, unprompted or on the qualifying question, that the
+proof changes a control outcome they are measured on — the suitability file they must keep, the record a
+regulator asks for, or the decline they cannot currently evidence.
+
+**If it fails.** Memtara has no commercial role in this market. Stop the seam work after T-133 (the
+verification library is cheap to keep), do not build T-135, remove UC-2 from the catalogue, and sell Mizan
+alone. The engineering already done is not a reason to keep selling it.
+
+**Instrumentation.** The catalogue's UC-2 qualifying questions, recorded per conversation in the pilot log
+alongside the F-T-1 verifier columns. Count officers, not enthusiasm.
+
+---
+
 ## The second founder test
 
 PRD §81 asks whether a feature makes agents safer, more controllable, more observable, or more provable.
