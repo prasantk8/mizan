@@ -10,6 +10,14 @@ observable, a decision date, and what happens when it fires — including the op
 The rule of this file: **a test that fires and is then re-argued is not a test.** Amending a criterion is
 permitted; amending it after seeing the result, without recording that the amendment was post-hoc, is not.
 
+**The instrument is `../business/PILOT-LOG.md`** — one row per substantive conversation, with the
+running counts for every test below. It was created on 2026-09-02 by T-147, and **it did not exist for
+the first eight days these tests were adopted**, which means F-T-1, F-T-4, F-T-5 and F-T-6 were
+unmeasurable from the day they were written. Recorded here rather than fixed quietly, because the rule
+above has a quieter sibling: a test that cannot fire because nobody recorded the observable was never a
+test either. Nothing was lost — no conversation had been logged — but nothing was being counted, and
+that is the failure mode this file exists to prevent, found inside this file.
+
 ---
 
 ## F-T-1 · Nobody will run the offline verifier
@@ -130,10 +138,13 @@ become umbrella copy, and the claims-register rows added by T-141 stay HYPOTHESI
 A demo that impressed people is not a counter-argument: the observable counts expectations and
 sponsors, not admiration.
 
-**Instrumentation.** Four fields per conversation in the pilot log, defined by T-147 and recorded
-alongside the F-T-1 verifier columns: *variant shown* (A/B), *sponsor role*, *model-hosting
-expectation* (y/n), *asked-for-pilot* (y/n). F-T-4's audit-only sponsorship field is reused rather
-than duplicated. Counting is by hand, per conversation, on the day.
+**Instrumentation.** Four fields per conversation in `../business/PILOT-LOG.md`, defined by T-147 and
+recorded alongside the F-T-1 verifier columns: `variant` (A/B), `person_role` + `sponsor_function`,
+`model_hosting_expectation` (y/n), `asked_for_pilot` (y/n). F-T-4's audit-only sponsorship field is
+reused rather than duplicated. The scripts are `../business/MESSAGE-KIT-AB.md`, and variant B is not to
+be run before the T-142 trademark ruling — interviews before it are all variant A and cannot count
+toward this test's observables, which T-149 must state rather than reading a small B sample as a
+result. Counting is by hand, per conversation, on the day.
 
 **Note.** Adopted before T-141, T-144 or any external use of the sentence, per the rule at the top of
 this file. The second observable deliberately overlaps F-T-4: if the audit-only trap is real, this

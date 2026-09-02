@@ -313,3 +313,10 @@ UC-7. Worth one discovery question in retail-credit conversations; not a pilot.
 
 Every meeting ends with the same ask: **one agent, 3–10 tools, one consequential action, one named risk
 owner, one decision date.** Record whether the verifier was offered, run, or refused (F-T-1).
+
+**Where to record it: [`PILOT-LOG.md`](PILOT-LOG.md), one row per substantive conversation, the same
+day.** It instruments five falsification tests and it is the only place the counts live. During the
+positioning evaluation, the opening comes from [`MESSAGE-KIT-AB.md`](MESSAGE-KIT-AB.md) — variant A
+until the T-142 trademark ruling is recorded, and variant B not at all before then. The openings differ;
+everything after the qualifying question, including every answer in that kit's §4, is identical in both,
+or the test measures our delivery rather than the two sentences.

@@ -98,6 +98,18 @@ Estimates are man-days for one engineer of the named role, excluding review.
 
 ### WS-P2 · The market test — count officers, not enthusiasm
 
+> **Status 2026-09-02 — T-147 delivered, and it found that the instrument did not exist.** The kit is
+> `docs/business/MESSAGE-KIT-AB.md`. Its acceptance also required "log fields live in the pilot log",
+> and **there was no pilot log**: F-T-1, F-T-4, F-T-5 and F-T-6 had all cited one since 2026-08-25 and
+> none had ever been created, so four adopted falsification tests were unmeasurable from the day they
+> were written. `docs/business/PILOT-LOG.md` is that instrument, with running counts for all five tests
+> plus F-T-7. Nothing was lost — no conversation had been logged — but nothing was being counted.
+>
+> **Variant B cannot be run before the T-142 ruling**, since it contains the sentence and the sentence
+> has no cleared external use. Interviews until then are variant A: they count toward F-T-1/F-T-4/
+> F-T-5/F-T-6 and **cannot** count toward F-T-7, which T-149 must state rather than read a small B
+> sample as a market result.
+
 | Task | Description | R / A / C | Days | Acceptance | Unlocks |
 |---|---|---|---:|---|---|
 | **T-147** | A/B message kit: interview script variant A (current wedge: "control before action, proof after") vs variant B (the sentence), rotated across the twenty already-planned problem interviews — **no new meetings**. Pilot-log fields per conversation: variant shown, sponsor role, model-hosting expectation (y/n), audit-only sponsorship (y/n), asked-for-pilot (y/n) | PO / founder / — | 1 | Kit committed beside the outreach kit; log fields live in the pilot log | F-T-7's instrumentation; Phase-1 read |
