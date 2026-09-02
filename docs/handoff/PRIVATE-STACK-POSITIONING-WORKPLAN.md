@@ -51,6 +51,26 @@ Estimates are man-days for one engineer of the named role, excluding review.
 
 ### WS-P0 · Words before work — the claim is registered before anything is built
 
+> **Status 2026-09-02 — delivered as one PR, with one task only partly closable.** T-141 and T-143 are
+> complete. **T-142 is complete up to the founder's action and cannot be closed by engineering:** the
+> brief is written (`docs/business/BRIEF-2026-09-02-TRADEMARK-BRAND-RULING.md`), but its acceptance
+> asks for a *ruling recorded as a dated note*, and no ruling exists because counsel has not been
+> instructed. The standstill in that brief's §5 is in force from today regardless — no public use of
+> the sentence, no branding spend, T-140 stays estimated.
+>
+> Two things a reader should not have to discover:
+>
+> * **The per-word table was not copied verbatim, because one row of it was optimistic.** The plan's
+>   table calls "private" *deployment-privacy real*. It is — but the register now names the three
+>   outbound endpoints that exist (Vault, the timestamp authority, the Memtara JWKS URL, all
+>   operator-configured, none Mizan-operated), because "private" and "makes no outbound connection"
+>   are different sentences and only the first is true. Nothing today gates the second; that is T-144's
+>   assertion to add.
+> * **T-146 is bigger than its row says.** `redaction.py` having "zero production callers" is true and
+>   incomplete: `EvidenceRepository.append_audit`, the method that *enforces* the redaction
+>   attestation, has no production caller either. The wire-or-delete decision spans both ends of the
+>   path. Recorded as a finding in the claims register §5.
+
 | Task | Description | R / A / C | Days | Acceptance | Unlocks |
 |---|---|---|---:|---|---|
 | **T-141** | Claims-register positioning hypothesis: add the sentence to the claims register as **HYPOTHESIS**, one row per word with its permitted meaning today (table above, verbatim); add a "we are not a model provider — we govern yours" row to the use-case catalogue's *What we do not sell* table | PO / TL / founder | 0.5–1 | Docs PR merged; every external use of the sentence traces to a register row | All external copy for this evaluation |

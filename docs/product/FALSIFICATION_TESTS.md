@@ -100,6 +100,48 @@ alongside the F-T-1 verifier columns. Count officers, not enthusiasm.
 
 ---
 
+## F-T-7 · The private-stack message attracts the wrong buyer *(adopted 2026-09-02 with the positioning evaluation, before the work)*
+
+**Claim under test.** The umbrella sentence *"Enterprise-grade, private, auditable AI for firms that
+can't afford to get it wrong"* attracts a buyer who wants their agents governed — not one who wants a
+model hosted, and not internal audit alone.
+
+**Owner.** Founder, with PO instrumenting. **Decision date:** 2026-10-31, in
+`DECISION-2026-10-31-PRIVATE-STACK-POSITIONING.md` (T-149).
+
+**Observable.** Across the twenty already-planned problem interviews, with variant A (the current
+wedge, *"control before action, proof after"*) and variant B (the sentence) rotated between them
+(T-147), **either** of these fires the test:
+
+1. **≥ 5** variant-B conversations produce a model-hosting expectation — the prospect asks about
+   model SLAs, fine-tuning, GPU pricing, inference cost, or which model we supply — where a
+   model-hosting expectation is logged the first time the prospect raises it unprompted, not when we
+   correct it; **or**
+2. internal audit is the only sponsor in **≥ half** of the variant-B conversations, which is F-T-4's
+   observable counted for variant B specifically.
+
+Fewer than fifteen conversations by the decision date is **not** a pass. It is an unread test, and
+T-149 must record it as such rather than adopting the sentence by default.
+
+**If it fails.** The umbrella positioning is wrong for this buyer, whatever it does for a general
+audience. Rule **Adapt** — fall back to *"auditable AI operations"*, which claims the operations and
+not the intelligence — or **Abandon** and stay with the wedge. In either case the sentence does not
+become umbrella copy, and the claims-register rows added by T-141 stay HYPOTHESIS or are withdrawn.
+A demo that impressed people is not a counter-argument: the observable counts expectations and
+sponsors, not admiration.
+
+**Instrumentation.** Four fields per conversation in the pilot log, defined by T-147 and recorded
+alongside the F-T-1 verifier columns: *variant shown* (A/B), *sponsor role*, *model-hosting
+expectation* (y/n), *asked-for-pilot* (y/n). F-T-4's audit-only sponsorship field is reused rather
+than duplicated. Counting is by hand, per conversation, on the day.
+
+**Note.** Adopted before T-141, T-144 or any external use of the sentence, per the rule at the top of
+this file. The second observable deliberately overlaps F-T-4: if the audit-only trap is real, this
+test should be capable of detecting that the *sentence* deepened it, which requires counting the same
+thing under a variant label.
+
+---
+
 ## The second founder test
 
 PRD §81 asks whether a feature makes agents safer, more controllable, more observable, or more provable.

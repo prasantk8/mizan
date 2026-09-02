@@ -16,7 +16,10 @@ technical market presence.
 3. [`CLAIMS-REGISTER.md`](CLAIMS-REGISTER.md)
    The sentences marketing may say about the Mizan↔Memtara seam, each against the CI job that fails
    if it stops being true — plus the qualifiers that must travel with a claim, and the forbidden
-   phrasings. Write from this file, never from a mock screen.
+   phrasings. Write from this file, never from a mock screen. Its **Part B** is different in kind:
+   the private-stack positioning sentence, registered as a HYPOTHESIS with no cleared external use
+   until T-142's trademark ruling and T-149's decision on 2026-10-31. Read Part B as a record of what
+   we are testing, never as permission.
 
 4. [`MIZAN-LAUNCH-EDITORIAL-PACK.md`](MIZAN-LAUNCH-EDITORIAL-PACK.md)
    Provides the first campaign's LinkedIn Page copy, flagship white-paper brief, twelve post drafts,
