@@ -70,6 +70,16 @@ Estimates are man-days for one engineer of the named role, excluding review.
 >   incomplete: `EvidenceRepository.append_audit`, the method that *enforces* the redaction
 >   attestation, has no production caller either. The wire-or-delete decision spans both ends of the
 >   path. Recorded as a finding in the claims register §5.
+>
+> **Update 2026-09-02, on taking T-146 up: it is blocked, and neither of its two options exists as
+> written.** *Wiring* needs the audit commitment key to have custody — that is **T-054**, filed a week
+> before this plan and still open, and it requires changing ADR-004 G.1's ratified four `KeyRole`s,
+> because an HMAC key has no `public_key()` and the provider's `SigningKey` protocol demands one.
+> Founder ruling, filed as **B-30** (H-7, key management). *Deleting* would leave invariants I-12,
+> I-18 and I-19 and SPEC §2.5's required `AuditTrail` members with no implementation — a §0
+> change-control decision, not a ledger-row cleanup. **The 2–3 day estimate does not survive either
+> reading, and the claims register's "private" row should be planned as not moving before
+> 2026-10-31.**
 
 | Task | Description | R / A / C | Days | Acceptance | Unlocks |
 |---|---|---|---:|---|---|

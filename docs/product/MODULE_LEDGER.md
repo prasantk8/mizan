@@ -51,7 +51,7 @@ outside `tests/`, not assumed.
 
 | Claim | Backed by | Status |
 |---|---|---|
-| Redaction / DLP attestation | `security/mizan_security/redaction.py` | **unwired** — the module and its tests exist; no production code path calls it |
+| Redaction / DLP attestation | `security/mizan_security/redaction.py`, and `EvidenceRepository.append_audit` (`control-plane/mizan_control_plane/evidence.py:453`) | **unwired at both ends, and blocked** — the module, the repository method that enforces its attestation, and their tests all exist; neither has a production caller (`append_audit`'s only caller in the tree is `tests/integration/test_authorize_postgres.py`). Wiring is **not** the remaining work: the audit commitment key `MIZAN_AUDIT_HMAC_KEY_REF` has a full contract and no custody (T-054, TM-001 R-2), and giving it custody is a contract change to ADR-004 G.1's ratified four `KeyRole`s — an HMAC key has no `public_key()`, which the `SigningKey` protocol requires. Filed as **B-30** (H-7, key management). Deleting is not the cheap alternative either: invariants **I-12/I-18/I-19** and SPEC §2.5's required `AuditTrail` members would be left unimplemented, which is a §0 change |
 | PII classification boundary | none | **none** — the former `security/pii/` contained one sentence |
 | Prompt-injection defence | `tests/adversarial/test_prompt_namespace.py` proves the *policy namespace* cannot be crossed by tool arguments | **none as a module** — the property is tested, there is no engine |
 | Behavioural analytics | none | **none** |
