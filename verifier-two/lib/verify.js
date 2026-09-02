@@ -28,7 +28,7 @@ const NON_MANIFEST_FILES = Object.freeze([
 ]);
 const REQUIRED_FILES = Object.freeze([MANIFEST, ...NON_MANIFEST_FILES]);
 
-const BUNDLE_VERSION = '1.0';
+const BUNDLE_VERSIONS = Object.freeze(new Set(['1.0', '1.1']));
 const CANONICALIZATION = 'RFC8785';
 const HASH_ALGORITHM = 'SHA-256';
 
@@ -74,7 +74,7 @@ export const LIMITS_OF_A_CLEAN_VERDICT = Object.freeze([
  * Verify one bundle directory.
  *
  * @param {string} bundleDir
- * @param {{trustRoots?: import('node:crypto').X509Certificate[]}} [options]
+ * @param {{trustRoots?: import('node:crypto').X509Certificate[], memtaraTrustRoots?: object[]}} [options]
  * @returns {Report}
  */
 export function verifyBundle(bundleDir, options = {}) {
@@ -92,6 +92,7 @@ export function verifyBundle(bundleDir, options = {}) {
 
 function runChecks(bundleDir, options, report) {
   const trustRoots = options.trustRoots ?? [];
+  const memtaraTrustRoots = options.memtaraTrustRoots ?? [];
 
   // The order of these phases is itself normative, and the spec does not say so.
   // See FINDINGS.md D-2: running the schema checks before the manifest digests
@@ -129,6 +130,7 @@ function runChecks(bundleDir, options, report) {
   const anchorStates = checkAnchors(bundle, keyring, trustRoots, report);
   checkCheckpoints(bundle, report);
   checkAssurance(bundle, anchorStates, report);
+  checkExternalProofs(bundle, memtaraTrustRoots, report);
 
   for (const limit of LIMITS_OF_A_CLEAN_VERDICT) report.note(limit);
   return report;
@@ -260,7 +262,12 @@ function checkManifestGrammar(bundle, report) {
     return;
   }
 
-  requireEquals(manifest.bundle_version, BUNDLE_VERSION, 'manifest bundle_version', report);
+  if (!BUNDLE_VERSIONS.has(manifest.bundle_version)) {
+    report.malformed(
+      `manifest bundle_version is ${JSON.stringify(manifest.bundle_version)}; ` +
+        `this verifier supports ${[...BUNDLE_VERSIONS].join(' and ')}`,
+    );
+  }
   requireEquals(manifest.canonicalization, CANONICALIZATION, 'manifest canonicalization', report);
   requireEquals(manifest.hash_algorithm, HASH_ALGORITHM, 'manifest hash_algorithm', report);
   requireString(manifest.tenant_id, 'manifest tenant_id', report);
@@ -331,6 +338,45 @@ function checkRecordsGrammar(bundle, report) {
     requireDigest(record.record_hash, `${at}.record_hash`, report);
     requireString(record.tenant_id, `${at}.tenant_id`, report);
     requireString(record.stream_id, `${at}.stream_id`, report);
+    checkExternalProofGrammar(record, at, bundle.json[MANIFEST].bundle_version, report);
+  });
+}
+
+const EXTERNAL_PROOF_MEMBERS = Object.freeze([
+  'issuer', 'jti', 'memtara_chain_head', 'proof_hash', 'token',
+]);
+
+function checkExternalProofGrammar(record, at, bundleVersion, report) {
+  if (!Object.hasOwn(record, 'external_proofs')) return;
+  if (bundleVersion !== '1.1') {
+    report.malformed(`${at}.external_proofs requires bundle version 1.1`);
+    return;
+  }
+  const proofs = record.external_proofs;
+  if (!Array.isArray(proofs)) {
+    report.malformed(`${at}.external_proofs is not an array`);
+    return;
+  }
+  proofs.forEach((proof, index) => {
+    const where = `${at}.external_proofs[${index}]`;
+    if (!isObject(proof)) {
+      report.malformed(`${where} is not an object`);
+      return;
+    }
+    const present = Object.keys(proof).sort();
+    const expected = [...EXTERNAL_PROOF_MEMBERS].sort();
+    if (present.join(',') !== expected.join(',')) {
+      report.malformed(
+        `${where} must have exactly [${expected.join(', ')}]; it has [${present.join(', ')}]`,
+      );
+      return;
+    }
+    for (const member of ['issuer', 'jti', 'token']) {
+      if (!requireString(proof[member], `${where}.${member}`, report)) continue;
+      if (proof[member].length === 0) report.malformed(`${where}.${member} is empty`);
+    }
+    requireDigest(proof.proof_hash, `${where}.proof_hash`, report);
+    requireDigest(proof.memtara_chain_head, `${where}.memtara_chain_head`, report);
   });
 }
 
@@ -1162,6 +1208,124 @@ function checkAssurance(bundle, anchorStates, report) {
       streamHorizon,
     );
   }
+}
+
+// =============================================================================
+// Section 2.1 (bundle 1.1) -- cross-anchored Memtara proofs
+// =============================================================================
+
+function checkExternalProofs(bundle, jwkSets, report) {
+  const proofs = bundle.json['records.json'].flatMap((record, recordIndex) =>
+    (record.external_proofs ?? []).map((proof, proofIndex) => ({
+      proof,
+      where: `records[${recordIndex}].external_proofs[${proofIndex}]`,
+    })),
+  );
+  if (proofs.length === 0) return;
+  if (jwkSets.length === 0) {
+    report.cannotCheck(
+      'bundle contains Memtara external proofs but no --memtara-trust-root was supplied',
+    );
+    return;
+  }
+
+  const keyring = new Map();
+  for (const [setIndex, jwks] of jwkSets.entries()) {
+    if (!isObject(jwks) || !Array.isArray(jwks.keys)) {
+      report.cannotCheck(`operator-supplied Memtara trust root ${setIndex} is not a JWK Set`);
+      continue;
+    }
+    for (const jwk of jwks.keys) {
+      if (!isObject(jwk) || jwk.kty !== 'OKP' || jwk.crv !== 'Ed25519') continue;
+      if (typeof jwk.kid !== 'string' || jwk.kid.length === 0 || typeof jwk.x !== 'string') continue;
+      if (keyring.has(jwk.kid)) {
+        report.cannotCheck(
+          `operator-supplied Memtara trust roots declare duplicate kid ${JSON.stringify(jwk.kid)}`,
+        );
+        continue;
+      }
+      try {
+        const raw = decodeBase64UrlNoPad(jwk.x, `Memtara trust root key ${jwk.kid}`);
+        keyring.set(jwk.kid, importPublicKey(raw));
+      } catch (error) {
+        report.cannotCheck(
+          `operator-supplied Memtara trust root key ${jwk.kid} is malformed: ${error.message}`,
+        );
+      }
+    }
+  }
+  if (keyring.size === 0) {
+    report.cannotCheck('operator-supplied Memtara trust roots contain no Ed25519 keys');
+    return;
+  }
+
+  const seen = new Set();
+  for (const { proof, where } of proofs) {
+    const identity = JSON.stringify([proof.issuer, proof.jti]);
+    if (seen.has(identity)) {
+      report.invalid(`${where} duplicates a Memtara issuer/jti already present in this bundle`);
+    }
+    seen.add(identity);
+
+    const parts = proof.token.split('.');
+    if (parts.length !== 3) {
+      report.invalid(`${where}.token is not a three-segment compact JWS`);
+      continue;
+    }
+    const [headerSegment, payloadSegment, signatureSegment] = parts;
+    let header;
+    let claims;
+    let signature;
+    try {
+      header = JSON.parse(decodeBase64UrlNoPad(headerSegment, `${where} JWS header`).toString('utf8'));
+      claims = JSON.parse(decodeBase64UrlNoPad(payloadSegment, `${where} JWS payload`).toString('utf8'));
+      signature = decodeBase64UrlNoPad(signatureSegment, `${where} JWS signature`);
+    } catch (error) {
+      report.invalid(`${where}.token has an unreadable JOSE document: ${error.message}`);
+      continue;
+    }
+    if (!isObject(header) || !isObject(claims)) {
+      report.invalid(`${where}.token header and payload must be JSON objects`);
+      continue;
+    }
+    if (header.alg !== 'EdDSA') {
+      report.invalid(
+        `${where}.token declares alg ${JSON.stringify(header.alg)}; only EdDSA is accepted`,
+      );
+      continue;
+    }
+    const publicKey = keyring.get(header.kid);
+    if (!publicKey) {
+      report.invalid(
+        `${where}.token kid ${JSON.stringify(header.kid)} is absent from the Memtara trust root`,
+      );
+      continue;
+    }
+    const signingInput = Buffer.from(`${headerSegment}.${payloadSegment}`, 'ascii');
+    if (!ed25519Verify(publicKey, signingInput, signature)) {
+      report.invalid(`${where}.token signature is invalid`);
+      continue;
+    }
+    for (const [member, claim] of [
+      ['issuer', 'iss'], ['proof_hash', 'proof_hash'], ['jti', 'jti'],
+    ]) {
+      if (proof[member] !== claims[claim]) {
+        report.invalid(`${where}.${member} does not match signed Memtara claim ${claim}`);
+      }
+    }
+    if (claims.verified !== true) {
+      report.invalid(`${where}.token does not assert verified=true`);
+    }
+  }
+}
+
+function decodeBase64UrlNoPad(text, label) {
+  if (typeof text !== 'string' || text.length === 0 || !/^[A-Za-z0-9_-]+$/.test(text)) {
+    throw new Error(`${label} is not unpadded Base64url`);
+  }
+  const bytes = Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  if (bytes.length === 0) throw new Error(`${label} decodes to no bytes`);
+  return bytes;
 }
 
 // =============================================================================

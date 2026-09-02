@@ -30,6 +30,21 @@ There is no local cache and no fast path: "the control plane was unreachable" is
 Every refusal is a tool *result*, not an exception, so the model can explain to the person what
 happened instead of the agent loop crashing.
 
+## Memtara proof metadata
+
+An MCP client can attach a Memtara proof to `tools/call` through request metadata:
+
+```json
+{
+  "x-memtara-proof": "<proof token>",
+  "x-memtara-chain-head": "<chain head>"
+}
+```
+
+The gateway forwards those values as same-named headers on `/v1/authorize`. It does not decode,
+validate, log, add them to tool arguments, or pass them to the upstream tool server. Calls without
+either metadata key send neither header.
+
 ## Configure
 
 ```toml

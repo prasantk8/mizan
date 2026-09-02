@@ -32,6 +32,10 @@ def govern(
     executor_spiffe_id: str | None = None,
     redeem: bool = False,
     approval_timeout_seconds: float = 900.0,
+    proof_token: str | None = None,
+    proof_token_factory: Callable[..., str | None] | None = None,
+    memtara_chain_head: str | None = None,
+    memtara_chain_head_factory: Callable[..., str | None] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Authorize before the call, and record the outcome after it.
 
@@ -40,7 +44,17 @@ def govern(
     does not take an execution lease — a lease requires a workload identity Mizan has verified
     over mTLS, which an in-process decorator does not have. Set it to True only where the calling
     workload is itself the registered executor.
+
+    A Memtara proof can be fixed for a one-shot call with `proof_token`, or supplied per invocation
+    with `proof_token_factory`. The decorator only carries the opaque value to the SDK; it does not
+    inspect it or add it to the decorated tool's arguments.
     """
+    if proof_token is not None and proof_token_factory is not None:
+        raise ValueError("govern() accepts proof_token or proof_token_factory, not both")
+    if memtara_chain_head is not None and memtara_chain_head_factory is not None:
+        raise ValueError(
+            "govern() accepts memtara_chain_head or memtara_chain_head_factory, not both"
+        )
 
     def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(function)
@@ -53,6 +67,14 @@ def govern(
                 if principal_factory
                 else Principal(id="prn_unattributed", type="application", auth_strength="federated")
             )
+            active_proof_token = (
+                proof_token_factory(**arguments) if proof_token_factory else proof_token
+            )
+            active_chain_head = (
+                memtara_chain_head_factory(**arguments)
+                if memtara_chain_head_factory
+                else memtara_chain_head
+            )
             decision: Decision = active.decide(
                 tool_id=tool_id,
                 arguments=dict(arguments),
@@ -61,6 +83,8 @@ def govern(
                 principal=principal,
                 resource=resource,
                 approval_timeout_seconds=approval_timeout_seconds,
+                proof_token=active_proof_token,
+                memtara_chain_head=active_chain_head,
             )
             if not redeem:
                 return function(*positional, **arguments)

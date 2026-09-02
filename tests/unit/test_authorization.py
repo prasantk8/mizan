@@ -10,6 +10,7 @@ from mizan_control_plane.canonical import binding_hash, canonical_hash
 from mizan_control_plane.models import (
     AuthenticatedIdentity,
     EvaluationContext,
+    MappedInput,
     PolicyMatch,
     RegistryAgent,
     RegistryTool,
@@ -145,6 +146,47 @@ def test_authorize_uses_the_registered_tool_tier_and_stops_before_evaluation() -
     assert refused.value.code == "rate_limit_exceeded"
     assert len(repository.adr_documents) == 3
 
+
+
+def test_verified_negative_suitability_is_a_normal_evidenced_decline() -> None:
+    subject, repository = service()
+    repository.policies = [
+        PolicyMatch(
+            policy_id="pol_unrelated-allow",
+            version=1,
+            content_hash="a" * 64,
+            decision="ALLOW",
+            priority=100,
+        )
+    ]
+    request = context()
+    request.mapped = MappedInput.model_validate({
+        "source": "memtara",
+        "fields": {
+            "proof_hash": "b" * 64,
+            "circuit": "wealth_suitability",
+            "predicate": "structured_product_suitable",
+            "product_isin": "XS1234567890",
+            "suitable": False,
+            "expires_at": 1_800_000_000,
+            "jti": "proof-jti-00000001",
+        },
+    })
+    external_proof = {
+        "issuer": "https://api.memtara.test",
+        "proof_hash": "b" * 64,
+        "jti": "proof-jti-00000001",
+        "memtara_chain_head": "c" * 64,
+        "token": "header.payload.signature",
+    }
+
+    response = subject.authorize(identity(), request, external_proof=external_proof)
+
+    assert response.decision == "DENY"
+    assert response.reasons == ["suitability_declined"]
+    assert repository.adr_documents[0]["decision"] == "DENY"
+    assert repository.adr_documents[0]["reasons"] == ["suitability_declined"]
+    assert repository.adr_documents[0]["external_proofs"] == [external_proof]
 
 
 @pytest.mark.parametrize(

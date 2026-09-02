@@ -1,4 +1,4 @@
-# Mizan Evidence Bundle Format 1.0
+# Mizan Evidence Bundle Format 1.1
 
 Status: normative. “MUST”, “MUST NOT”, and “SHALL” are requirements. This document is sufficient to
 implement an independent verifier; Mizan source code is not normative.
@@ -39,7 +39,8 @@ over identical bytes. A verifier that encounters an out-of-range integer literal
 `VALID`; which of the other three verdicts it returns is not yet fixed by this version, because the
 answer depends on whether the condition is read as a producer defect or as a limit on the verifier.
 
-The manifest has `bundle_version="1.0"`, `canonicalization="RFC8785"`,
+The manifest has `bundle_version="1.0"` or `bundle_version="1.1"`,
+`canonicalization="RFC8785"`,
 `hash_algorithm="SHA-256"`, tenant and stream identifiers, inclusive `range.from_sequence` and
 `range.to_sequence`, an `assurance` claim, and `files`. `files` has exactly the five non-manifest
 filenames above, and each value is a string that claims `hex(SHA-256(complete stored file bytes))`.
@@ -73,6 +74,43 @@ record's `prev_hash`.
 Exactly one receipt covers every record sequence. Its signed `payload` binds tenant, stream,
 sequence, record hash, object key/version, and `key_id`; `signature` is Ed25519 over
 `JCS(payload)`. The referenced key MUST exist in `keys.json` with role `evidence-receipt`.
+
+### 2.1 Cross-anchored Memtara proofs (bundle 1.1)
+
+Bundle 1.1 adds one record member, `external_proofs`. An `ADR_Record` schema 1.3 MUST carry the
+member even when the array is empty. A record with no external-proof semantics may omit it. Bundle
+1.0 records MUST NOT carry it; this makes a new proof-bearing bundle fail loudly in a verifier that
+only understands 1.0 rather than silently ignoring the new evidence.
+
+Each `external_proofs[]` item has exactly these members:
+
+| Member | Meaning |
+|---|---|
+| `issuer` | non-empty Memtara issuer string |
+| `proof_hash` | lowercase 64-hex SHA-256 claim over the ZK proof bytes Memtara verified |
+| `jti` | non-empty Memtara proof-token identifier |
+| `memtara_chain_head` | lowercase 64-hex Memtara audit-chain head observed at issue time |
+| `token` | the compact EdDSA JWS needed to re-check the Memtara signature offline |
+
+The `token` is retained because a hash or extracted claim cannot be signature-verified. It contains
+attestation claims and MUST be treated as evidence data: producers MUST NOT write it to ordinary
+application, access, or trace logs, and evidence retention/access controls apply to it. The compact
+JWS has exactly three unpadded Base64url segments. Its protected header MUST declare `alg="EdDSA"`
+and a non-empty `kid`. Its signed payload MUST have `verified` equal to the JSON boolean `true`, and
+its `iss`, `proof_hash`, and `jti` claims MUST exactly equal the three corresponding projection
+members. A repeated `(issuer, jti)` pair in one bundle is invalid.
+
+Memtara verification keys are operator-supplied RFC 8037 JWK Sets and MUST NOT be obtained from the
+bundle. If a bundle has an external proof and the operator supplies no Memtara root, the verdict is
+`CANNOT CHECK`; if roots are supplied but `kid` is absent or the signature/claim binding fails, the
+verdict is `INVALID`. Historical verification does not compare the token's `exp` with the verifier's
+current clock: expiry governed whether Mizan could accept the token at authorization time, while the
+bundle proves afterward which signed token the immutable ADR used.
+
+The current Memtara token does not sign `memtara_chain_head`. That value is still committed by the
+Mizan record hash, receipt and anchor, and therefore proves which Memtara head Mizan recorded; it
+does not by itself authenticate or prove completeness of Memtara's history. A separately retained
+Memtara checkpoint or evidence export is needed to establish that stronger fact.
 
 ## 3. Anchor chain and the anchor core digest
 
@@ -202,8 +240,9 @@ produces a `MALFORMED` or `INVALID` finding; `VALID` requires that no phase prod
 
 A verifier returns `VALID` only after file inventory/digests, record hashes/linkage/range, one-to-one receipt
 coverage and signatures, anchor numbering/linkage/density/signatures/head bindings, left and right
-edges, attestation roster/cryptography, key roles, checkpoints, and claimed-versus-derived assurance
-all pass. The reference CLI maps `VALID`, `INVALID`, `CANNOT CHECK`, `MALFORMED`, and `EXPIRED` to
+edges, external-proof grammar/signatures/claim bindings where present, attestation
+roster/cryptography, key roles, checkpoints, and claimed-versus-derived assurance all pass. The
+reference CLI maps `VALID`, `INVALID`, `CANNOT CHECK`, `MALFORMED`, and `EXPIRED` to
 exit statuses 0, 1, 2, 3, and 4 respectively.
 
 ## 6. What this format does not prove
@@ -224,6 +263,11 @@ would be asking the token to date the certificate that signs it — and what tha
 the signer chains to the operator's trust root and the imprint is this anchor. It does not support
 the time the token asserts. Choose an authority whose signer certificate outlives your retention
 period; the bundle now states the date, so this is checkable on receipt rather than in year three.
+
+A bundle 1.1 `memtara_chain_head` proves the value Mizan committed, not that Memtara published that
+head or that no Memtara event was omitted. Likewise, successful token verification authenticates
+Memtara's public claims; it does not prove that private inputs were truthful, that the circuit
+expressed the applicable legal test, or that the resulting recommendation was suitable overall.
 
 ## 7. Decisions made explicit while specifying 1.0
 

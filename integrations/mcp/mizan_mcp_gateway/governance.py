@@ -87,6 +87,8 @@ class ToolGovernor:
         *,
         intent: str,
         session_principal: str | None = None,
+        proof_token: str | None = None,
+        memtara_chain_head: str | None = None,
     ) -> Permission | Refusal:
         declaration = self.config.declaration(tool_name)
         tool_id = self.config.tool_id(tool_name)
@@ -100,6 +102,8 @@ class ToolGovernor:
                 resource=self._resource(tool_name),
                 approval_timeout_seconds=self.config.approval_timeout_seconds,
                 on_pending=self.on_pending,
+                proof_token=proof_token,
+                memtara_chain_head=memtara_chain_head,
             )
         except Denied as denied:
             return Refusal(

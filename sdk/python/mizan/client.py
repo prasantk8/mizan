@@ -204,9 +204,26 @@ class MizanClient:
                 context[name] = value
         return context
 
-    def authorize(self, context: dict[str, Any]) -> Decision:
+    def authorize(
+        self,
+        context: dict[str, Any],
+        *,
+        proof_token: str | None = None,
+        memtara_chain_head: str | None = None,
+    ) -> Decision:
+        """Submit a context, optionally carrying opaque Memtara proof evidence.
+
+        Proof verification belongs to the control plane. The SDK deliberately does not decode,
+        validate, or copy the token or chain head into the JSON context; it carries them only in
+        the headers the authorization endpoint defines.
+        """
+        headers = {}
+        if proof_token is not None:
+            headers["x-memtara-proof"] = proof_token
+        if memtara_chain_head is not None:
+            headers["x-memtara-chain-head"] = memtara_chain_head
         try:
-            body = self._request("POST", "/v1/authorize", json=context)
+            body = self._request("POST", "/v1/authorize", json=context, headers=headers or None)
         except ProblemError as problem:
             if problem.status == 501:
                 raise NotImplementedDecision(problem.detail) from problem
@@ -308,6 +325,8 @@ class MizanClient:
         wait_for_approval: bool = True,
         approval_timeout_seconds: float = 900.0,
         on_pending: Any = None,
+        proof_token: str | None = None,
+        memtara_chain_head: str | None = None,
         **context_fields: Any,
     ) -> Decision:
         """Ask, and wait if a human has to be involved. Raises `Denied` if the answer is no."""
@@ -320,7 +339,11 @@ class MizanClient:
             resource=resource,
             **context_fields,
         )
-        decision = self.authorize(context)
+        decision = self.authorize(
+            context,
+            proof_token=proof_token,
+            memtara_chain_head=memtara_chain_head,
+        )
         if decision.decision == "DENY":
             raise Denied(decision.decision_id, decision.reasons)
         if decision.decision == "REQUIRE_APPROVAL":

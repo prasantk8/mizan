@@ -20,8 +20,9 @@ favourably: every row names the file that backs the claim, or says **none**.
 | **unwired** | code exists and **nothing in production calls it**. It cannot be relied on |
 | **none** | no code. The claim is a roadmap item |
 
-Last verified 2026-08-29 against `main`. This table is checked by hand; where a row says
-"unwired", it was confirmed by searching for callers outside `tests/`, not assumed.
+Last verified 2026-08-31 against `main` @ 837f934 (rows touched by T-101/T-102/T-104 re-verified;
+cross-product section added the same day). This table is checked by hand; where a row says "unwired",
+it was confirmed by searching for callers outside `tests/`, not assumed.
 
 ---
 
@@ -38,6 +39,9 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | RFC 3161 attestation | `attestation.py`, run by `attestation_runner.py` | shipped |
 | Lease expiry at rest | `execution.py::sweep_expired_leases`, run by `drain_worker.py` | shipped |
 | Key custody and published keyset | `keys.py`, `vault_transit.py`, `runtime.py`, `/v1/audit/keys` | shipped for development and production Vault Transit (`custody=kms`); the real-Vault CI gate verifies sign/rotate/history behaviour |
+| Durable immutable evidence store | `evidence.py::S3ObjectLockStore`, selected in `runtime.py`; `LocalImmutableObjectStore` remains the development analogue | shipped — Object Lock COMPLIANCE, retention default seven years, exercised live by CI job `evidence-object-lock` (T-104). The `evidence_export.py` CLI still reads the local store only |
+| Production mode boots | `app.py` readiness branch under `MIZAN_ENV=production` | shipped — CI job `production-boot` (T-101). A single full-journey production gate does **not** exist yet (workplan T-131) |
+| Identity-token key rotation | `auth.py` keyset with `kid` routing, `scripts/identity_key_rotation_drill.py` | shipped — overlap window and rotation drill (T-122) |
 | Structured logs and `/metrics` | `observability.py`, `app.py` | shipped |
 | Mutual TLS and peer SPIFFE identity | `mtls.py`, `runtime.py` protocol class | shipped |
 | Degraded state / signed LOW-risk allow gate | `security/mizan_security/degraded.py`, called by `service.py` | **shipped for truthful healthy/fail-closed state**; the signed LOW-risk degraded-ALLOW gate remains default-off and has no production caller |
@@ -60,6 +64,16 @@ Last verified 2026-08-29 against `main`. This table is checked by hand; where a 
 | External payload envelopes | `integrations/mizan_integrations/external_payload.py` | wired, unproven |
 | Memtara proof verification / evidence seam | none | **none** — TM-002 fixes the boundary, but T-133..T-138 have not shipped |
 | Kafka, Redis, IAM, SIEM, workflow | none | **none**. Evidence leaves through `mizan.outbox` and the drain worker; there is no broker or SIEM delivery |
+
+## Cross-product (added 2026-08-31, per the two-product decision)
+
+| Claim | Backed by | Status |
+|---|---|---|
+| Mizan verifies a Memtara proof token (Ed25519 JWS against Memtara's JWKS) | `proofs/memtara.py`, called by the `/v1/authorize` header boundary in `app.py`; adversarial and route tests in `tests/unit/test_memtara_proof.py` and `test_app_routes.py` | **shipped** — bounded deployment-pinned verification and tenant-scoped replay refusal (T-133) |
+| A Memtara proof gates a Mizan decision | Typed `MappedInput` projection in `proofs/memtara.py`; field-to-field Cedar binding in `policy_engine.py`; `policies/reference/require_suitability_proof.json`; policy and authorization tests | **shipped** — suitability decline is a normal evidence-bearing DENY (T-134) |
+| One evidence bundle carries the Mizan decision and the Memtara proof / chain head | none; `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` has no external-proof field, neither verifier knows one | **none** — workplan T-135, M-04 |
+| Mizan delivers a `decision_id` to AIHOOTS | none, and none planned | **retired** — AIHOOTS is not a product (decision record §1) |
+| Delegated / standing approvals (“approve once, run for 30 days”) | none; `ExecutionLease` is the opposite (single decision, minutes) and approvals are `UNIQUE (tenant_id, decision_id)` | **none** — workplan T-139, founder-gated |
 
 ## SDK and surfaces
 

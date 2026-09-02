@@ -1,0 +1,9 @@
+Memtara reference prover: VERIFIED suitable=true
+Memtara audit checkpoint: PINNED
+Mizan proof verification: VERIFIED
+Mizan authorization: REQUIRE_APPROVAL
+Supervisor quorum: APPROVED
+Bound execution: EXECUTED
+Cross-anchored evidence bundle: EXPORTED
+Python offline verifier: PASS
+independent verifier: PASS

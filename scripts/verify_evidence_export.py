@@ -32,7 +32,7 @@ class VerificationFailure(ValueError):
 
 
 class MalformedBundle(VerificationFailure):
-    """The input does not conform to the Mizan bundle 1.0 grammar."""
+    """The input does not conform to a supported Mizan bundle grammar."""
 
 
 class CannotCheck(RuntimeError):
@@ -55,6 +55,147 @@ def verify_signature(payload: dict[str, Any], signature: str, key: Ed25519Public
         key.verify(base64.urlsafe_b64decode(signature), rfc8785.dumps(payload))
     except Exception as exc:
         raise VerificationFailure(f"{label} signature is invalid") from exc
+
+
+def _b64url_decode(segment: str, label: str) -> bytes:
+    """Decode one unpadded JOSE segment without accepting non-URL-safe characters."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    if not segment or any(character not in alphabet for character in segment):
+        raise VerificationFailure(f"{label} is not unpadded Base64url")
+    try:
+        return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+    except ValueError as exc:
+        raise VerificationFailure(f"{label} is not unpadded Base64url") from exc
+
+
+def load_memtara_trust_roots(paths: list[Path]) -> dict[str, Ed25519PublicKey]:
+    """Load operator-supplied RFC 8037 Ed25519 keys, indexed by ``kid``.
+
+    These files are deliberately CLI inputs rather than bundle members. Letting a bundle supply
+    the key that authenticates its own proof would make the signature check circular.
+    """
+    keys: dict[str, Ed25519PublicKey] = {}
+    for path in paths:
+        document = load_json(path)
+        if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
+            raise CannotCheck(f"Memtara trust root {path} is not a JWK Set")
+        for item in document["keys"]:
+            if not isinstance(item, dict):
+                continue
+            if item.get("kty") != "OKP" or item.get("crv") != "Ed25519":
+                continue
+            kid = item.get("kid")
+            x = item.get("x")
+            if not isinstance(kid, str) or not kid or not isinstance(x, str):
+                continue
+            try:
+                raw = _b64url_decode(x, f"Memtara trust root {path} key {kid}")
+                if len(raw) != 32:
+                    raise ValueError("Ed25519 public key is not 32 bytes")
+                key = Ed25519PublicKey.from_public_bytes(raw)
+            except (ValueError, VerificationFailure) as exc:
+                raise CannotCheck(f"Memtara trust root {path} key {kid} is malformed") from exc
+            if kid in keys:
+                raise CannotCheck(f"Memtara trust roots declare duplicate kid {kid!r}")
+            keys[kid] = key
+    if paths and not keys:
+        raise CannotCheck("operator-supplied Memtara trust roots contain no Ed25519 keys")
+    return keys
+
+
+EXTERNAL_PROOF_FIELDS = {
+    "issuer", "proof_hash", "jti", "memtara_chain_head", "token",
+}
+
+
+def validate_external_proof_grammar(record: dict[str, Any], sequence: int, version: str) -> None:
+    if "external_proofs" not in record:
+        return
+    if version != "1.1":
+        raise MalformedBundle(
+            f"record {sequence} carries external_proofs, which requires bundle version 1.1"
+        )
+    proofs = record["external_proofs"]
+    if not isinstance(proofs, list):
+        raise MalformedBundle(f"record {sequence} external_proofs is not an array")
+    for index, proof in enumerate(proofs):
+        label = f"record {sequence} external_proofs[{index}]"
+        if not isinstance(proof, dict) or set(proof) != EXTERNAL_PROOF_FIELDS:
+            raise MalformedBundle(
+                f"{label} must have exactly {sorted(EXTERNAL_PROOF_FIELDS)}"
+            )
+        for field in ("issuer", "jti", "token"):
+            if not isinstance(proof[field], str) or not proof[field]:
+                raise MalformedBundle(f"{label}.{field} is not a non-empty string")
+        for field in ("proof_hash", "memtara_chain_head"):
+            value = proof[field]
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise MalformedBundle(
+                    f"{label}.{field} is not a lowercase hexadecimal SHA-256 digest"
+                )
+
+
+def verify_external_proofs(
+    records: list[dict[str, Any]], memtara_trust_root_paths: list[Path]
+) -> int:
+    proofs = [
+        (record["sequence_number"], index, proof)
+        for record in records
+        for index, proof in enumerate(record.get("external_proofs", []))
+    ]
+    if not proofs:
+        return 0
+    if not memtara_trust_root_paths:
+        raise CannotCheck(
+            "bundle contains Memtara external proofs but no --memtara-trust-root was supplied"
+        )
+    keys = load_memtara_trust_roots(memtara_trust_root_paths)
+    seen: set[tuple[str, str]] = set()
+    for sequence, index, proof in proofs:
+        label = f"record {sequence} external_proofs[{index}]"
+        identity = (proof["issuer"], proof["jti"])
+        if identity in seen:
+            raise VerificationFailure(
+                f"duplicate Memtara external proof issuer/jti at {label}: {identity!r}"
+            )
+        seen.add(identity)
+
+        parts = proof["token"].split(".")
+        if len(parts) != 3:
+            raise VerificationFailure(f"{label}.token is not a compact JWS")
+        header_segment, payload_segment, signature_segment = parts
+        try:
+            header = json.loads(_b64url_decode(header_segment, f"{label} JWS header"))
+            claims = json.loads(_b64url_decode(payload_segment, f"{label} JWS payload"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise VerificationFailure(f"{label}.token has an unreadable JOSE document") from exc
+        if not isinstance(header, dict) or not isinstance(claims, dict):
+            raise VerificationFailure(f"{label}.token header and payload must be JSON objects")
+        if header.get("alg") != "EdDSA":
+            raise VerificationFailure(f"{label}.token does not use EdDSA")
+        kid = header.get("kid")
+        key = keys.get(kid)
+        if key is None:
+            raise VerificationFailure(
+                f"{label}.token kid {kid!r} is absent from the Memtara trust root"
+            )
+        try:
+            signature = _b64url_decode(signature_segment, f"{label} JWS signature")
+            key.verify(signature, f"{header_segment}.{payload_segment}".encode("ascii"))
+        except Exception as exc:
+            raise VerificationFailure(f"{label}.token signature is invalid") from exc
+        for field, claim in (("issuer", "iss"), ("proof_hash", "proof_hash"), ("jti", "jti")):
+            if proof[field] != claims.get(claim):
+                raise VerificationFailure(
+                    f"{label}.{field} does not match signed Memtara claim {claim}"
+                )
+        if claims.get("verified") is not True:
+            raise VerificationFailure(f"{label}.token does not assert verified=true")
+    return len(proofs)
 
 
 def der_element(data: bytes, index: int) -> tuple[int, bytes, int]:
@@ -335,12 +476,15 @@ def validate_sidecar_attestation(attestation: Any, anchor_number: int) -> None:
 def verify_bundle(
     bundle: Path,
     tsa_trust_anchors: list[Path] | None = None,
+    memtara_trust_roots: list[Path] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     tsa_trust_anchors = tsa_trust_anchors or []
+    memtara_trust_roots = memtara_trust_roots or []
     now = now or datetime.now(UTC)
     manifest = load_json(bundle / "manifest.json")
-    if manifest.get("bundle_version") != "1.0":
+    version = manifest.get("bundle_version")
+    if version not in {"1.0", "1.1"}:
         raise MalformedBundle("manifest bundle_version is unsupported")
     if manifest.get("canonicalization") != "RFC8785":
         raise MalformedBundle("manifest canonicalization is unsupported")
@@ -389,6 +533,8 @@ def verify_bundle(
 
     range_start = manifest["range"]["from_sequence"]
     range_end = manifest["range"]["to_sequence"]
+    for offset, record in enumerate(records):
+        validate_external_proof_grammar(record, range_start + offset, version)
     previous = ZERO_HASH if range_start == 0 else records[0].get("prev_hash")
     for offset, record in enumerate(records):
         sequence = range_start + offset
@@ -610,6 +756,8 @@ def verify_bundle(
     if claimed != expected_claim:
         raise VerificationFailure("manifest assurance claim does not match verified attestations")
 
+    external_proofs = verify_external_proofs(records, memtara_trust_roots)
+
     return {
         "records": len(records),
         "from_sequence": range_start,
@@ -634,6 +782,8 @@ def verify_bundle(
             default=None,
         ),
         "trust_anchors": [str(path) for path in tsa_trust_anchors],
+        "memtara_trust_roots": [str(path) for path in memtara_trust_roots],
+        "external_proofs": external_proofs,
     }
 
 
@@ -681,6 +831,13 @@ def main() -> int:
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--tsa-trust-anchor", action="append", type=Path, default=[])
     parser.add_argument(
+        "--memtara-trust-root",
+        action="append",
+        type=Path,
+        default=[],
+        help="operator-supplied Memtara JWK Set; repeatable and never read from the bundle",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="emit the verdict as a machine-readable document instead of prose. The shape is "
@@ -714,7 +871,7 @@ def main() -> int:
         return status
 
     try:
-        result = verify_bundle(args.bundle, args.tsa_trust_anchor)
+        result = verify_bundle(args.bundle, args.tsa_trust_anchor, args.memtara_trust_root)
     except CannotCheck as exc:
         if not args.json:
             print(f"CANNOT CHECK: {exc}", file=sys.stderr)
@@ -808,6 +965,10 @@ def main() -> int:
         )
     if result["trust_anchors"]:
         print("TRUST ROOTS USED: " + ", ".join(result["trust_anchors"]))
+    if result["memtara_trust_roots"]:
+        print("MEMTARA TRUST ROOTS USED: " + ", ".join(result["memtara_trust_roots"]))
+    if result["external_proofs"]:
+        print(f"EXTERNAL PROOFS VERIFIED: {result['external_proofs']} Memtara token(s).")
     print("WHAT THIS CHECKED: File integrity, record ordering/hash links, signed receipt coverage, and signed anchor continuity.")
     if expired:
         print(

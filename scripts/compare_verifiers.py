@@ -88,7 +88,9 @@ def run(command: list[str], repository: Path) -> tuple[dict, str]:
     return document, ""
 
 
-def python_command(bundle: Path, roots: list[Path], repository: Path) -> list[str]:
+def python_command(
+    bundle: Path, roots: list[Path], memtara_roots: list[Path], repository: Path
+) -> list[str]:
     command = [
         sys.executable,
         str(repository / "scripts" / "verify_evidence_export.py"),
@@ -97,10 +99,14 @@ def python_command(bundle: Path, roots: list[Path], repository: Path) -> list[st
     ]
     for root in roots:
         command += ["--tsa-trust-anchor", str(root)]
+    for root in memtara_roots:
+        command += ["--memtara-trust-root", str(root)]
     return command
 
 
-def node_command(bundle: Path, roots: list[Path], repository: Path) -> list[str]:
+def node_command(
+    bundle: Path, roots: list[Path], memtara_roots: list[Path], repository: Path
+) -> list[str]:
     command = [
         "node",
         str(repository / "verifier-two" / "bin" / "mizan-verify-two.js"),
@@ -109,6 +115,8 @@ def node_command(bundle: Path, roots: list[Path], repository: Path) -> list[str]
     ]
     for root in roots:
         command += ["--trust-root", str(root)]
+    for root in memtara_roots:
+        command += ["--memtara-trust-root", str(root)]
     return command
 
 
@@ -126,10 +134,17 @@ def main(argv: list[str] | None = None) -> int:
         name = case["bundle"]
         bundle = corpus / name
         roots = [(corpus / root).resolve() for root in case.get("trust_roots", [])]
+        memtara_roots = [
+            (corpus / root).resolve() for root in case.get("memtara_trust_roots", [])
+        ]
         expected = case["verdict"]
 
-        python_document, python_error = run(python_command(bundle, roots, repository), repository)
-        node_document, node_error = run(node_command(bundle, roots, repository), repository)
+        python_document, python_error = run(
+            python_command(bundle, roots, memtara_roots, repository), repository
+        )
+        node_document, node_error = run(
+            node_command(bundle, roots, memtara_roots, repository), repository
+        )
         for who, error in (("python", python_error), ("node", node_error)):
             if error:
                 disagreements.append(f"{name}: {who} did not produce a usable verdict -- {error}")

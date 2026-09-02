@@ -236,6 +236,28 @@ def test_missing_bearer_token_is_401_and_names_the_header(wired) -> None:
     assert client.get("/v1/agents/agt_wealth-01").status_code == 401
 
 
+def test_authorize_accepts_the_memtara_headers_and_fails_closed_when_unconfigured(wired) -> None:
+    client, _repositories, private_key = wired
+    headers = authorization(private_key, identity_kind="agent") | {
+        "x-memtara-proof": "header.payload.signature",
+        "x-memtara-chain-head": "a" * 64,
+    }
+    response = client.post("/v1/authorize", json=SIMULATION_CONTEXT, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["type"].endswith("invalid_memtara_proof")
+    assert "not configured" in response.json()["detail"]
+
+
+def test_authorize_refuses_a_chain_head_without_a_proof_token(wired) -> None:
+    client, _repositories, private_key = wired
+    headers = authorization(private_key, identity_kind="agent") | {
+        "x-memtara-chain-head": "a" * 64
+    }
+    response = client.post("/v1/authorize", json=SIMULATION_CONTEXT, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["type"].endswith("invalid_memtara_proof")
+
+
 def test_a_token_for_another_audience_is_rejected(wired) -> None:
     client, _repositories, private_key = wired
     response = client.get(

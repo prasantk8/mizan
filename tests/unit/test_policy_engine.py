@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pytest
+from mizan_control_plane.models import MappedInput
 from mizan_control_plane.policy_engine import (
     CedarPolicyEvaluator,
     PolicyCompileError,
     compile_condition,
     compile_policy,
 )
+from mizan_control_plane.registry import policy_semantic_hash
+from mizan_control_plane.schema_validation import ContractSchemas
 
 from tests.unit.test_authorization import context
 
@@ -89,3 +93,76 @@ def test_risk_and_environment_selectors_use_enriched_values() -> None:
     document["applies_to"] |= {"risk_levels": ["HIGH"], "environments": ["production"]}
     assert CedarPolicyEvaluator().evaluate([document], request, "HIGH") != []
     assert CedarPolicyEvaluator().evaluate([document], request, "LOW") == []
+
+
+def test_eq_field_binds_a_verified_claim_to_the_tool_argument() -> None:
+    request = context()
+    request.mapped = MappedInput.model_validate({
+        "source": "memtara",
+        "fields": {"product_isin": "XS1234567890"},
+    })
+    request.tool.arguments = {"product_isin": "XS1234567890"}
+    document = policy(
+        {
+            "field": "mapped.fields.product_isin",
+            "op": "eq_field",
+            "value": "tool.arguments.product_isin",
+        }
+    )
+    assert CedarPolicyEvaluator().evaluate([document], request)
+    request.tool.arguments["product_isin"] = "XS0000000000"
+    assert CedarPolicyEvaluator().evaluate([document], request) == []
+
+
+def test_reference_suitability_policy_is_valid_hash_bound_and_fail_closed() -> None:
+    path = Path("policies/reference/require_suitability_proof.json")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    ContractSchemas(Path("SPEC_v1.md")).validate("Policy", document)
+    assert policy_semantic_hash(document) == document["content_hash"]
+
+    request = context()
+    request.tool.id = "tool_product-recommendation"
+    request.tool.arguments = {"product_isin": "XS1234567890"}
+    request.action.type = "communicate"
+    request.mapped = MappedInput.model_validate({
+        "source": "memtara",
+        "fields": {
+            "proof_hash": "b" * 64,
+            "circuit": "wealth_suitability",
+            "predicate": "structured_product_suitable",
+            "product_isin": "XS1234567890",
+            "suitable": True,
+            "expires_at": 1_800_000_000,
+            "jti": "proof-jti-00000001",
+        },
+    })
+    evaluator = CedarPolicyEvaluator()
+
+    # UC-2 recommendation row: a matching valid proof permits the below-threshold tool.
+    assert evaluator.evaluate([document], request)
+    # No proof.
+    request.mapped = None
+    assert evaluator.evaluate([document], request) == []
+    # A verified decline is never treated as an approval.
+    request.mapped = MappedInput.model_validate({
+        "source": "memtara",
+        "fields": {
+            "circuit": "wealth_suitability",
+            "predicate": "structured_product_suitable",
+            "product_isin": "XS1234567890",
+            "suitable": False,
+        },
+    })
+    assert evaluator.evaluate([document], request) == []
+    # A proof about a different instrument cannot authorize this recommendation.
+    request.mapped.fields["suitable"] = True
+    request.mapped.fields["product_isin"] = "XS0000000000"
+    assert evaluator.evaluate([document], request) == []
+    # Profile reads and exports remain outside this narrowly-scoped reference policy; deployments
+    # compose their ordinary read policy while export stays default-denied.
+    request.tool.id = "tool_client-profile-read"
+    request.action.type = "financial_read"
+    assert evaluator.evaluate([document], request) == []
+    request.tool.id = "tool_client-documents-export"
+    request.action.type = "export"
+    assert evaluator.evaluate([document], request) == []

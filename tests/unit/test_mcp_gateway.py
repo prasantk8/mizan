@@ -52,11 +52,15 @@ class FakeControlPlane:
         decision: str = "ALLOW",
         approval_states: list[str] | None = None,
         authorize_status: int = 200,
+        proof_decisions: dict[str | None, str] | None = None,
     ) -> None:
         self.decision = decision
         self.approval_states = approval_states or []
         self.authorize_status = authorize_status
+        self.proof_decisions = proof_decisions
         self.contexts: list[dict[str, Any]] = []
+        self.proof_headers: list[str | None] = []
+        self.chain_head_headers: list[str | None] = []
         self.completions: list[dict[str, Any]] = []
         # Problem codes the capability endpoint answers with before it starts issuing.
         self.capability_refusals: list[str] = []
@@ -75,18 +79,26 @@ class FakeControlPlane:
                     json={"type": "https://mizan.ai/problems/evidence_write_failed"},
                 )
             self.contexts.append(json.loads(request.content))
+            proof_token = request.headers.get("x-memtara-proof")
+            self.proof_headers.append(proof_token)
+            self.chain_head_headers.append(request.headers.get("x-memtara-chain-head"))
+            decision = (
+                self.proof_decisions.get(proof_token, "DENY")
+                if self.proof_decisions is not None
+                else self.decision
+            )
             return httpx.Response(
                 200,
                 json={
                     "decision_id": "adr_" + "a" * 24,
-                    "decision": self.decision,
+                    "decision": decision,
                     "risk": {"level": "HIGH", "floor_source": "tool_registry_floor"},
                     "policies": [],
                     "reasons": ["Matched pol_write v1"],
                     "constraints": None,
                     "degraded": {"is_degraded": False, "reason": "none", "grant_ref": None},
                     "approval": {"approval_id": "apr_1", "status": "PENDING", "required": True}
-                    if self.decision == "REQUIRE_APPROVAL"
+                    if decision == "REQUIRE_APPROVAL"
                     else None,
                 },
             )
@@ -165,6 +177,31 @@ def test_an_allowed_call_reaches_the_tool_server_and_carries_its_decision_back()
     assert result.structured_content["mizan"]["decision_id"] == "adr_" + "a" * 24
     assert plane.contexts[0]["tool"]["id"] == "tool_write-file"
     assert plane.contexts[0]["action"]["type"] == "write"
+
+
+def test_mcp_calls_with_and_without_a_memtara_proof_reach_the_expected_decision_path() -> None:
+    opaque_token = "opaque-token.forwarded-byte-for-byte"
+    opaque_chain_head = "also-opaque-to-the-gateway"
+    plane = FakeControlPlane(proof_decisions={opaque_token: "ALLOW", None: "DENY"})
+    upstream = FakeUpstream()
+    handler = handlers(plane, upstream)
+
+    allowed = call(
+        handler,
+        meta={
+            "x-memtara-proof": opaque_token,
+            "x-memtara-chain-head": opaque_chain_head,
+        },
+    )
+    refused = call(handler)
+
+    assert plane.proof_headers == [opaque_token, None]
+    assert plane.chain_head_headers == [opaque_chain_head, None]
+    assert upstream.calls == [("write_file", ARGUMENTS)]
+    assert allowed.structured_content["mizan"]["decision"] == "ALLOW"
+    assert refused.is_error is True
+    assert refused.structured_content["mizan"]["reason_class"] == "denied"
+    assert all("proof" not in context for context in plane.contexts)
 
 
 def test_a_denied_call_never_reaches_the_tool_server() -> None:
