@@ -659,27 +659,8 @@ jobs:
             python3 scripts/validate_claim_ledger.py --base "$base" --head HEAD
           fi
 
-  completion-report:
-    # H-2's completion report lives in the pull request body. R-008's process note found
-    # four commit bodies carrying no pre-fix SHA and no what-did-not-work; a rule that
-    # depends on remembering is not a boundary, so the report is checked here instead.
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Collect the pull request body and its changed files
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          printf '%s' "$PR_BODY" > pr-body.md
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > pr-changed-files.txt
-      - name: Require the completion report
-        run: |
-          python3 scripts/validate_pr_body.py \
-            --body-file pr-body.md \
-            --changed-files-file pr-changed-files.txt
+  # `completion-report` moved to .github/workflows/completion-report.yml on 2026-09-02. It is the
+  # one gate whose subject is the pull request body rather than the commit, so it needs the
+  # `edited` trigger that `on: pull_request` does not include by default -- and giving that trigger
+  # to this whole workflow would rebuild Docker images and start a Vault every time a description
+  # is corrected. The required check name is unchanged.

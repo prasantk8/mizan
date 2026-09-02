@@ -221,6 +221,17 @@ history, no force-pushes, no deletions, and **`enforce_admins: true`**, so it bi
 by rejection rather than by reading the settings back — a direct push of an empty commit to `main` was
 refused with `GH006 … 13 of 13 required status checks are expected`.
 
+**One thing this made visible about our own gate.** `completion-report` is the only check in this
+repository whose subject is not the commit — it reads the pull request **body**, which is editable
+text that changes without a push. It lived in `ci.yml` under a bare `on: pull_request`, whose default
+types are `[opened, synchronize, reopened]` and do **not** include `edited`; and it takes the body
+from `github.event.pull_request.body`, the event payload frozen when the event fired. So a report
+that failed and was then corrected stayed red — re-running the job replays the same stale payload,
+and the only way to green was to push an unrelated commit. **A gate whose remedy is a junk commit
+teaches people to make junk commits.** It now lives in its own workflow with the `edited` trigger,
+under the same check name, rather than giving that trigger to thirteen jobs including a Docker build
+and a live Vault.
+
 **The gap that remains, stated rather than papered over.** `required_pull_request_reviews` is deliberately
 **null**, and this is the honest reason: there is exactly one collaborator, who authors every PR, and GitHub
 forbids approving your own. Requiring one approval would make every PR mergeable only by admin bypass, which

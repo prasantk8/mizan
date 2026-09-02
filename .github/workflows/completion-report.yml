@@ -1,0 +1,51 @@
+# H-2's completion report lives in the pull request body, so unlike every other gate in this
+# repository the artifact this one checks is **not** the commit — it is editable text that changes
+# without a push.
+#
+# It lived in `ci.yml` until 2026-09-02, where `on: pull_request` defaults to
+# `[opened, synchronize, reopened]`. `edited` is not in that list, and the body is read from
+# `github.event.pull_request.body` — the event payload, frozen at the moment the event fired. So a
+# report that failed and was then corrected stayed red: re-running the job replays the same stale
+# payload, and the only way to green was to push an unrelated commit. A gate whose remedy is a junk
+# commit teaches people to make junk commits.
+#
+# Its own workflow rather than `types: [..., edited]` on `ci.yml`, because that would re-run all
+# thirteen jobs — a Docker build, a live Vault, an S3 Object Lock bucket — every time somebody fixes
+# a typo in a description. The check name stays `completion-report`, which is what `main`'s branch
+# protection requires as a context.
+name: Completion report
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: completion-report-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  completion-report:
+    # R-008's process note found four commit bodies carrying no pre-fix SHA and no
+    # what-did-not-work. A rule that depends on remembering is not a boundary.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Collect the pull request body and its changed files
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s' "$PR_BODY" > pr-body.md
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > pr-changed-files.txt
+      - name: Require the completion report
+        run: |
+          python3 scripts/validate_pr_body.py \
+            --body-file pr-body.md \
+            --changed-files-file pr-changed-files.txt
