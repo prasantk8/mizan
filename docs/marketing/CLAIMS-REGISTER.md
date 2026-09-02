@@ -73,6 +73,10 @@ Say the whole cell, including the second sentence. Dropping the qualifier makes 
 > **HYPOTHESIS — 2026-09-02.** *"Enterprise-grade, private, auditable AI for firms that can't afford
 > to get it wrong."*
 
+The architecture the sentence describes, with the trust boundaries and the explicit *what Mizan does
+not do* list, is `docs/product/GOVERNED-PRIVATE-STACK.md` (T-145). Read it before using any row below
+in a conversation — it is where each word's limit is argued rather than merely stated.
+
 **This sentence has no cleared external use.** It is under evaluation by
 `docs/handoff/PRIVATE-STACK-POSITIONING-WORKPLAN.md`, tested by **F-T-7**, and ruled on by **T-149**
 on **2026-10-31** as Adopt / Adapt / Abandon. Three separate gates stand in front of it, and *all

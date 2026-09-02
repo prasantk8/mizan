@@ -1,6 +1,15 @@
 # TM-002 — Mizan↔Memtara Proof Seam, Threat Model v1
 
 **Status:** SKELETON — boundary definition for T-127; implementation gates belong to T-133..T-138
+
+> **STALE as of 2026-09-02 — do not cite as current (recorded by T-145).** T-133–T-138 merged in PR #41
+> on 2026-09-02. Everything below labelled *planned* has shipped, and §0's "Today Mizan does none of
+> those things" is no longer true. §6's questions have answers in ADR-010,
+> `docs/spec/EVIDENCE-BUNDLE-FORMAT.md` §2.1 and `docs/product/MODULE_LEDGER.md` — including Q2, whose
+> answer is **per process, not across replicas**, which is a stated limit rather than a closed one. A
+> v2 revision is owed and is SE-lane work with founder ratification, as TM-001 had. It is deliberately
+> not done by editing "planned" to "shipped" in place: re-labelling a control is a claim about the
+> control, and each one needs re-verifying against what actually merged.
 **Date:** 2026-09-01
 **Scope baseline:** Mizan `bc16436`; no Memtara verifier or proof field exists in this tree at this SHA
 **Companion documents:** `threat-models/TM-001-control-plane-v1.md`,
