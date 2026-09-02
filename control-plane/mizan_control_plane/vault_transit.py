@@ -50,6 +50,9 @@ KEY_REF = re.compile(r"^vault://(?P<mount>[\w-]+)/(?P<name>[\w.-]+)#v(?P<version
 # Vault returns `vault:v<n>:<standard base64 signature>`.
 SIGNATURE = re.compile(r"^vault:v(?P<version>\d+):(?P<signature>[A-Za-z0-9+/=]+)$")
 
+# The HMAC endpoint uses the same envelope for a digest rather than a signature.
+HMAC_ENVELOPE = re.compile(r"^vault:v(?P<version>\d+):(?P<digest>[A-Za-z0-9+/=]+)$")
+
 
 class VaultRefused(RuntimeError):
     """Vault could not be used as configured. Always a startup or request refusal, never a warning."""
@@ -119,6 +122,10 @@ class VaultTransitBackend:
         # means a signature can still be verified locally while Vault is briefly unreachable for
         # reads, which is the direction that fails safe.
         self._public_keys: dict[str, Ed25519PublicKey] = {}
+        # Key type is a property of the key, not of one version, and `mac()` checks it on every
+        # call. Without this cache the audit write path would make two round trips per commitment
+        # instead of one, and the ruling already accepts N+1 as its stated cost.
+        self._key_types: dict[str, str] = {}
 
     def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         try:
@@ -213,6 +220,69 @@ class VaultTransitBackend:
                 "immutable."
             ) from error
         return signature
+
+    def mac(self, key_ref: str, payload: bytes) -> bytes:
+        """HMAC-SHA256 in place, for the audit commitment key (T-054, B-30 ruled).
+
+        **The safety net that `sign()` has does not exist here, and pretending otherwise would be
+        worse than saying so.** `sign()` verifies every signature locally before returning it,
+        because a misconfigured Transit mount can produce a well-formed signature over the wrong
+        bytes. A MAC cannot be checked that way: verifying it requires the secret, and the secret is
+        in Vault precisely so that this process never holds it. So a Vault that MACs the wrong bytes
+        is undetectable here by construction.
+
+        What is left is everything that *can* be checked, and each of these is a way it has already
+        been possible to go wrong on the signing path:
+
+          * **The key type must be `hmac`.** Transit will happily HMAC under an `ed25519` key, which
+            would quietly use an evidence *signing* key as the audit commitment key -- exactly the
+            key separation ADR-004 G.1 exists to enforce, defeated by a copy-pasted key name.
+          * **The returned version must be the version the reference names.** Transit uses the
+            latest version when asked for one it no longer has, and a commitment under a version the
+            record does not cite cannot be resolved by the operator later.
+          * **The digest must be 32 bytes**, so a mount configured for another algorithm is a
+            refusal rather than a short commitment nobody looks at again.
+        """
+        reference = TransitKeyRef.parse(key_ref)
+        if self._key_type(reference) != "hmac":
+            raise VaultRefused(
+                f"Transit key {reference.name!r} is not of type 'hmac'; the audit commitment key "
+                "must be a separate MAC key (ADR-004 G.1, four signing roles plus one MAC). "
+                "Refusing to authenticate a commitment under an evidence signing key."
+            )
+        document = self._request(
+            "POST",
+            f"/v1/{reference.mount}/hmac/{reference.name}",
+            {
+                "input": base64.b64encode(payload).decode(),
+                "key_version": reference.version,
+                "algorithm": "sha2-256",
+            },
+        )
+        stated = ((document.get("data") or {}).get("hmac")) or ""
+        matched = HMAC_ENVELOPE.match(stated)
+        if not matched:
+            raise VaultRefused(f"Vault returned an unrecognised HMAC envelope for {key_ref}")
+        if int(matched["version"]) != reference.version:
+            raise VaultRefused(
+                f"Vault MACed {key_ref} with key version {matched['version']}, not "
+                f"{reference.version}"
+            )
+        digest = base64.b64decode(matched["digest"], validate=True)
+        if len(digest) != 32:
+            raise VaultRefused(
+                f"Vault returned a {len(digest)}-byte digest for {key_ref}; HMAC-SHA256 is 32"
+            )
+        return digest
+
+    def _key_type(self, reference: TransitKeyRef) -> str:
+        cached = self._key_types.get(reference.name)
+        if cached is not None:
+            return cached
+        document = self._request("GET", f"/v1/{reference.mount}/keys/{reference.name}")
+        key_type = str((document.get("data") or {}).get("type") or "")
+        self._key_types[reference.name] = key_type
+        return key_type
 
     def close(self) -> None:
         self._client.close()

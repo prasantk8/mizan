@@ -44,6 +44,7 @@ class Settings:
     environment: str
     key_custody_mode: str
     signing_key_refs: tuple[str, str, str, str]
+    audit_commitment_key_ref: str
     anchor_provider: str
     anchor_tsa_endpoints: tuple[str, ...]
     anchor_tsa_trust_anchors: tuple[str, ...]
@@ -149,6 +150,12 @@ class Settings:
             environ.get("MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF", "local://execution-token/dev-1"),
             environ.get("MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF", "local://degraded-grant/dev-1"),
         )
+        # The fifth role and the only MAC one (T-054). Registered in `SPEC_v1.md` since the
+        # baseline as *(required)* and read by nothing until now -- a fully specified key with no
+        # custody, which is TM-001 R-2 and what B-30 ruled on.
+        audit_commitment_key_ref = environ.get(
+            "MIZAN_AUDIT_HMAC_KEY_REF", "local://audit-commitment/dev-1"
+        )
         custody = environ.get("MIZAN_KEY_CUSTODY_MODE", "development")
         # B-20 stamped the vocabulary as `development-derived | kms | hsm` for a *key document*.
         # This setting names the **backend** rather than the custody of one key, and the two were
@@ -214,11 +221,18 @@ class Settings:
         )
         if len(set(refs)) != 4:
             raise RuntimeError("the four signing key roles require distinct key references")
+        # The commitment key is held under separate authority (ADR-004 Amendment A), so reusing an
+        # evidence signing reference for it is a key-separation failure and not a typo to tolerate.
+        if audit_commitment_key_ref in refs:
+            raise RuntimeError(
+                "MIZAN_AUDIT_HMAC_KEY_REF must not reuse a signing key reference; the audit "
+                "commitment key is held under separate authority (ADR-004 G.1, T-054)"
+            )
         if environment == "production" and (custody == "development" or any(
-            item.startswith("local://") for item in refs
+            item.startswith("local://") for item in (*refs, audit_commitment_key_ref)
         )):
             production_problems.append(
-                "production refuses development custody and local:// signing keys"
+                "production refuses development custody and local:// signing or commitment keys"
             )
         if environment == "production" and (
             anchor_provider != "rfc3161" or not tsa_endpoints or not tsa_trust_anchors
@@ -306,6 +320,7 @@ class Settings:
             environment=environment,
             key_custody_mode=custody,
             signing_key_refs=refs,
+            audit_commitment_key_ref=audit_commitment_key_ref,
             vault_address=vault_address,
             vault_token=vault_token,
             vault_namespace=vault_namespace,

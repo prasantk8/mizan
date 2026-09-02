@@ -14,6 +14,8 @@ immutable and that no verifier will ever accept.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 
 import httpx
@@ -46,7 +48,9 @@ class FakeVault:
         signer: Ed25519PrivateKey | None = None,
         signing_version: int | None = None,
         status: int = 200,
+        mac_secret: bytes = b"transit-hmac-secret",
     ) -> None:
+        self.mac_secret = mac_secret
         self.key_type = key_type
         self.versions = versions if versions is not None else {"1": PUBLIC_B64}
         self.signer = signer or SIGNER
@@ -75,6 +79,14 @@ class FakeVault:
         body = json.loads(request.content)
         payload = base64.b64decode(body["input"])
         version = self.signing_version or body.get("key_version", 1)
+        if "/hmac/" in request.url.path:
+            # Transit HMACs in place and returns the same `vault:v<n>:<b64>` envelope it uses for a
+            # signature. The double keeps the secret so the digest is deterministic; the backend
+            # cannot check it, which is the asymmetry `mac()` documents.
+            digest = base64.b64encode(
+                hmac.new(self.mac_secret, payload, hashlib.sha256).digest()
+            ).decode()
+            return httpx.Response(200, json={"data": {"hmac": f"vault:v{version}:{digest}"}})
         signature = base64.b64encode(self.signer.sign(payload)).decode()
         return httpx.Response(200, json={"data": {"signature": f"vault:v{version}:{signature}"}})
 
@@ -269,3 +281,110 @@ def test_a_backend_without_an_address_or_a_token_is_refused_at_construction() ->
         VaultTransitBackend("", "s.token")
     with pytest.raises(VaultRefused, match="MIZAN_VAULT_TOKEN"):
         VaultTransitBackend("https://vault.test", "")
+
+
+# ---------------------------------------------------------------------------------------------
+# The MAC path (T-054, B-30 ruled). Read `VaultTransitBackend.mac` first: the local-verification
+# safety net that guards every signature does not exist here and cannot, so these tests cover
+# exactly what is left checkable.
+# ---------------------------------------------------------------------------------------------
+
+COMMITMENT = "vault://transit/audit-commitment#v1"
+
+
+def test_a_commitment_is_maced_in_place_and_matches_the_key_vault_holds() -> None:
+    vault = FakeVault(key_type="hmac")
+    subject = backend(vault)
+    payload = b'{"account":"ACC-1"}'
+
+    digest = subject.mac(COMMITMENT, payload)
+
+    assert digest == hmac.new(vault.mac_secret, payload, hashlib.sha256).digest()
+    assert len(digest) == 32
+    posted = [r for r in vault.requests if r.method == "POST"]
+    assert posted and "/v1/transit/hmac/audit-commitment" in posted[0].url.path
+    body = json.loads(posted[0].content)
+    assert body["algorithm"] == "sha2-256"
+    assert body["key_version"] == 1
+    # The payload is sent base64-encoded and never in the URL or a query string.
+    assert base64.b64decode(body["input"]) == payload
+    assert b"ACC-1" not in bytes(str(posted[0].url), "utf-8")
+
+
+def test_an_ed25519_key_may_not_be_used_as_the_audit_commitment_key() -> None:
+    """Key separation, enforced rather than trusted to a naming convention.
+
+    Transit will HMAC under any key type. Pointing `MIZAN_AUDIT_HMAC_KEY_REF` at an evidence
+    signing key would therefore work silently and defeat ADR-004 G.1's whole reason for holding
+    the roles separately -- via a copy-pasted key name, which is how it would actually happen.
+    """
+    subject = backend(FakeVault(key_type="ed25519"))
+    with pytest.raises(VaultRefused, match="not of type 'hmac'"):
+        subject.mac(COMMITMENT, b"payload")
+
+
+def test_a_mac_from_a_different_key_version_is_refused() -> None:
+    """A commitment under a version the record does not cite cannot be resolved later.
+
+    Transit falls back to the latest version when asked for one it no longer holds, so this is a
+    real behaviour rather than a defensive check against an impossible response.
+    """
+    subject = backend(FakeVault(key_type="hmac", signing_version=7))
+    with pytest.raises(VaultRefused, match="not 1"):
+        subject.mac(COMMITMENT, b"payload")
+
+
+def test_an_unrecognised_hmac_envelope_is_refused() -> None:
+    client = httpx.Client(
+        base_url="https://vault.test",
+        headers={"X-Vault-Token": "s.token"},
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json=(
+                    {"data": {"type": "hmac", "keys": {"1": {}}}}
+                    if request.method == "GET"
+                    else {"data": {"hmac": "not-a-vault-envelope"}}
+                ),
+            )
+        ),
+    )
+    subject = VaultTransitBackend("https://vault.test", "s.token", client=client)
+    with pytest.raises(VaultRefused, match="unrecognised HMAC envelope"):
+        subject.mac(COMMITMENT, b"payload")
+
+
+def test_a_digest_that_is_not_32_bytes_is_refused() -> None:
+    """A mount configured for another algorithm is a refusal, not a short commitment."""
+    short = base64.b64encode(b"too-short").decode()
+    client = httpx.Client(
+        base_url="https://vault.test",
+        headers={"X-Vault-Token": "s.token"},
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json=(
+                    {"data": {"type": "hmac", "keys": {"1": {}}}}
+                    if request.method == "GET"
+                    else {"data": {"hmac": f"vault:v1:{short}"}}
+                ),
+            )
+        ),
+    )
+    subject = VaultTransitBackend("https://vault.test", "s.token", client=client)
+    with pytest.raises(VaultRefused, match="HMAC-SHA256 is 32"):
+        subject.mac(COMMITMENT, b"payload")
+
+
+def test_the_key_type_is_read_once_and_cached_so_a_commitment_costs_one_round_trip() -> None:
+    """B-30 accepted N+1 round trips per audit write. Not 2N+2.
+
+    An audit record MACs once per manifest finding plus once over the whole payload, so a key-type
+    read on every call would silently double the cost the ruling priced.
+    """
+    vault = FakeVault(key_type="hmac")
+    subject = backend(vault)
+    for _ in range(4):
+        subject.mac(COMMITMENT, b"payload")
+    assert len([r for r in vault.requests if r.method == "GET"]) == 1
+    assert len([r for r in vault.requests if r.method == "POST"]) == 4

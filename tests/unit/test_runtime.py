@@ -128,6 +128,7 @@ def test_production_refuses_to_start_without_a_real_key_backend(monkeypatch, tmp
             MIZAN_EVIDENCE_ANCHOR_KEY_REF="kms://vault/anchor",
             MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF="kms://vault/execution",
             MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF="kms://vault/degraded",
+            MIZAN_AUDIT_HMAC_KEY_REF="kms://vault/audit-commitment",
         )
 
     # And a real backend whose Vault is not there still refuses, rather than starting and failing
@@ -141,6 +142,7 @@ def test_production_refuses_to_start_without_a_real_key_backend(monkeypatch, tmp
         MIZAN_EVIDENCE_ANCHOR_KEY_REF="vault://transit/anchor#v1",
         MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF="vault://transit/execution#v1",
         MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF="vault://transit/degraded#v1",
+        MIZAN_AUDIT_HMAC_KEY_REF="vault://transit/audit-commitment#v1",
     )
     with pytest.raises(StartupRefused, match="vault-transit key backend is not usable"):
         build_key_provider(settings)

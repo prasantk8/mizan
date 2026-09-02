@@ -302,9 +302,39 @@ def test_audit_verify_refuses_a_stream_outside_the_token_tenant(wired) -> None:
 
 def test_components_absent_in_development_answer_503_rather_than_500(wired) -> None:
     client, _repositories, private_key = wired
-    response = client.get("/v1/audit/keys", headers=authorization(private_key))
-    assert response.status_code == 503
-    assert response.json()["type"].endswith("key_provider_unavailable")
+    for path in ("/v1/audit/keys", "/v1/audit/commitment-keys"):
+        response = client.get(path, headers=authorization(private_key))
+        assert response.status_code == 503
+        assert response.json()["type"].endswith("key_provider_unavailable")
+
+
+def test_the_two_keysets_the_routes_serve_never_overlap() -> None:
+    """T-054: the audit commitment key is served, never exported, and never has a public half.
+
+    Both keysets are asserted together because the failure this guards against is one leaking into
+    the other. `/v1/audit/keys` is copied verbatim into every export bundle (ADR-004 G.1) and both
+    verifiers reject any entry without `public_key` or with an algorithm other than Ed25519 — so a
+    commitment entry appearing there would break the exporter and both verifiers at once.
+    """
+    from mizan_control_plane.keys import (
+        KEY_ROLES,
+        MAC_ALGORITHM,
+        MAC_ROLES,
+        development_key_provider,
+    )
+
+    provider = development_key_provider()
+
+    verification = provider.verification_keyset()
+    commitments = provider.commitment_keyset()
+
+    assert {item["role"] for item in verification} == set(KEY_ROLES)
+    assert all("public_key" in item for item in verification)
+    assert {item["role"] for item in commitments} == set(MAC_ROLES)
+    assert all("public_key" not in item for item in commitments)
+    assert all(item["algorithm"] == MAC_ALGORITHM for item in commitments)
+    # No commitment key id may appear in the exported keyset, under any role label.
+    assert not {i["key_id"] for i in verification} & {i["key_id"] for i in commitments}
 
 
 def test_openapi_document_declares_no_route_that_wants_a_principal_query_parameter(wired) -> None:

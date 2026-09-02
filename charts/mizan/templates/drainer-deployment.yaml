@@ -53,6 +53,7 @@ spec:
             - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
             - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}
             - {name: MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF, value: {{ .Values.config.degradedGrantKeyRef | quote }}}
+            - {name: MIZAN_AUDIT_HMAC_KEY_REF, value: {{ .Values.config.auditCommitmentKeyRef | quote }}}
             - {name: MIZAN_ANCHOR_PROVIDER, value: rfc3161}
             - {name: MIZAN_ANCHOR_TSA_ENDPOINTS, value: {{ .Values.config.tsaEndpoints | quote }}}
             - {name: MIZAN_ANCHOR_TSA_TRUST_ANCHORS, value: /run/mizan/tls/tsa-root.pem}

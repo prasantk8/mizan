@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import hmac
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -100,8 +99,21 @@ class RedactionResult:
     redaction: dict[str, Any]
 
 
-def _hmac(key: bytes, value: Any) -> str:
-    return hmac.new(key, rfc8785.dumps(value), hashlib.sha256).hexdigest()
+class CommitmentKey(Protocol):
+    """The `MacKey` half of the key provider, restated here so this package imports nothing.
+
+    `security/` is a separate distribution from the control plane and must stay that way; the
+    structural typing is the contract. `mizan_control_plane.keys.MacKey` satisfies it, and so does
+    a test double, and neither has to know about the other.
+    """
+
+    key_id: str
+
+    def mac(self, payload: bytes) -> bytes: ...
+
+
+def _commit(key: CommitmentKey, value: Any) -> str:
+    return key.mac(rfc8785.dumps(value)).hex()
 
 
 def _resolve_parent(document: Any, pointer: str) -> tuple[Any, str]:
@@ -143,16 +155,25 @@ class Redactor:
     def __init__(
         self,
         scanner: DlpScanner,
-        commitment_key: bytes,
-        key_ref: str,
+        commitment_key: CommitmentKey,
         failure_sink: Callable[[dict[str, str]], None],
         build: str = "mizan-redactor-1",
     ) -> None:
-        if len(commitment_key) < 32:
-            raise ValueError("audit commitment key must be at least 256 bits")
+        """Takes a key that *computes* a commitment, never the key material itself (T-054, B-30).
+
+        This used to take raw `bytes` and HMAC them in process, which contradicted ADR-004 G.1's
+        *"private key material never enters the control-plane process"* the moment custody became
+        real: under `custody=kms` there are no bytes to pass, because the secret lives in Vault and
+        Transit MACs in place. Taking the key *object* is what makes the KMS and development paths
+        the same code.
+
+        `key_ref` is no longer a separate argument either. It was possible to pass key material
+        under one reference and label the commitment with another, and the label is what a record
+        cites forever — so it now comes from the key that did the work.
+        """
         self.scanner = scanner
         self.commitment_key = commitment_key
-        self.key_ref = key_ref
+        self.key_ref = commitment_key.key_id
         self.build = build
         self.failure_sink = failure_sink
 
@@ -189,7 +210,7 @@ class Redactor:
                 continue
             parent, key = _resolve_parent(source, finding.pointer)
             original = parent[int(key)] if isinstance(parent, list) else parent[key]
-            commitment = _hmac(self.commitment_key, original)
+            commitment = _commit(self.commitment_key, original)
             _transform(stored, finding.pointer, operation, commitment)
             manifest.append(
                 {
@@ -200,7 +221,7 @@ class Redactor:
                 }
             )
         stored_hash = hashlib.sha256(rfc8785.dumps(stored)).hexdigest()
-        source_value = _hmac(self.commitment_key, source)
+        source_value = _commit(self.commitment_key, source)
         return RedactionResult(
             payload=stored,
             stored_payload_hash=stored_hash,

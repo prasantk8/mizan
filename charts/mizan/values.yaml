@@ -28,6 +28,10 @@ config:
   evidenceAnchorKeyRef: vault://transit/mizan-evidence-anchor#v1
   executionTokenKeyRef: vault://transit/mizan-execution-token#v1
   degradedGrantKeyRef: vault://transit/mizan-degraded-grant#v1
+  # The fifth key role and the only MAC one (ADR-004 G.1 as amended by B-30, T-054). A Transit key
+  # of type `hmac`; the adapter refuses to commit under an `ed25519` key, so pointing this at one of
+  # the four above fails at startup rather than silently reusing an evidence signing key.
+  auditCommitmentKeyRef: vault://transit/mizan-audit-commitment#v1
   vaultAddr: ""                              # required; https:// in production
   vaultTokenFile: /run/mizan/vault/token     # a Secret mount or a Vault Agent sink
   # Evidence durability (B-21). `local` is a directory and production refuses it: a directory

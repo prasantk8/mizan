@@ -1767,7 +1767,7 @@ Every behaviour that varies is named here (rule 9). "Scope" says who may set it;
 | `escalation.pool_mode` | *(none — must be set)* | policy | V-3: absent value is a validation error, not an implicit `augment`. |
 | `escalation.carry_forward_votes` | `false` | policy | Conservative default: escalation re-establishes authority. |
 | `escalation.max_epochs` | `2` | policy | Max 5. |
-| `MIZAN_AUDIT_HMAC_KEY_REF` | *(required)* | deployment | `KeyRef` for the audit commitment key. Rotated; records cite the key they used. |
+| `MIZAN_AUDIT_HMAC_KEY_REF` | `local://audit-commitment/dev-1` | deployment | `KeyRef` for the audit commitment key — the **fifth key role and the only MAC one** (ADR-004 G.1 as amended, B-30/T-054). Rotated additively; records cite the key they used. Must not reuse a signing reference, and a `local://` value is refused under `MIZAN_ENV=production` exactly as the four signing refs are. Served at `/v1/audit/commitment-keys`, **never** in `/v1/audit/keys` or an export bundle: an HMAC has no public half and no third party can verify one. Under `vault-transit` the key must be a Transit key of type `hmac`. |
 | `MIZAN_AUDIT_HMAC_KEY_ROTATION_DAYS` | `90` | deployment | Old keys retained for verification for the retention period. |
 | `MIZAN_AUDIT_ANCHOR_BUCKET` | *(required)* | deployment | WORM target (S3 Object Lock / equivalent / on-prem file target). |
 | `MIZAN_AUDIT_ANCHOR_INTERVAL_SECONDS` | `300` | deployment | Also anchored every `MIZAN_AUDIT_ANCHOR_INTERVAL_RECORDS` = 10000, whichever first. |

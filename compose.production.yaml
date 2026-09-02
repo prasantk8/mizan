@@ -15,6 +15,9 @@ x-control-environment: &control-environment
   MIZAN_EVIDENCE_ANCHOR_KEY_REF: ${MIZAN_EVIDENCE_ANCHOR_KEY_REF:-vault://transit/mizan-evidence-anchor#v1}
   MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF: ${MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF:-vault://transit/mizan-execution-token#v1}
   MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF: ${MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF:-vault://transit/mizan-degraded-grant#v1}
+  # The fifth role, and the only MAC one: a Transit key of type `hmac`, not `ed25519`
+  # (ADR-004 G.1 as amended, T-054). Production refuses to start without it.
+  MIZAN_AUDIT_HMAC_KEY_REF: ${MIZAN_AUDIT_HMAC_KEY_REF:-vault://transit/mizan-audit-commitment#v1}
   MIZAN_ANCHOR_PROVIDER: rfc3161
   MIZAN_ANCHOR_TSA_ENDPOINTS: ${MIZAN_ANCHOR_TSA_ENDPOINTS}
   MIZAN_ANCHOR_TSA_TRUST_ANCHORS: /run/mizan/tls/tsa-root.pem

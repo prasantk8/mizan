@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -456,10 +458,17 @@ def test_registry_create_get_and_cursor_list_are_tenant_scoped() -> None:
 @pytest.mark.skipif(not os.getenv("MIZAN_TEST_DATABASE_URL"), reason="Postgres not configured")
 def test_redacted_audit_write_is_chained_without_raw_pii() -> None:
     repository = EvidenceRepository(os.environ["MIZAN_TEST_DATABASE_URL"])
+    # The redactor takes the key that *computes* a commitment, never key material (T-054, B-30):
+    # under `custody=kms` there are no bytes to pass, because Transit MACs in place.
+    class TestCommitmentKey:
+        key_id = "hsm://audit/test-key"
+
+        def mac(self, payload: bytes) -> bytes:
+            return hmac.new(b"k" * 32, payload, hashlib.sha256).digest()
+
     redactor = Redactor(
         RuleBasedDlpScanner(),
-        b"k" * 32,
-        "hsm://audit/test-key",
+        TestCommitmentKey(),
         lambda details: repository.record_redaction_failure("tnt_bank-a", details),
     )
     policy = RedactionPolicy(

@@ -58,6 +58,11 @@ def build_key_provider(settings: Settings) -> KeyProvider:
         KeyVersion(reference, role, now)
         for role, reference in zip(KEY_ROLES, settings.signing_key_refs, strict=True)
     ]
+    # The MAC role travels with the signing roles through one provider rather than beside it in a
+    # second one. B-30's option 2 -- leaving the commitment key outside the provider with its
+    # custody merely stated -- was the cheap alternative the founder rejected, and two providers is
+    # that option wearing a class name.
+    versions.append(KeyVersion(settings.audit_commitment_key_ref, "audit-commitment", now))
     if settings.key_custody_mode == "development":
         return LocalKeyProvider(versions, settings.environment)
     if settings.key_custody_mode == "vault-transit":
@@ -77,6 +82,15 @@ def build_key_provider(settings: Settings) -> KeyProvider:
             # the morning with a message about HTTP. It also makes `verification_keyset()` --
             # copied verbatim into every exported bundle -- known-good before anything is signed.
             provider.verification_keyset()
+            # The same argument, applied to the role that has no public key to read. Nothing about
+            # the commitment key is resolved by `commitment_keyset()` -- it publishes configuration,
+            # not material -- so the only way to learn at startup that the mount is reachable, the
+            # policy permits `hmac`, the key is of type `hmac` rather than an evidence signing key,
+            # and the named version still exists is to MAC something. A fixed probe string is
+            # MACed and discarded. Without this the first symptom of a misconfigured commitment key
+            # is a refused audit write under I-19's fail-closed rule, in production, at the moment
+            # someone is being audited.
+            provider.active_mac_key("audit-commitment").mac(b"mizan-startup-probe")
         except (VaultRefused, RuntimeError) as refused:
             raise StartupRefused(f"vault-transit key backend is not usable: {refused}") from refused
         return provider

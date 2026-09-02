@@ -1,0 +1,27 @@
+{
+  "benchmark": "audit-commitment",
+  "commit_sha": "e115b45678a2b178801ada5aa0424244dfcfd660",
+  "host": {
+    "cpu": "arm",
+    "logical_cores": 16,
+    "os": "macOS-15.1-arm64-arm-64bit",
+    "python": "3.12.12"
+  },
+  "measurements": {
+    "expected_n_plus_one": 9,
+    "findings_per_payload": 8,
+    "iterations": 20000,
+    "local_microseconds_per_audit_write": 88.521,
+    "local_redaction_seconds_total": 1.770412,
+    "mac_calls_per_audit_write": 9.0,
+    "mac_calls_total": 180000,
+    "matches_n_plus_one": true,
+    "measures_kms_round_trips": false
+  },
+  "parameters": {
+    "findings": 8,
+    "iterations": 20000
+  },
+  "timestamp_utc": "2026-09-02T13:04:37.239055+00:00",
+  "worktree_clean": false
+}
