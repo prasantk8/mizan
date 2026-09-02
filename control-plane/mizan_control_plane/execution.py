@@ -176,7 +176,7 @@ class ExecutionService:
     ) -> dict[str, Any]:
         """Issue the capability a decision earned, at most once while one is live.
 
-        B-16 default, pending ratification: only the decision's own agent principal may ask, and a
+        B-16, ratified 2026-09-02: only the decision's own agent principal may ask, and a
         repeat request returns the token already outstanding rather than minting a second one. The
         executor is chosen from the tool version's registered set (V-21) — a caller may name one of
         them, never propose a new one.

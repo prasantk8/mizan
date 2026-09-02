@@ -11,7 +11,14 @@ and WS-2 are merged (T-120..T-128, T-133..T-138; PRs #30–#39 and #41). The sea
 **M-01 and M-04 in `memtara-zkp`**, which is not checked out here. T-129..T-132 (Tier B) remain open
 as draft PR #40 and are currently in conflict with `main`.
 
-Work in this repository is therefore on the **private-stack positioning evaluation**
+**Blockers were cleared with the founder on 2026-09-02 (T-150).** Four rulings — B-30 (`MacKey` role),
+B-19 (expired ≠ revoked), the B-14(G.15)/B-16/B-17/B-27 stamps, and B-22 (`main` is now genuinely
+protected) — plus a register repair, because the register was missing three blockers and had two under
+one number. **T-054 is unblocked and is the next engineering task**, then T-146. Still the founder's:
+**B-25** (no named pilot, no date — reverified and still true), **T-142** (instruct counsel), and a
+stamp on **B-31** before T-086.
+
+Work in this repository is otherwise on the **private-stack positioning evaluation**
 (`docs/handoff/PRIVATE-STACK-POSITIONING-WORKPLAN.md`), which is explicitly a slack-lane programme:
 it freezes itself if the seam slips, and it is capped at 15 engineering man-days. **WS-P0 (T-141,
 T-142, T-143) is on branch `ws-p0-positioning-words`.** T-142 cannot be closed by engineering — its
@@ -28,7 +35,12 @@ acceptance is a counsel ruling.
 | T-126 | Degraded mode: wire `security/mizan_security/degraded.py` into authorization or delete it and its module-ledger row | CODEX | T-125 | REVIEW |
 | T-127 | Ratify `threat-models/TM-001`, refresh stale residuals, and open TM-002 for the Memtara seam | CODEX | T-126 | REVIEW |
 | T-128 | UI truth corrections: runtime-derived environment badge, exact product claims, counted event label, integrity-check label, and simulation terminology | CODEX | T-127 | REVIEW |
-| T-146 | Redaction wire-or-delete | CLAUDE | T-054 | BLOCKED(B-30) — neither option exists as written; wiring needs key custody (H-7), deleting needs a SPEC §0 amendment |
+| T-150 | Record the four founder rulings of 2026-09-02 and repair the blocker register: migrate B-22/B-23/B-25, renumber the duplicate B-19 to B-31, stamp B-14(G.15)/B-16/B-17/B-27 in the ADRs and the code that still said *pending ratification*, protect `main`, and correct PR-PROTOCOL §7 | CLAUDE | — | REVIEW |
+| T-054 | The fifth key role, as ruled: `MacKey` protocol, `KeyProvider.active_mac_key`, `KmsHsmBackend.mac`, Vault Transit HMAC, keyset entries with `algorithm` and no `public_key`, ADR-004 G.1 amended to four signing roles plus one MAC. Rule 6 artifact proving AuditTrail is off the authorization hot path | CLAUDE | B-30 ruled | READY — unblocked 2026-09-02 |
+| T-151 | B-19 as ruled: specify expired-vs-revoked in `EVIDENCE-BUNDLE-FORMAT.md` §4/§5, then make **both** verifiers obey the spec — never one to match the other — with conformance fixtures in both directions per B-24 | CLAUDE | B-19 ruled | READY |
+| T-146 | Redaction wire-or-delete | CLAUDE | T-054 | BLOCKED(T-054) — B-30 is ruled, so the wall is now a task rather than a decision |
+| T-086 | Registry / decision read authority | CLAUDE | B-31 | BLOCKED(B-31) — removes access a caller has today, so silence is not consent |
+| T-096 | Something enforces the trunk | CLAUDE | B-22 | DONE 2026-09-02 — `main` protected, verified by a rejected push, not by reading the settings back |
 | T-147 | A/B message kit and the pilot log that instruments five falsification tests — the instrument four of them had cited since 2026-08-25 and that did not exist | CLAUDE | T-143 | REVIEW |
 | T-145 | Reference-architecture note `GOVERNED-PRIVATE-STACK.md` with every claim cited to a register row or CI job, and the TM-003 model-endpoint boundary skeleton | CLAUDE | T-141 | REVIEW |
 | T-141 | Register the private-stack positioning sentence as a HYPOTHESIS, per word, with no cleared external use; "we are not a model provider" row in the catalogue | CLAUDE | T-138 | REVIEW |
@@ -155,11 +167,98 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Blockers & Dependencies
 
-- **B-30 (open, HUMAN, 2026-09-02, H-7 · key management):** *How does the audit commitment key get custody, when it MACs and every key role in the provider signs?* Filed by T-146, which asked for a 2–3 day *"wire `redaction.py` into evidence export, or delete it and its ledger row"*. **Neither option is available as written, and both walls are worth stating.**
+> **Register integrity, 2026-09-02 (T-150).** This list was not the blocker list. **B-22, B-23 and
+> B-25** were filed in `docs/handoff/CP-F-STAGE-PLAN.md` §7 on 2026-08-29 and never migrated here, and
+> **B-19 named two different questions** — the crypto verdict below, and *registry read authority*
+> blocking T-086 in `CLAUDE-CP-E-RUN.md`. B-27 filed itself with a numbering caveat and was right to.
+> Two live blockers shared a number; three did not appear in the file whose first line says read this
+> first. All are now present, and the read-authority question is renumbered **B-31**. The rule this
+> earns: **a blocker exists when it is in this register, not when it is written down somewhere.** A
+> stage plan may propose one; only this file holds one. CP-F §7 flagged four of these on 2026-08-29 and
+> nothing happened for four days, which is how the register drifted from the tree it describes.
+
+- **B-30 (RULED 2026-09-02, HUMAN, H-7 · key management) — option 1, extend the contract properly.**
+  Founder ruled the **`MacKey` role**: a `MacKey` protocol and `KeyProvider.active_mac_key(role)` beside
+  the signing path, `KmsHsmBackend.mac(key_ref, payload)`, and keyset entries carrying
+  `algorithm: HMAC-SHA256`, a `custody` field and **no** `public_key`. ADR-004 Amendment G.1 is amended
+  from *"four separately-held key roles"* to **four signing roles plus one MAC role**, ratified as B-11
+  was. Vault Transit — the backend B-18 already chose — has a native HMAC endpoint, so the shipped
+  production adapter implements this rather than mocking it. **Accepted costs, stated at ruling time so
+  they cannot be discovered as surprises:** N+1 backend round trips per audit write (one per manifest
+  finding plus one over the whole payload), and therefore **a Vault outage fails audit writes closed**.
+  That is tolerable only if AuditTrail is genuinely off the authorization hot path, which is to be
+  **verified with a Rule 6 artifact, not assumed** — if it is on the hot path, stop and re-file. The
+  rejected alternatives stay on the record: leaving the key outside the provider was cheapest and is
+  exactly what TM-001 R-2 left open; dropping the keyed commitment deletes I-12's dictionary-attack
+  defence and still needs the §0 amendment, so it buys nothing. Unblocks **T-054**, then **T-146**,
+  then the claims register's *"private"* row. The original analysis is preserved below.
+  **B-30 (original filing, open, HUMAN, 2026-09-02, H-7 · key management):** *How does the audit commitment key get custody, when it MACs and every key role in the provider signs?* Filed by T-146, which asked for a 2–3 day *"wire `redaction.py` into evidence export, or delete it and its ledger row"*. **Neither option is available as written, and both walls are worth stating.**
   **The delete branch is not a module deletion — it is a SPEC amendment.** `redaction.py` implements exactly what three *ratified* invariants require: **I-12** (the pre-redaction commitment is keyed, never a bare hash, so low-entropy PII is not dictionary-recoverable), **I-18** (no stored audit payload contains a `pii`/`secret` field), **I-19** (every audit record carries a complete redaction attestation; missing or `scan_failed` rejects the write and emits `mizan.security.redaction_failed` — fail-closed). SPEC §2.5's `AuditTrail` 1.1 schema makes `stored_payload_hash` and `redaction` **required members**. Deleting the module leaves three ratified invariants and a required schema with no implementation, which is a §0 change-control decision (ADR + version bump + `WORK_LOG` entry), not a ledger-row cleanup. Do not take it as the cheap option; it is the expensive one wearing the cheap one's clothes.
   **The wire branch is blocked on T-054, which was filed a week earlier and is still READY.** TM-001 R-2 found that `MIZAN_AUDIT_HMAC_KEY_REF` (registered at `SPEC_v1.md:1770`, contracted by ADR-004 Amendment A as *"held under separate authority"*) has a full contract and **no custody**: it is not one of ADR-004 G.1's four ratified `KeyRole`s, and `keys.py:66` enforces that set literally. T-054's own instruction is *"if `KeyProvider` needs a contract change rather than an addition, stop and file a blocker."* **It does, in three separate places, and this is that blocker.** (1) `SigningKey` (`keys.py:22`) requires `public_key() -> Ed25519PublicKey`; **an HMAC key has no public key**, and a symmetric key that grew a `public_key()` member is a defect waiting to be called. (2) `verification_keyset()` (`keys.py:90`) publishes a `public_key` for every role at `/v1/audit/keys` **and copies it into every export bundle** (G.1). The audit commitment key's material must never appear there, yet its `key_id` must, because `source_commitment.key_ref` cites it and rotation depends on resolving it — so the keyset needs entries that deliberately carry no key. (3) `KmsHsmBackend` (`keys.py:110`) offers `sign` and `public_key` and no `mac`, while `Redactor.__init__` (`redaction.py:143`) takes **raw key bytes**, which contradicts G.1's *"private key material never enters the control-plane process"* under KMS custody.
   **Options.** **(1) Extend the contract properly — recommended.** Add a `MacKey` protocol and `KeyProvider.active_mac_key(role)` beside the signing path, `KmsHsmBackend.mac(key_ref, payload)`, and keyset entries carrying `algorithm: HMAC-SHA256`, a `custody` field and **no** `public_key`. Amend G.1's *"four key roles"* to four signing roles plus one MAC role, founder-ratified as B-11 was. This is real rather than theoretical: **Vault Transit, the backend B-18 already chose, has a native HMAC endpoint**, so the shipped production adapter can implement it. Cost to state honestly: it is N+1 backend round trips per audit write (one per manifest finding plus one over the whole payload), so a Vault outage fails audit writes closed — acceptable only because AuditTrail is the everything-else ledger and is off the authorization hot path, which should be verified rather than assumed. **(2) Leave the key outside the provider with its custody stated** — cheapest, and it is precisely TM-001 R-2 left open: a fifth key doing real work outside the module hardened at the checkpoint whose subject was key custody. If this is chosen, the ledger and the claims register must say the audit commitment key is not under KMS/HSM custody, in those words. **(3) Drop the keyed commitment** and store only `stored_payload_hash` plus an unkeyed manifest — rejected here: it deletes I-12's dictionary-attack defence, which is the finding Amendment A was written to fix, and still needs the §0 amendment.
   **Consequence for the positioning work:** the claims register's *"private"* row cannot move beyond deployment privacy until this is ruled on. T-146 is **not** a 2–3 day task and nothing in WS-P1 should be planned as though it were.
+
+- **B-31 (open, HUMAN, filed 2026-08-27 as a second "B-19", renumbered 2026-09-02, H-7 · authz):**
+  *Who may **read** the registry and the decision surface?* B-17 closed registry **writes** to agent
+  principals. `/v1/decisions/{id}/context`, `/v1/decisions` and `/v1/audit` remain tenant-scoped and
+  role-free, so an `identity_kind: "agent"` token reads the normalized context of every decision in its
+  tenant: delegation chains, risk scores, deciding policies, approval history. Raw arguments are
+  excluded (`service.py:128`, verified), so this is **not a payload leak** — it is the reconnaissance
+  surface B-17 just closed on the write side. Blocks **T-086**. The recommended default must **not** be
+  implemented without the stamp: unlike ADR-004 G.15 it *removes* access a caller may already have, so
+  it is not descriptive and silence is not consent. This entry spent six days as a duplicate of the
+  crypto B-19 below and was invisible to anyone reading only this file.
+
+- **B-22 (RULED 2026-09-02, HUMAN) — `main` is now actually protected.** *What enforces `main`, given
+  branch protection is unavailable?* Filed 2026-08-29 in CP-F §7, never migrated here. Two things
+  changed underneath it: **the repository is now public**, so protection costs nothing —
+  `gh api .../branches/main/protection` returned **403 "Upgrade to GitHub Pro"** when B-22 was written
+  and returned **404 "Branch not protected"** on 2026-09-02, i.e. available and simply unconfigured.
+  B-22's option (b) *go public* was conditional on **T-065**, and that condition held: T-065's export
+  gate is real (`evidence_export.py:93`, export refuses development custody without an explicit named
+  reason that is written into the manifest), **TM-001 R-4 closed 2026-09-01**, and no private key
+  material is tracked — the four `.pem` files in `tests/fixtures/` are TSA **root** certificates, public
+  by design. Founder ruled option (a) with real gates and no fake review: 13 required status checks,
+  `strict`, linear history, no force-push, no deletions, **`enforce_admins: true`** — a gate the founder
+  can bypass is advice. **`required_pull_request_reviews` is deliberately null**: `prasantk8` is the only
+  collaborator and authored every open PR, GitHub forbids self-approval, so requiring one approval would
+  make every PR mergeable only by admin bypass — a control that logs a bypass on every merge is worse
+  than an honest gap. The gap is written into PR-PROTOCOL §7 instead. **Demonstrated, not asserted:** a
+  direct push of an empty commit to `main` was refused with `GH006 … 13 of 13 required status checks are
+  expected`, and `main` stayed at `f3aa46e`. Closes **T-096**. The `trunk-guard` job of option (c) was
+  **not** taken — protection now prevents rather than detects, and a detector behind a preventer is the
+  next thing to rot. Re-file it if `enforce_admins` is ever turned off.
+
+- **B-23 (open, CLAUDE, filed 2026-08-29 in CP-F §7, migrated here 2026-09-02, engineering):** *Does
+  `make demo-run` require a live LLM?* Blocks the T-071/T-117 gate definition. Not ruled; recorded here
+  so it stops being invisible. The adjacent answer already in the tree is T-137's: `demo_memtara_walk.py`
+  replays a committed transcript re-derived against fake edges on every run, so a renamed or dropped
+  milestone goes red without a model. Whether that is sufficient for the *demo* gate is the open half.
+
+- **B-25 (open, HUMAN, filed 2026-08-29 in CP-F §7, migrated here 2026-09-02, sequencing):** ***Who is
+  the pilot, and by when?*** **There is still no named design partner and no absolute date anywhere in
+  this tree** — reverified 2026-09-02, four days after it was filed. "Production ready as soon as
+  possible" has no failure condition, and a stage without a failure condition is the same defect as a
+  test without one. Note what this does to the rest of the register: F-T-1, F-T-4, F-T-5, F-T-6 and
+  F-T-7 all measure conversations with people we have not named, `PILOT-LOG.md` was built on 2026-09-02
+  to record them and is **empty**, and TM-001 R-1 closes only when *"a design partner answers R-1's
+  business form"*. The 2026-10-31 positioning gate (T-149) is the only absolute date in the tree and it
+  is a date for deciding what to **say**, not for shipping to anyone. This is the blocker most likely to
+  be the real one.
+
+- **B-19 (RULED 2026-09-02, HUMAN, H-7 · crypto) — expired and revoked are not the same fact.**
+  *What verdict does a valid signature under an expired or revoked key earn?* Founder ruled **split
+  them**. **EXPIRED** — already in the verdict set — when an RFC 3161 attestation proves the signature
+  predates the key's expiry, because the timestamp is precisely the evidence that question needs, and
+  because an honestly signed anchor must not become unverifiable on the day a key expires on schedule
+  when we assert a seven-year retention class inside signed records. **REVOKED is always INVALID**,
+  regardless of timestamp: revocation asserts the key may have signed things its holder never
+  authorised, and time does not repair that. Implementation is **specify first, then obey**:
+  `EVIDENCE-BUNDLE-FORMAT.md` §4/§5 states the rule, then **both** verifiers are made to obey the spec —
+  neither is edited to match the other, which is what the T-062 seal exists to prevent. Ships with
+  conformance fixtures for both states in both directions per B-24's standing requirement. Closes
+  `verifier-two/FINDINGS.md` S-6. Original filing preserved below.
+  **B-19 (original text, open, HUMAN, 2026-08-28, H-7 · key management):**
 
 - **B-29 (open, CLAUDE, 2026-09-02, engineering · evidence):** *What must a verifier disclose when it refuses?* Discovered by T-135, which added the first conformance cases that fail **late**. `scripts/verify_evidence_export.py` raises at the first failure and emits a bare refusal (`derived_assurance: null`, `notes: []`); `verifier-two` accumulates findings and appends its standing disclosures at the end of phase 5. Every pre-T-135 non-VALID case failed at phase 2/3/4, so verifier-two never reached that code and the two agreed **by accident**. On `invalid-memtara-proof-binding` and the rootless `valid-memtara-proof` — same verdict, same reason — node reports an assurance and four limitations where python reports neither. §5 does not say what a refusal owes, and B-24 already records the disclosure obligation as normatively unsettled. **Interim resolution:** `compare_verifiers.py` still compares verdicts on every case but compares `derived_assurance` and the disclosure set only on VALID/EXPIRED, where §5 gives them meaning. That is a real, narrow weakening of the differential gate, taken because requiring one implementation's reporting *style* of the other is precisely what the T-062 seal exists to prevent. Close it by specifying the refusal disclosure in `EVIDENCE-BUNDLE-FORMAT.md` §5, then making both verifiers obey it — not by editing either verifier to match the other. Recorded as `verifier-two/FINDINGS.md` S-10.
 
@@ -168,14 +267,54 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 - **B-24 (ruled 2026-08-29, HUMAN):** *What is bundle 1.0, and does 1.1 owe an archive-timestamp chain?* Founder ruled: **adapt to the changing format; do not be rigid at any point; change with proper proof.** So the format is versioned and evolves, and every change to it carries an executable demonstration rather than a note — the standing requirement being that a change ships with a fixture the previous verifier rejects and the new one accepts, plus the reverse. T-110's descriptive reconciliation stands; 1.1's long-term-validation question moves to CP-G with a written answer rather than silence. Recorded 2026-08-30 with T-102.
 - **H-7 approval-epoch expiry (ruled 2026-08-29, HUMAN):** *Should an unanswered approval expire?* Founder ruled: **configurable, and the system must be intelligent enough to support both.** Implemented as `MIZAN_APPROVAL_EPOCH_EXPIRY` = `enforced` \| `advisory` in the two-heads merge; both modes are real rather than one being the other with a sweeper switched off, and the mode reaches `cast_vote` and the sweeper together.
 - **B-28 (open, CLAUDE, 2026-08-30, engineering):** *A quarantined evidence row makes its stream permanently unanchorable.* Migration 0004's quarantine was designed for a delivery queue: a row that cannot be published is set aside so it stops blocking the ones behind it. For `decision`, `decision_event` and `audit` aggregates the outbox row **is** the evidence, so setting one aside removes a sequence number from the middle of a hash chain — `anchor()` then computes `covered_record_count < to_sequence - from_sequence + 1` and the `evidence_anchor_declared_density` CHECK refuses every subsequent anchor on that stream, for ever. Found while integrating T-074: quarantining a `decision_event` on a shared fixture stream failed two unrelated tests. Not a data-loss bug — the row is retained with its error — but the stream stops being anchorable, which means it stops being exportable, which is the whole product. Options: **(1)** refuse to quarantine an evidence aggregate at all and let it block its stream, which is loud and correct and is what the pre-0004 behaviour effectively was; **(2)** quarantine it and mark the stream `DEGRADED`, so the refusal to anchor is a reported state rather than a CHECK violation; **(3)** allow an anchor to declare a gap explicitly, which changes bundle 1.0 and the verifier and is not obviously wrong but is a format decision. Recommended: (1) now, (2) next, and never (3) without a ratified format change. Blocks nothing today because no production path quarantines an evidence row — `drain()` only quarantines on repeated publication failure, which for an evidence row means the object store is down.
-- **B-27 (open, HUMAN, 2026-08-29, H-7 · tenant isolation):** *How does a managed background worker learn which tenants it serves?* `mizan.tenants` carries `ENABLE`+`FORCE ROW LEVEL SECURITY` under `USING (tenant_id = mizan.current_tenant_id())`, and the schema contains **zero** `SECURITY DEFINER` functions, so `mizan_app` cannot enumerate tenants — by design, and that design is one of the two things CP-F §4 says are finished and must not be rebuilt. But every background workload needs the list: `mizan-drain-outbox` must drain each tenant's outbox or that tenant's financial writes are refused, and T-106 has the identical problem for `mizan-attest-anchors` (which today takes a single `--tenant-id`/`--stream-id` pair against a default of four shards per tenant). Options: **(1)** the served set is named in configuration — recommended, no privilege change, shipped in T-099 as `--tenant-id`/`MIZAN_DRAIN_TENANTS`, and a drainer naming none refuses to start rather than idling; **(2)** a narrow `SECURITY DEFINER` function returning only tenant IDs that have unpublished rows — leaks exactly "this tenant exists and has work pending" to a process that must know precisely that, grants nothing else, and is the only option that makes the workload self-managing; **(3)** a separate role that bypasses RLS — rejected here, it dissolves the isolation model wholesale. (1) is shipped and holds for a pilot with a known tenant set; it does not scale to self-service onboarding, where a new tenant is silently unserved until someone edits a manifest. **Numbering caveat:** `CP-F-STAGE-PLAN.md` §7 allocated B-20 to custody vocabulary while B-20 below was already filed for `customer_countersignature`, and its T-094/T-095 collide with the rows above; B-27 is chosen to be free under either resolution and moves with the renumbering if the founder rules otherwise.
+- **B-27 (RATIFIED 2026-09-02, HUMAN, H-7 · tenant isolation) — option 1: the served set is named,
+  never discovered.** No `SECURITY DEFINER` function, no RLS-bypassing role; the isolation model CP-F §4
+  calls finished is not widened. Shipped as `config.resolve_served_tenants` and used by **both**
+  workloads (`drain_worker.py:472`, `attestation_runner.py:103`), so the two do not resolve tenants two
+  subtly different ways. **The limit the ruling accepts, recorded because a stamp that hides its cost is
+  not a stamp:** a named set holds for a pilot with a known tenant list and **does not scale to
+  self-service onboarding**, where a newly created tenant is silently unserved — outbox undrained,
+  anchors unattested — until a human edits a manifest, and nothing detects it. Reopen before onboarding
+  stops being a human step. Also recorded at `config.py:388` where the next engineer will look. Original
+  filing preserved below.
+  **B-27 (original text, open, HUMAN, 2026-08-29, H-7 · tenant isolation):** *How does a managed background worker learn which tenants it serves?* `mizan.tenants` carries `ENABLE`+`FORCE ROW LEVEL SECURITY` under `USING (tenant_id = mizan.current_tenant_id())`, and the schema contains **zero** `SECURITY DEFINER` functions, so `mizan_app` cannot enumerate tenants — by design, and that design is one of the two things CP-F §4 says are finished and must not be rebuilt. But every background workload needs the list: `mizan-drain-outbox` must drain each tenant's outbox or that tenant's financial writes are refused, and T-106 has the identical problem for `mizan-attest-anchors` (which today takes a single `--tenant-id`/`--stream-id` pair against a default of four shards per tenant). Options: **(1)** the served set is named in configuration — recommended, no privilege change, shipped in T-099 as `--tenant-id`/`MIZAN_DRAIN_TENANTS`, and a drainer naming none refuses to start rather than idling; **(2)** a narrow `SECURITY DEFINER` function returning only tenant IDs that have unpublished rows — leaks exactly "this tenant exists and has work pending" to a process that must know precisely that, grants nothing else, and is the only option that makes the workload self-managing; **(3)** a separate role that bypasses RLS — rejected here, it dissolves the isolation model wholesale. (1) is shipped and holds for a pilot with a known tenant set; it does not scale to self-service onboarding, where a new tenant is silently unserved until someone edits a manifest. **Numbering caveat:** `CP-F-STAGE-PLAN.md` §7 allocated B-20 to custody vocabulary while B-20 below was already filed for `customer_countersignature`, and its T-094/T-095 collide with the rows above; B-27 is chosen to be free under either resolution and moves with the renumbering if the founder rules otherwise.
 - **B-19 (open, HUMAN, 2026-08-28, H-7 · key management):** *What verdict does a valid signature under an expired or revoked key earn?* `EVIDENCE-BUNDLE-FORMAT.md` §4 says such a signature "is reported with that lifecycle fact and is not silently upgraded to an unqualified pass", which is compatible with both VALID-with-warning and INVALID, and §5 does not choose. No fixture exercises it, so the two verifiers could differ on the most consequential bundle either will ever see with the conformance suite green. `verifier-two` warns and lets §5's enumerated checks decide; T-062 declined to decide it. Revocation is what an operator reaches for after a compromise, so this is the gap most likely to matter in an incident. See `verifier-two/FINDINGS.md` S-6.
 - **B-20 (open, HUMAN, 2026-08-28, H-7 · crypto):** *What does verifying a `customer_countersignature` consist of?* §4 admits the type into the roster and gives it a `pending` status, then never says what bytes are signed or under which key, and there is no fixture. `verifier-two` returns CANNOT CHECK for a rostered countersignature that is no longer pending — honest, but conformance to nothing. Specifying it is a cryptographic protocol decision. See `verifier-two/FINDINGS.md` S-5.
-- **B-15 (open, HUMAN, 2026-08-26):** *Run Track B in parallel with Track A?* Amend `AGENT_ALLOCATION.md` so a second implementer session may hold claims on Track B paths (`sdk/`, `ui/`, `examples/`, `integrations/`, deploy, `app.py` wiring, T-066..T-081) concurrently with CODEX on the CP-C/CP-D waves. Recommended: yes — disjoint modules; serialization is the largest velocity cost in the tree. Order: `docs/handoff/CODEX-STAGE-5-PRODUCT-TRACK.md`.
-- **B-16 (open, HUMAN, 2026-08-26):** *Approval → execution-token semantics (T-067).* Recommended default: the decision's own agent principal requests `POST /v1/decisions/{id}/execution-token`; exactly one unconsumed token per decision (idempotent issue); TTL from `MIZAN_EXECUTION_TOKEN_DEFAULT_TTL_SECONDS`. Approval semantics → H-7.
-- **B-17 (open, HUMAN, 2026-08-26):** *Registry write authority (T-077a).* Recommended default: human operators with MFA only for create agent/tool/policy and binding-profile publish; agents never; production HIGH/CRITICAL creates require four-eyes as PATCH does. Verified today: an `identity_kind:"agent"` token can register a tool permitting itself (`app.py:121-126`). Authz → H-7.
+- **B-15 (CLOSED — superseded 2026-09-02, HUMAN):** *Run Track B in parallel with Track A?* Answered by
+  a later ruling that made the question moot rather than by an answer to it: the two-lane model was
+  retired on 2026-08-29 in favour of one trunk and one task per PR, and line 154 of this file already
+  recorded *"Parallel lane branches are retired."* CP-F §7 said **"de facto answered yes; close it"** on
+  2026-08-29 and it stayed open for four more days. Closing it as *superseded*, not as *yes* — the
+  parallel-lane amendment to `AGENT_ALLOCATION.md` it asked for was never made and must not now be made.
+  Original filing preserved below.
+  **B-15 (original text, open, HUMAN, 2026-08-26):** *Run Track B in parallel with Track A?* Amend `AGENT_ALLOCATION.md` so a second implementer session may hold claims on Track B paths (`sdk/`, `ui/`, `examples/`, `integrations/`, deploy, `app.py` wiring, T-066..T-081) concurrently with CODEX on the CP-C/CP-D waves. Recommended: yes — disjoint modules; serialization is the largest velocity cost in the tree. Order: `docs/handoff/CODEX-STAGE-5-PRODUCT-TRACK.md`.
+- **B-16 (RATIFIED 2026-09-02, HUMAN, H-7 · approval semantics) — the shipped default stands.** The
+  decision's own agent principal requests `POST /v1/decisions/{decision_id}/execution-token`
+  (`app.py:455`); exactly one unconsumed token per decision, a repeat returning the outstanding one;
+  TTL from `MIZAN_EXECUTION_TOKEN_DEFAULT_TTL_SECONDS` (`SPEC_v1.md:1753`, `config.py:344`). The
+  approval opens **inside the ADR_Record transaction**, so a record that says "wait" with nothing to
+  wait for is not a state the evidence can hold. Amendments in **ADR-007** and **ADR-008** carry the
+  stamp. It had been live in production code paths for six days while both ADRs said *pending
+  ratification* — shipped behaviour resting on silence, which is the process form of a claimed-but-
+  underived assurance (R-006 V-3). Original filing preserved below.
+  **B-16 (original text, open, HUMAN, 2026-08-26):** *Approval → execution-token semantics (T-067).* Recommended default: the decision's own agent principal requests `POST /v1/decisions/{id}/execution-token`; exactly one unconsumed token per decision (idempotent issue); TTL from `MIZAN_EXECUTION_TOKEN_DEFAULT_TTL_SECONDS`. Approval semantics → H-7.
+- **B-17 (RATIFIED 2026-09-02, HUMAN, H-7 · authz) — the shipped default stands.** Registry writes
+  require `identity_kind == "human"` with `auth_strength` in `{mfa, hardware}`, and a *distinct*
+  strongly-authenticated second approver for a dual-control object or a production HIGH/CRITICAL one —
+  `require_registry_authority`, `registry.py:53-71`, applied by every create/update path. Agents and
+  service identities are refused outright: an agent that can write here widens its own permissions
+  without a policy change and without an approval, which is the hole the original filing found at
+  `app.py:121-126`. **Ratifying the write side is what makes the read side glaring** — see **B-31**,
+  which is the same reconnaissance surface left open. Original filing preserved below.
+  **B-17 (original text, open, HUMAN, 2026-08-26):** *Registry write authority (T-077a).* Recommended default: human operators with MFA only for create agent/tool/policy and binding-profile publish; agents never; production HIGH/CRITICAL creates require four-eyes as PATCH does. Verified today: an `identity_kind:"agent"` token can register a tool permitting itself (`app.py:121-126`). Authz → H-7.
 - **B-18 (open, HUMAN, 2026-08-26):** *Key backend for the pilot (T-076).* Recommended: HashiCorp Vault Transit first (native Ed25519), PKCS#11 second. AWS KMS, GCP Cloud KMS and Azure Key Vault do not sign Ed25519; choosing one reopens the signing algorithm and bundle format 1.0. Key management → H-7.
-- **B-14 (resolved 2026-08-26, CLAUDE, one half pending HUMAN stamp):** Two questions, two answers. (a) "Four attestation types" was an error in `CODEX-CP-C-RUN.md` line 189; ratified ADR-004 G.2 defines **three** and the ratified ADR wins over a work order. (b) `status: failed` is **reserved vocabulary, not an exported terminal fact in bundle 1.0**. An attestation entry is persisted in exactly two places and each admits a different subset: the **signed anchor payload** is written before any TSA is contacted and is immutable inside the signature, so `pending` (or `unattested`, `none_development` only); the **append-only sidecar** stores outcomes per G.12, so `attested` only. No write path emits `failed`. G.2's enum is flat where the system is layered and simply predates G.12. The verifier's *refusal* is correct; its *message* is not — a bundle carrying `failed` is malformed, not unattested, which is V-12's mistake in a new place, so bundle 1.0 gains a `MALFORMED` verdict. This is harmless today only because there is exactly one implementation, which is the condition T-059 exists to end. ADR-004 G.15 records it and is marked `pending ratification (B-14)`: it narrows a ratified enum **descriptively**, forbidding nothing the implementation has ever emitted, so no previously-valid bundle becomes invalid and building on it risks nothing. Do not treat silence as ratification.
+- **B-14 (fully closed 2026-09-02):** the half that was pending a HUMAN stamp — **ADR-004 G.15**,
+  the location-scoped attestation grammar — **is ratified by the founder as of 2026-09-02**. It was
+  safe to build on ahead of the stamp for a stated reason and not from impatience: it narrows a ratified
+  enum **descriptively**, forbidding nothing the implementation has ever emitted, so no previously-valid
+  bundle became invalid. A narrowing that *removed* an emitted state would have had to wait — which is
+  exactly why **B-31** may not be implemented before its stamp. Original resolution below.
+  **B-14 (resolved 2026-08-26, CLAUDE, one half pending HUMAN stamp):** Two questions, two answers. (a) "Four attestation types" was an error in `CODEX-CP-C-RUN.md` line 189; ratified ADR-004 G.2 defines **three** and the ratified ADR wins over a work order. (b) `status: failed` is **reserved vocabulary, not an exported terminal fact in bundle 1.0**. An attestation entry is persisted in exactly two places and each admits a different subset: the **signed anchor payload** is written before any TSA is contacted and is immutable inside the signature, so `pending` (or `unattested`, `none_development` only); the **append-only sidecar** stores outcomes per G.12, so `attested` only. No write path emits `failed`. G.2's enum is flat where the system is layered and simply predates G.12. The verifier's *refusal* is correct; its *message* is not — a bundle carrying `failed` is malformed, not unattested, which is V-12's mistake in a new place, so bundle 1.0 gains a `MALFORMED` verdict. This is harmless today only because there is exactly one implementation, which is the condition T-059 exists to end. ADR-004 G.15 records it and is marked `pending ratification (B-14)`: it narrows a ratified enum **descriptively**, forbidding nothing the implementation has ever emitted, so no previously-valid bundle becomes invalid and building on it risks nothing. Do not treat silence as ratification.
 - **B-14 (original text, 2026-08-26):** T-059 specification found ADR-004 G.2 permits attestation `status: failed`, while the standalone verifier rejects it and T-055 outcome-only persistence deliberately records only `attested`. Resolve whether `failed` is a legal exported terminal fact in bundle 1.0 or reserved schema vocabulary before adding a conformance case; T-059 documents the discrepancy and does not change the state machine.
 - **B-1 (resolved 2026-08-25):** User ratified T-001 in all required Product/Architecture, Cybersecurity, and Compliance/Business roles. SPEC v1.2, R-002, and ADR-001..008 are accepted as the implementation baseline.
 - **B-2 (resolved by T-005):** Cedar 4.8.7 cached handles measured 6,896 eval/s and p99 0.1741 ms over 5,000 evaluations on the M3 Max host. The live PostgreSQL integration suite separately gates RLS-scoped lookup + evaluation below 50 ms p99. ADR-002 is ACCEPTED; deployment-class Linux sizing must rerun the benchmark.
@@ -199,17 +338,34 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 
 ## Next Executable Action
 
-> **Founder: rule on B-30, and instruct counsel on T-142.** Two decisions, neither of which any agent
-> can take. **B-30 is the harder one** — the audit commitment key MACs where every ratified key role
-> signs, so giving it custody changes ADR-004 G.1's four-role set, which was itself a founder
-> ratification (B-11). Until it is ruled on, T-054 stays open, T-146 stays blocked, and the claims
-> register's "private" row cannot move beyond deployment privacy. The recommendation, the two
-> alternatives and the honest cost of each are in B-30.
+> **B-30 and B-19 are ruled; the engineering they were blocking is now the work.** In order, because
+> they are genuinely sequential:
 >
-> **T-142 is the cheaper one.** The brief is written and the
-> standstill binds from today, but T-142's acceptance is a *ruling*, which only the founder can start.
-> Nothing else in the positioning plan is blocked by it — WS-P1's build is not, and the interviews are
-> not — but every **external** use of the sentence is.
+> 1. **T-054 — the `MacKey` role.** Unblocked by the B-30 ruling. Extend the contract, do not bend the
+>    signing path around a symmetric key: a key that grew a `public_key()` member is a defect waiting to
+>    be called. Ship with the **Rule 6 artifact proving AuditTrail is off the authorization hot path** —
+>    the ruling accepts N+1 Vault round trips and audit writes failing closed on a Vault outage *on that
+>    condition*, and if the measurement says otherwise the honest move is to stop and re-file, not to
+>    ship the ruling's premise as though it had been checked.
+> 2. **T-146 — the wiring**, which is now what it was originally advertised as, once T-054 lands. It is
+>    what finally moves the claims register's *"private"* row past deployment privacy.
+> 3. **T-151 — B-19's expired-vs-revoked split.** Specify in `EVIDENCE-BUNDLE-FORMAT.md` first, then make
+>    both verifiers obey **the spec**. Editing either verifier to agree with the other is precisely what
+>    the T-062 seal exists to prevent, and B-29 records the same trap one step away.
+>
+> **Two things remain the founder's, and one of them is now the most likely real blocker.**
+>
+> - **B-25: who is the pilot, and by when?** Filed 2026-08-29, migrated into this register only on
+>   2026-09-02, and **still unanswered** — there is no named design partner and no absolute date anywhere
+>   in this tree. Five falsification tests measure conversations with people we have not named, the pilot
+>   log built to record them is empty, and TM-001 R-1 closes only when a design partner answers it. The
+>   one absolute date we have, 2026-10-31, is a date for deciding what to **say**.
+> - **T-142: instruct counsel.** The brief is written and the standstill binds. Nothing in WS-P1's build
+>   waits on it; every **external** use of the sentence does, and so does variant B of the interview kit,
+>   which means F-T-7 cannot be read until it lands.
+>
+> **B-31 needs a stamp before anyone touches T-086** — it removes read access a caller has today, so
+> unlike G.15 it is not descriptive and silence is not consent.
 >
 > Then rank three lanes that no longer have an obvious order, because the seam's critical path has
 > left this repository:
@@ -250,6 +406,8 @@ The expired T-092 row was cleared after observing claim version 1; it expired on
 ---
 
 ## Log (newest first, one line each: `date · lane · task · what · next`)
+
+- 2026-09-02 · CLAUDE · T-150 · Recorded four founder rulings and **repaired the register that was supposed to be holding them**. The finding that made this a task rather than four edits: *this list was not the blocker list.* **B-22, B-23 and B-25** were filed in `CP-F-STAGE-PLAN.md` §7 on 2026-08-29 and never migrated, and **B-19 named two different questions** — the crypto verdict, and registry *read* authority blocking T-086 — so two live blockers shared a number and three were invisible to anyone reading the one file whose first line says read this first. CP-F §7 had itself flagged four of these ("do not leave shipped behaviour resting on silence") and nothing happened for four days. All migrated; read authority renumbered **B-31**; new rule recorded: a blocker exists when it is in this register, not when it is written down somewhere. Rulings: **B-30** → the `MacKey` role (four signing roles plus one MAC in ADR-004 G.1), unblocking T-054 → T-146 → the *"private"* claim, with the N+1-round-trip and fail-closed costs accepted **on condition** that a Rule 6 artifact proves AuditTrail is off the authorization hot path; **B-19** → expired and revoked are not the same fact (EXPIRED when an RFC 3161 attestation proves the signature predates expiry, REVOKED always INVALID), specify in the format then make **both** verifiers obey the spec, never one to match the other; **B-14(G.15)/B-16/B-17/B-27** ratified as shipped, and the four `pending ratification` markers removed from ADR-004, ADR-007, ADR-008, `registry.py`, `execution.py` and `config.py` — six days of live production behaviour had been resting on silence, which is R-006 V-3's claimed-but-underived pattern in process form; **B-15** closed as *superseded*, not as *yes*, since the two-lane model it asked to extend was retired on 2026-08-29. **B-22 changed underneath us and I checked rather than assumed:** the repository is now **public**, and B-22 had made going public conditional on T-065 — that condition held (export refuses development custody without a named logged reason, `evidence_export.py:93`; TM-001 R-4 closed 2026-09-01; no private key material tracked — the four `.pem` files are TSA *root* certificates). Protection was therefore free, and `main` had been protected by nothing but habit while PR-PROTOCOL §7 asserted it was protected — our own documented failure mode applied to our process. Now configured: 13 required checks, `strict`, linear history, no force-push, no deletions, `enforce_admins: true`. `required_pull_request_reviews` is deliberately **null** and §7 now says why in words: one collaborator authors every PR, GitHub forbids self-approval, and a requirement satisfied by an admin bypass on every merge is worse than a stated gap. Rule 8: `git push origin <empty-commit>:main` → `remote: error: GH006: Protected branch update failed … 13 of 13 required status checks are expected`, `main` unchanged at `f3aa46e` — the gate demonstrated by refusing a push that would have succeeded an hour earlier, not by reading the settings back. Rule 10: the first attempt to enumerate blockers trusted this register and would have "cleared" a list missing three of them; `--include=*.py` needed quoting under zsh; B-19's collision was found only by grepping the handoff docs for a number I already believed I understood. No benchmark numbers claimed. **B-25 is now the most likely real blocker: still no named design partner and no absolute date anywhere in this tree.** · next: T-054 (the `MacKey` role), then T-146; founder answers B-25, instructs counsel on T-142, and stamps B-31 before anyone touches T-086
 
 - 2026-09-02 · CLAUDE · T-146 · Took T-146 (*"wire `redaction.py` into evidence export or delete it and its ledger row"*, estimated 2–3 days) and **stopped before writing any of it, because neither option exists as written.** Filed **B-30** with the analysis. The *delete* branch is not a module deletion: `redaction.py` implements exactly what ratified invariants **I-12** (keyed commitment, not a bare hash, so low-entropy PII is not dictionary-recoverable), **I-18** (no stored audit payload carries a `pii`/`secret` field) and **I-19** (fail-closed attestation) require, and SPEC §2.5's `AuditTrail` 1.1 schema makes `stored_payload_hash` and `redaction` **required members** — so deleting leaves three ratified invariants and a required schema unimplemented, a §0 change-control decision rather than the cheap option it looks like. The *wire* branch is blocked on **T-054**, filed a week before the positioning plan by TM-001 R-2 and still READY: `MIZAN_AUDIT_HMAC_KEY_REF` is registered at `SPEC_v1.md:1770` and contracted by ADR-004 Amendment A as *"held under separate authority"*, yet it is not one of G.1's four ratified `KeyRole`s and `keys.py:66` enforces that set literally. T-054's own stop condition — *"if `KeyProvider` needs a contract change rather than an addition, stop and file a blocker"* — is met in three places, each verified rather than inferred: `SigningKey` (`keys.py:22`) requires `public_key() -> Ed25519PublicKey` and **an HMAC key has none**; `verification_keyset()` (`keys.py:90`) publishes a public key per role into `/v1/audit/keys` **and every export bundle**, where a symmetric key must never appear although its `key_id` must, since `source_commitment.key_ref` cites it; and `KmsHsmBackend` (`keys.py:110`) has no `mac`, while `Redactor.__init__` (`redaction.py:143`) takes **raw key bytes**, contradicting G.1's *"private key material never enters the control-plane process"*. Recommended option 1 — a `MacKey` protocol beside the signing path, keyset entries with `algorithm: HMAC-SHA256` and no `public_key`, and G.1 amended from four key roles to four signing plus one MAC — which is real rather than theoretical because **Vault Transit, already chosen by B-18, has a native HMAC endpoint**; its honest cost is N+1 backend round trips per audit write, so a Vault outage fails audit writes closed, tolerable only because AuditTrail is off the authorization hot path and that should be verified rather than assumed. Rule 10: **nothing was implemented and that is the deliverable.** Writing the wire without custody would have put a fifth key doing real work outside the provider hardened at the checkpoint whose subject was key custody — TM-001 R-2's finding, reintroduced by the task meant to close it. Propagated to `MODULE_LEDGER.md`, the claims register §5 and the positioning workplan, all three of which had said T-146 was what moves the *"private"* claim; they now say it is blocked and that the row should be planned as not moving before 2026-10-31. Documentation-only; H-7 **fires** — key management — which is the point of the entry. · next: founder rules B-30, which unblocks T-054, which unblocks T-146
 

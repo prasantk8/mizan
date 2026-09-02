@@ -96,7 +96,7 @@ active authority set. Original voters have no inherited vote or eligibility unle
 present in the configured review snapshot; all later votes must cite the new epoch number.
 
 
-## Implementation Amendment — the approval opens with the decision *(pending ratification: B-16)*
+## Implementation Amendment — the approval opens with the decision *(ratified: B-16, 2026-09-02)*
 
 **Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration review, T-067 · **Spec anchors:** SPEC v1.3 §3 `/v1/approvals`, §4 `mizan.approval.requested`, I-6, I-15
 
@@ -109,7 +109,7 @@ decision and the approval that lets it resume commit together or not at all: a r
 "wait" with nothing to wait for is not a state the evidence should be able to hold. The FK from
 `mizan.approvals` to `mizan.adr_records` already required this ordering; nothing else enforced it.
 
-Three consequences, all pending ratification under B-16:
+Three consequences, all ratified under B-16 on 2026-09-02:
 
 1. The controls come from the winning policy's `approval_requirements`. A `REQUIRE_APPROVAL`
    policy that carries none is now a 422 `approval_requirements_missing` and **no record is
