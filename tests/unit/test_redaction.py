@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 
 import pytest
 import rfc8785
@@ -12,6 +13,23 @@ from mizan_security.redaction import (
     RuleBasedDlpScanner,
     ScanResult,
 )
+
+
+class StubCommitmentKey:
+    """The `MacKey` shape the redactor now takes (T-054): it computes, it never hands over bytes.
+
+    Structurally typed against `mizan_security.redaction.CommitmentKey`, so this file proves the
+    contract holds for something that is not `mizan_control_plane.keys.MacKey` -- which is the
+    whole reason the protocol is restated in `security/` rather than imported.
+    """
+
+    def __init__(self, key_id: str, secret: bytes) -> None:
+        self.key_id = key_id
+        self._secret = secret
+
+    def mac(self, payload: bytes) -> bytes:
+        return hmac.new(self._secret, payload, hashlib.sha256).digest()
+
 
 POLICY = RedactionPolicy(
     policy_id="dlp_banking-v1",
@@ -29,7 +47,7 @@ def test_redaction_hashes_stored_payload_and_commits_to_source() -> None:
         "secret": "never-store",
     }
     result = Redactor(
-        RuleBasedDlpScanner(), b"k" * 32, "hsm://audit/commitment-1", lambda _: None
+        RuleBasedDlpScanner(), StubCommitmentKey("hsm://audit/commitment-1", b"k" * 32), lambda _: None
     ).redact(source, POLICY)
     assert "alice@example.test" not in str(result.payload)
     assert "784-1234" not in str(result.payload)
@@ -42,10 +60,10 @@ def test_redaction_hashes_stored_payload_and_commits_to_source() -> None:
 
 def test_commitment_is_keyed_against_dictionary_attack() -> None:
     source = {"national_id": "123456789"}
-    first = Redactor(RuleBasedDlpScanner(), b"a" * 32, "hsm://audit/a", lambda _: None).redact(
+    first = Redactor(RuleBasedDlpScanner(), StubCommitmentKey("hsm://audit/a", b"a" * 32), lambda _: None).redact(
         source, POLICY
     )
-    second = Redactor(RuleBasedDlpScanner(), b"b" * 32, "hsm://audit/b", lambda _: None).redact(
+    second = Redactor(RuleBasedDlpScanner(), StubCommitmentKey("hsm://audit/b", b"b" * 32), lambda _: None).redact(
         source, POLICY
     )
     assert first.source_commitment["value"] != second.source_commitment["value"]
@@ -59,7 +77,7 @@ class FailedScanner:
 def test_scan_failure_rejects_write() -> None:
     failures = []
     with pytest.raises(RedactionError, match="rejected"):
-        Redactor(FailedScanner(), b"k" * 32, "hsm://audit/key", failures.append).redact(
+        Redactor(FailedScanner(), StubCommitmentKey("hsm://audit/key", b"k" * 32), failures.append).redact(
             {"safe": "x"}, POLICY
         )
     assert failures == [
@@ -75,7 +93,7 @@ def test_scan_failure_rejects_write() -> None:
 def test_sensitive_finding_without_transform_rejects_write() -> None:
     incomplete = RedactionPolicy("dlp_banking-v1", 1, "a" * 64, {"pii": "mask"})
     with pytest.raises(RedactionError, match="secret"):
-        Redactor(RuleBasedDlpScanner(), b"k" * 32, "hsm://audit/key", lambda _: None).redact(
+        Redactor(RuleBasedDlpScanner(), StubCommitmentKey("hsm://audit/key", b"k" * 32), lambda _: None).redact(
             {"secret": "value"},
             incomplete,
         )
@@ -92,7 +110,7 @@ class ArrayScanner:
 
 
 def test_array_drops_are_applied_in_numeric_descending_order() -> None:
-    result = Redactor(ArrayScanner(), b"k" * 32, "hsm://audit/key", lambda _: None).redact(
+    result = Redactor(ArrayScanner(), StubCommitmentKey("hsm://audit/key", b"k" * 32), lambda _: None).redact(
         {"values": list(range(12))}, POLICY
     )
     assert result.payload["values"] == [0, 1, 3, 4, 5, 6, 7, 8, 9, 11]

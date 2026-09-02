@@ -235,6 +235,44 @@ collapses two guarantees.
   now doubtful" into "history attested before the compromise timestamp remains sound." Custody bounds the
   blast radius; external attestation is what lets you locate its edge.
 
+#### G.1.a Amendment — four signing roles **plus one MAC role** (B-30 ruled 2026-09-02, T-054)
+
+G.1 as ratified said *"four key roles"*, and one key in this system was outside them the whole time.
+`MIZAN_AUDIT_HMAC_KEY_REF` — the audit commitment key of Amendment A, *"held under separate
+authority"* — has been registered in `SPEC_v1.md` and cited by `source_commitment.key_ref` since the
+baseline **with no custody at all**, because it was not one of the four and `keys.py` enforced that
+set literally. TM-001 R-2 found it; the one key that touches customer data directly was the only one
+outside the module whose entire subject is key custody.
+
+**The role set is now four signing roles and one MAC role:** `evidence-receipt`, `evidence-anchor`,
+`execution-token`, `degraded-grant`, and **`audit-commitment`**. The MAC role is under the same
+custody rules as the four — KMS/HSM, `local://` only under `MIZAN_KEY_CUSTODY_MODE=development`, a
+production process carrying one refuses to start — and is *separately held* in the strongest sense:
+reusing a signing reference for it is refused at configuration time, and the Vault adapter refuses to
+HMAC under a key that is not of Transit type `hmac`, because Transit would otherwise do it silently.
+
+**It is not a `SigningKey`, and it never enters the published verification keyset.** A MAC key has no
+public half, so it cannot satisfy the `SigningKey` protocol without growing a `public_key()` member
+that would be a defect waiting to be called. More importantly, the published keyset means *the keys
+with which a third party verifies a signature*, and **no third party can ever verify an HMAC** —
+§96 above states this as the point of the construction, not a limitation: anyone who could verify a
+`source_commitment` could mount the dictionary attack against low-entropy PII that I-12 exists to
+defeat. A commitment entry in `/v1/audit/keys` would therefore be a category error, and — because
+that keyset is copied verbatim into every export bundle — it would also make the exporter refuse to
+produce a bundle and make both verifiers reject every bundle that did get produced.
+
+The commitment keyset is instead served at **`/v1/audit/commitment-keys`**, to the operator who holds
+the key, carrying `key_id`, `role`, `custody`, `algorithm` and the rotation window and **no key
+material** (`public_key` is absent, not null). Rotation stays additive and never retroactive, exactly
+as for the signing roles: a record cites the commitment key it used. **Bundle format 1.1 is
+unchanged and neither verifier is touched**, so B-24's demonstration requirement is not triggered.
+
+**Accepted cost, recorded with the amendment rather than discovered later.** One backend round trip
+per manifest finding plus one over the whole payload — N+1 per audit write — so a Vault outage fails
+audit writes closed under I-19. This is acceptable only because `AuditTrail` is the everything-else
+ledger and is off the authorization hot path; that is measured, not assumed, in
+`benchmarks/results/`.
+
 ### G.2 The attesting party (B-12)
 
 **Floor — RFC 3161 timestamping, on every production anchor.** Not an enterprise upsell, not deferred. The

@@ -442,6 +442,25 @@ def create_app(
             raise Problem(503, "key_provider_unavailable", "Signing key provider is not configured")
         return {"items": key_provider.verification_keyset()}
 
+    @app.get("/v1/audit/commitment-keys")
+    def audit_commitment_keys(tenant_id: str = Depends(tenant_from_token)) -> dict[str, Any]:
+        """The audit commitment keyset — configuration and rotation state, never material.
+
+        Deliberately **not** merged into `/v1/audit/keys`. That keyset is copied verbatim into every
+        export bundle (ADR-004 G.1) and means *the keys with which a third party verifies a
+        signature*; no third party can verify an HMAC, which ADR-004 §96 states as the point of the
+        construction rather than a limitation. A commitment entry there would make
+        `evidence_export.load_public_keyset` refuse to export at all, and would be `MALFORMED` to
+        one verifier and a `VerificationFailure` to the other.
+
+        This surface exists so the operator who *holds* the key can resolve the `key_ref` a stored
+        `source_commitment` cites, and can tell which key was in force when. Entries carry no
+        `public_key` member at all, because the object has no such thing.
+        """
+        if key_provider is None:
+            raise Problem(503, "key_provider_unavailable", "Signing key provider is not configured")
+        return {"items": key_provider.commitment_keyset()}
+
     @app.get("/v1/approvals")
     def list_approvals(
         state: str | None = Query(None, pattern="^[A-Z_]{4,24}$"),

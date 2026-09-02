@@ -82,6 +82,7 @@ def production_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "MIZAN_EVIDENCE_ANCHOR_KEY_REF": "vault://transit/mizan-evidence-anchor#v1",
         "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF": "vault://transit/mizan-execution-token#v1",
         "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF": "vault://transit/mizan-degraded-grant#v1",
+        "MIZAN_AUDIT_HMAC_KEY_REF": "vault://transit/mizan-audit-commitment#v1",
         "MIZAN_ANCHOR_PROVIDER": "rfc3161",
         "MIZAN_ANCHOR_TSA_ENDPOINTS": "https://tsa.example.test",
         "MIZAN_ANCHOR_TSA_TRUST_ANCHORS": str(tmp_path / "tsa-root.pem"),
@@ -161,6 +162,7 @@ def test_production_still_refuses_development_custody(production) -> None:
             MIZAN_EVIDENCE_ANCHOR_KEY_REF="local://evidence-anchor/dev-1",
             MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF="local://execution-token/dev-1",
             MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF="local://degraded-grant/dev-1",
+            MIZAN_AUDIT_HMAC_KEY_REF="local://audit-commitment/dev-1",
         )
 
 

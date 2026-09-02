@@ -17,6 +17,7 @@ the public key the exported keyset published before the rotation happened.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import ssl
 
@@ -70,6 +71,13 @@ def transit() -> None:
         for role in ROLES:
             created = client.post(f"/v1/transit/keys/mizan-{role}", json={"type": "ed25519"})
             assert created.status_code < 400, created.text
+        # The fifth role is a MAC key, not a signing key (ADR-004 G.1 as amended, T-054).
+        # Transit requires an explicit `key_size` for an `hmac` key and rejects it for `ed25519`.
+        created = client.post(
+            "/v1/transit/keys/mizan-audit-commitment",
+            json={"type": "hmac", "key_size": 32},
+        )
+        assert created.status_code < 400, created.text
         # A key of the wrong type, for the refusal test. Bundle 1.0 admits no other algorithm.
         client.post("/v1/transit/keys/mizan-wrong-type", json={"type": "rsa-2048"})
 
@@ -92,6 +100,7 @@ def settings(**overrides: str) -> Settings:
         },
         "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF": "vault://transit/mizan-execution-token#v1",
         "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF": "vault://transit/mizan-degraded-grant#v1",
+        "MIZAN_AUDIT_HMAC_KEY_REF": "vault://transit/mizan-audit-commitment#v1",
         **overrides,
     }
     previous = {name: os.environ.get(name) for name in environment}
@@ -221,3 +230,62 @@ def test_a_version_that_does_not_exist_yet_is_refused_rather_than_signed_by_the_
     """
     with pytest.raises(VaultRefused, match=r"no version 99"):
         backend().public_key("vault://transit/mizan-evidence-receipt#v99")
+
+
+# ---------------------------------------------------------------------------------------------
+# The MAC role (T-054, B-30 ruled). Against the real Vault for the same reason the signing tests
+# are: `mac()` cannot verify its own result -- verifying an HMAC needs the secret, and the secret
+# is in Vault precisely so this process never holds it -- so a double that returns a plausible
+# envelope would prove nothing about whether Transit's HMAC endpoint behaves as assumed.
+# ---------------------------------------------------------------------------------------------
+
+COMMITMENT = "vault://transit/mizan-audit-commitment#v1"
+
+
+def test_vault_macs_the_audit_commitment_in_place_and_returns_a_sha256_digest() -> None:
+    digest = backend().mac(COMMITMENT, b'{"account":"ACC-1"}')
+    assert len(digest) == 32
+    # Deterministic under the same key and payload, which is what makes a commitment a commitment.
+    assert digest == backend().mac(COMMITMENT, b'{"account":"ACC-1"}')
+    assert digest != backend().mac(COMMITMENT, b'{"account":"ACC-2"}')
+
+
+def test_an_evidence_signing_key_may_not_be_used_as_the_commitment_key() -> None:
+    """Transit will HMAC under an ed25519 key. That is the whole hazard.
+
+    Key separation would otherwise be defended by nothing but a naming convention and an operator's
+    attention, and the way it actually fails is a copy-pasted key name in a values file.
+    """
+    with pytest.raises(VaultRefused, match="not of type 'hmac'"):
+        backend().mac("vault://transit/mizan-evidence-receipt#v1", b"payload")
+
+
+def test_the_commitment_key_is_never_published_in_the_exported_verification_keyset() -> None:
+    """The assertion that keeps this change out of the bundle format.
+
+    `verification_keyset()` is copied verbatim into every export bundle and both verifiers require
+    `public_key` and `algorithm == "Ed25519"` on every entry. Asserted against the real provider
+    built from real settings, because this is the failure that would ship silently.
+    """
+    provider = build_key_provider(settings())
+    published = provider.verification_keyset()
+    assert all(item["algorithm"] == "Ed25519" for item in published)
+    assert all(item.get("public_key") for item in published)
+    assert "mizan-audit-commitment" not in json.dumps(published)
+
+    commitments = provider.commitment_keyset()
+    assert [item["key_id"] for item in commitments] == [COMMITMENT]
+    assert all("public_key" not in item for item in commitments)
+    assert commitments[0]["custody"] == "kms"
+
+
+def test_a_commitment_key_that_does_not_exist_refuses_at_startup_not_at_the_first_audit_write() -> None:
+    """I-19 makes a missing redaction attestation a refused write.
+
+    Without the startup probe the first symptom of a misconfigured commitment key is a refused audit
+    write in production, at the moment someone is being audited.
+    """
+    with pytest.raises(StartupRefused, match="mizan-never-committed"):
+        build_key_provider(
+            settings(MIZAN_AUDIT_HMAC_KEY_REF="vault://transit/mizan-never-committed#v1")
+        )

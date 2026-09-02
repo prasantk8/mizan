@@ -52,6 +52,7 @@ spec:
             - {name: MIZAN_EVIDENCE_ANCHOR_KEY_REF, value: {{ .Values.config.evidenceAnchorKeyRef | quote }}}
             - {name: MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF, value: {{ .Values.config.executionTokenKeyRef | quote }}}
             - {name: MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF, value: {{ .Values.config.degradedGrantKeyRef | quote }}}
+            - {name: MIZAN_AUDIT_HMAC_KEY_REF, value: {{ .Values.config.auditCommitmentKeyRef | quote }}}
             # The runner refuses to start unless the provider is rfc3161, which is the point:
             # a development-unattested provider would let it poll forever, complete nothing, and
             # still look healthy.

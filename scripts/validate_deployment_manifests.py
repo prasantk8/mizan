@@ -513,6 +513,22 @@ def validate_production_compose_boot() -> None:
                     ],
                     environment=environment,
                 )
+            # The fifth role is a MAC key, not a signing key (ADR-004 G.1 as amended, T-054), and
+            # the control plane now refuses to start without it. Transit requires an explicit
+            # `key_size` for `hmac` and rejects the field for `ed25519`, which is why this is a
+            # separate call rather than a fifth name in the loop above.
+            run_checked(
+                vault
+                + [
+                    "write",
+                    "transit/keys/mizan-audit-commitment",
+                    "type=hmac",
+                    "key_size=32",
+                    "exportable=false",
+                    "allow_plaintext_backup=false",
+                ],
+                environment=environment,
+            )
 
             s3_health = f"http://127.0.0.1:{s3_port}/minio/health/live"
 

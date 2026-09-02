@@ -4,6 +4,9 @@ import pytest
 from mizan_control_plane.config import Settings
 from mizan_control_plane.keys import (
     KEY_ROLES,
+    MAC_ALGORITHM,
+    MAC_DIGEST_BYTES,
+    MAC_ROLES,
     KeyVersion,
     KmsHsmKeyProvider,
     LocalKeyProvider,
@@ -22,7 +25,7 @@ def versions(*, revoked_receipt: bool = False) -> list[KeyVersion]:
             now,
             revoked_at="2026-08-25T01:00:00Z" if revoked_receipt and role == "evidence-receipt" else None,
         )
-        for role in KEY_ROLES
+        for role in (*KEY_ROLES, *MAC_ROLES)
     ]
 
 
@@ -65,6 +68,9 @@ def test_production_requires_rfc3161_provider_and_endpoint(monkeypatch) -> None:
         "MIZAN_EVIDENCE_ANCHOR_KEY_REF": "kms://vault/anchor",
         "MIZAN_EXECUTION_TOKEN_SIGNING_KEY_REF": "kms://vault/execution",
         "MIZAN_DEGRADED_GRANT_SIGNING_KEY_REF": "kms://vault/degraded",
+        # Production also refuses a `local://` audit commitment key (T-054); set here for the same
+        # reason the Object Lock bucket is, so the refusal this test asserts is its own.
+        "MIZAN_AUDIT_HMAC_KEY_REF": "kms://vault/audit-commitment",
     }
     for name, value in refs.items():
         monkeypatch.setenv(name, value)
@@ -124,6 +130,61 @@ def test_four_roles_are_distinct_and_rotation_has_no_resign_capability() -> None
     assert len({key.key_id for key in keys}) == 4
     assert set(vars(type(provider))) >= {"active_key", "verification_keyset"}
     assert "resign" not in vars(type(provider))
+
+
+def test_the_mac_role_is_a_fifth_key_that_is_not_a_signing_key() -> None:
+    """ADR-004 G.1 as amended: four signing roles plus one MAC role (T-054, B-30).
+
+    The point of the separation, asserted rather than described: the commitment key is distinct
+    from all four signing keys, and it has **no public half**. A `public_key()` member on a
+    symmetric key would be a defect waiting to be called by anything that iterates roles.
+    """
+    provider = LocalKeyProvider(versions())
+    commitment = provider.active_mac_key("audit-commitment")
+    signing_ids = {provider.active_key(role).key_id for role in KEY_ROLES}
+    assert commitment.key_id not in signing_ids
+    assert not hasattr(commitment, "public_key")
+    assert not hasattr(commitment, "sign")
+    digest = commitment.mac(b"canonical-payload")
+    assert len(digest) == MAC_DIGEST_BYTES
+    assert digest == commitment.mac(b"canonical-payload")
+    assert digest != commitment.mac(b"canonical-payloae")
+
+
+def test_the_commitment_key_never_enters_the_published_verification_keyset() -> None:
+    """The check that B-30's own recommendation would have failed.
+
+    `verification_keyset()` is copied verbatim into every export bundle (ADR-004 G.1) and both
+    verifiers require `public_key` and `algorithm == "Ed25519"` on every entry. A commitment entry
+    there would make `evidence_export.load_public_keyset` refuse to export at all. So the assertion
+    is not stylistic: it is the thing standing between this change and three broken gates.
+    """
+    provider = LocalKeyProvider(versions())
+    published = provider.verification_keyset()
+    assert {item["role"] for item in published} == set(KEY_ROLES)
+    assert all(item["algorithm"] == "Ed25519" for item in published)
+    assert all(item.get("public_key") for item in published)
+
+    commitments = provider.commitment_keyset()
+    assert {item["role"] for item in commitments} == set(MAC_ROLES)
+    assert all(item["algorithm"] == MAC_ALGORITHM for item in commitments)
+    # Absent, not null: a member present and empty invites a reader to treat it as material that
+    # failed to load.
+    assert all("public_key" not in item for item in commitments)
+    assert all(item["custody"] == "development-derived" for item in commitments)
+    assert not {item["key_id"] for item in published} & {item["key_id"] for item in commitments}
+
+
+def test_a_provider_without_a_commitment_key_refuses_to_be_built() -> None:
+    """Fail closed at startup, not at the first audit write.
+
+    I-19 makes a missing redaction attestation a refused write. A provider that quietly omitted the
+    commitment key would convert a configuration error into a runtime outage on the audit ledger,
+    discovered at the moment someone is being audited.
+    """
+    signing_only = [item for item in versions() if item.role in KEY_ROLES]
+    with pytest.raises(RuntimeError, match="audit commitment MAC key role must be configured"):
+        LocalKeyProvider(signing_only)
 
 
 def test_revoked_version_remains_in_verification_keyset() -> None:
