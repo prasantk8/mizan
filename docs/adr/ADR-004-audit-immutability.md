@@ -421,7 +421,7 @@ that condition. Bad signatures/tokens, imprint mismatch, an untrusted signer, an
 certificate remain evidence failures and are reported as distinct causes. Successful external
 assurance is never printed when the RFC 3161 check did not run.
 
-### G.15 Pending ratification (B-14) — location-scoped attestation grammar (T-059)
+### G.15 Ratified (B-14, 2026-09-02) — location-scoped attestation grammar (T-059)
 
 G.2's flat status enum is narrowed descriptively by persistence location. The signed anchor payload is
 created before external contact and admits `pending` for `rfc3161` and `customer_countersignature`, or
@@ -429,8 +429,11 @@ created before external contact and admits `pending` for `rfc3161` and `customer
 validated outcomes and admits only `attested` for an external type. `failed` is reserved vocabulary and
 MUST NOT occur in a bundle version 1.0; failed attempts leave the sidecar slot empty and retryable. A
 location/type/status violation is `MALFORMED`, distinct from invalid evidence and from `CANNOT CHECK`.
-This forbids no state emitted by the implementation. The narrowing remains pending HUMAN ratification
-under B-14 and silence does not ratify it.
+This forbids no state emitted by the implementation. **Ratified by the founder on 2026-09-02** under
+B-14, seven days after it was written and used. It was correct not to treat that interval as consent:
+the narrowing was safe to build on precisely because it forbids nothing the implementation ever
+emitted, and that argument is what made building ahead of the stamp legitimate — not the passage of
+time. A narrowing that *did* remove an emitted state would have had to wait.
 
 ### G.16 Implementation delta — attestation enforcement runner (T-052)
 

@@ -290,6 +290,17 @@ Note on B-16 and B-17: they are marked open, and the behaviour they describe is 
 That is the process equivalent of a claimed-but-underived assurance, and it is mine to fix, not the
 engineers'.
 
+**Follow-up, 2026-09-02 (T-150).** This paragraph was right and nothing happened for four days. Worse:
+**B-22, B-23 and B-25 were filed in this section and never reached `WORK_LOG.md`**, which is the file
+every agent is instructed to read first — so for four days they were blockers only in the sense that
+someone had written them down. They are now in the register, along with a second "B-19" filed in
+`CLAUDE-CP-E-RUN.md` for registry *read* authority, which collided with the crypto B-19 and is
+renumbered **B-31**. B-15, B-16, B-17 and B-27 are closed or ratified as this section asked.
+
+**Standing consequence: a stage plan may propose a blocker; only `WORK_LOG.md` holds one.** If it is
+filed here, migrate it in the same change-set — the same rule H-3 already applies to config keys and
+`SPEC_v1.md`, for the same reason.
+
 ## 8. How I will know this stage worked
 
 One sequence, run by someone who does not work here, on a machine we have never touched:

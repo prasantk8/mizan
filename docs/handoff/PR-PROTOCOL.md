@@ -211,5 +211,34 @@ money movement, approval semantics, crypto, key management, tenant isolation. St
 protected: CI required, linear history, no force-push, no merge over a conflict. The approving-review
 setting is **off** and section 4 says why; the review obligation itself is not off.
 
+**Correction, 2026-09-02 (B-22).** The sentence above described a control that **did not exist** from the
+day this protocol was written until 2026-09-02. `main` carried no protection at all: branch protection was
+unavailable on a private repository under this plan (`403 — Upgrade to GitHub Pro`), so the protocol asserted
+an enforced trunk while the trunk was enforced by nothing but habit. That is this project's own documented
+failure mode — a claim with no gate behind it — applied to its own process, and it survived four days after
+CP-F §7 filed B-22 about it. It is now true: 13 required status checks with `strict`, required linear
+history, no force-pushes, no deletions, and **`enforce_admins: true`**, so it binds the founder too. Verified
+by rejection rather than by reading the settings back — a direct push of an empty commit to `main` was
+refused with `GH006 … 13 of 13 required status checks are expected`.
+
+**One thing this made visible about our own gate.** `completion-report` is the only check in this
+repository whose subject is not the commit — it reads the pull request **body**, which is editable
+text that changes without a push. It lived in `ci.yml` under a bare `on: pull_request`, whose default
+types are `[opened, synchronize, reopened]` and do **not** include `edited`; and it takes the body
+from `github.event.pull_request.body`, the event payload frozen when the event fired. So a report
+that failed and was then corrected stayed red — re-running the job replays the same stale payload,
+and the only way to green was to push an unrelated commit. **A gate whose remedy is a junk commit
+teaches people to make junk commits.** It now lives in its own workflow with the `edited` trigger,
+under the same check name, rather than giving that trigger to thirteen jobs including a Docker build
+and a live Vault.
+
+**The gap that remains, stated rather than papered over.** `required_pull_request_reviews` is deliberately
+**null**, and this is the honest reason: there is exactly one collaborator, who authors every PR, and GitHub
+forbids approving your own. Requiring one approval would make every PR mergeable only by admin bypass, which
+buys a bypass entry in the audit log for each merge and no second pair of eyes. So **the review obligation of
+section 4 is a process commitment that the platform cannot currently enforce**, and no reader should infer
+otherwise from the branch settings. What would make it enforceable is a second collaborator account; on the
+day one exists, set `required_approving_review_count: 1` and delete this paragraph.
+
 `WORK_LOG.md` remains the queue and the blocker list. It is now the most frequently conflicting file in the
 repository, and that is correct — it is the one file both engineers are supposed to be writing to.

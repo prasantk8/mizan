@@ -132,7 +132,7 @@ and reruns current authoritative agent/tool/resource/risk enrichment against thi
 the replayable basis for detecting execution-time drift without retaining raw tool payloads.
 
 
-## Implementation Amendment — one capability per decision *(pending ratification: B-16)*
+## Implementation Amendment — one capability per decision *(ratified: B-16, 2026-09-02)*
 
 **Date:** 2026-08-27 · **Trigger:** Stage 5 acceleration review, T-067 · **Spec anchors:** SPEC v1.3 §3 `/v1/decisions/{id}/execution-token`, V-21, V-23
 

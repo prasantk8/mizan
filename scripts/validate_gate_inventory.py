@@ -37,8 +37,26 @@ INVENTORY = Path("tests/gate-inventory.json")
 
 
 def ci_jobs(root: Path) -> int:
-    workflow = yaml.safe_load((root / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    return len(workflow["jobs"])
+    """Every job in every workflow, not the jobs in one file.
+
+    This read only `ci.yml` until 2026-09-02, when moving `completion-report` into its own workflow
+    — so that a corrected pull request body could actually be re-checked — read as **13 -> 12, a
+    gate was removed**. The ratchet was right to stop that change and wrong about why, and the
+    interesting part is the general case it exposed: with a single-file counter, *any* job could be
+    removed from the ratchet's view by moving it to a second workflow, which is a rename away from
+    deleting it. Counting across `.github/workflows/` closes that, and it is what the name
+    `ci_jobs` always claimed to mean.
+
+    Workflows that define no jobs, and files that are not workflows, contribute nothing rather than
+    raising: this counter's failure mode must be a wrong number a reviewer sees in the diff, not a
+    crash that takes the whole gate offline.
+    """
+    total = 0
+    for path in sorted((root / ".github/workflows").glob("*.y*ml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(document, dict):
+            total += len(document.get("jobs") or {})
+    return total
 
 
 def conformance_bundles(root: Path) -> int:

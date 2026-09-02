@@ -388,6 +388,14 @@ def resolve_served_tenants(explicit: list[str] | None, environment_key: str) -> 
     function, so `mizan_app` sees only the tenant it is currently scoped to. Widening that is a
     tenant-isolation decision and therefore H-7 -- escalated as **B-27**, not taken in code.
 
+    **B-27 ratified 2026-09-02 (founder): the served set is named, never discovered.** The isolation
+    model is not widened and no `SECURITY DEFINER` function is added. The limit the ruling accepts,
+    recorded here rather than only in `WORK_LOG.md` because this is where the next engineer will
+    look: a named set holds for a pilot with a known tenant list and **does not scale to self-service
+    onboarding**, where a newly created tenant is silently unserved -- its outbox undrained and its
+    anchors unattested -- until a human edits a manifest. Nothing in this function detects that. When
+    onboarding stops being a human step, this ruling must be reopened before it is relied on.
+
     It lives here rather than in either worker because the drainer and the attestation runner hit
     the same wall, and a second copy of this reasoning is how two workloads come to resolve
     tenants two subtly different ways.

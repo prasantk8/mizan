@@ -42,7 +42,7 @@ def require_registry_authority(
     second_actor: AuthenticatedPrincipal | None,
     environment: str,
 ) -> None:
-    """Who may write to the registry (B-17 default, pending ratification).
+    """Who may write to the registry (B-17, ratified 2026-09-02).
 
     The registry decides what every later authorization is measured against: which tools exist,
     which agents may call them, and what the binding profile commits to. An agent that can write
